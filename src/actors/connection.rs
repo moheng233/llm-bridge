@@ -1,35 +1,42 @@
-use std::sync::Arc;
-
 use ractor::{Actor, ActorProcessingErr, ActorRef};
 use tokio::sync::mpsc;
 use tokio_stream::StreamExt;
+use tracing::{Instrument, debug, info, info_span, instrument, warn};
 
-use crate::actors::gateway_manager::GatewayManagerMessage;
-use crate::actors::provider::{ProviderActor, ProviderChatRequest, ProviderMessage};
-use crate::config::models::ProviderConfig;
-use crate::protocol::{
-    ChatResponseChunk, ConnectedEvent, ErrorEvent, GatewayEnvelope, GatewayMessage, RouteGroupInfo,
-    RouteSelectedEvent,
+use crate::actors::gateway_manager::{GatewayManagerMessage, read_keyring_secret};
+use crate::actors::provider::{
+    ProviderActor, ProviderChatRequest, ProviderMessage, ProviderRuntimeConfig,
 };
-use crate::routing::models::{ProviderCandidate, RouteGroup};
+use crate::protocol::{
+    AvailableModelInfo, ChatResponseChunk, ConnectedEvent, ErrorEvent, GatewayEnvelope,
+    GatewayMessage,
+};
 
 pub struct ConnectionActor;
 
 pub struct ConnectionState {
     pub gateway_manager: ActorRef<GatewayManagerMessage>,
     pub ws_sender: mpsc::Sender<GatewayEnvelope>,
+    pub gateway_id: String,
+    pub auth_token: Option<String>,
     pub authenticated: bool,
-    pub current_route_group: Option<std::sync::Arc<RouteGroup>>,
 }
 
 #[derive(Debug, Clone)]
 pub enum ConnectionMessage {
-    /// WS msg received from client
     IncomingWSMessage(GatewayMessage),
-    /// Provider response chunk
     ProviderChunk(crate::types::LMResponsePart),
-    /// Provider error
     ProviderError(String),
+}
+
+impl ConnectionMessage {
+    fn kind(&self) -> &'static str {
+        match self {
+            Self::IncomingWSMessage(_) => "incoming_ws_message",
+            Self::ProviderChunk(_) => "provider_chunk",
+            Self::ProviderError(_) => "provider_error",
+        }
+    }
 }
 
 #[ractor::async_trait]
@@ -39,6 +46,8 @@ impl Actor for ConnectionActor {
     type Arguments = (
         ActorRef<GatewayManagerMessage>,
         mpsc::Sender<GatewayEnvelope>,
+        String,
+        Option<String>,
     );
 
     async fn pre_start(
@@ -49,11 +58,21 @@ impl Actor for ConnectionActor {
         Ok(ConnectionState {
             gateway_manager: args.0,
             ws_sender: args.1,
+            gateway_id: args.2,
+            auth_token: args.3,
             authenticated: false,
-            current_route_group: None,
         })
     }
 
+    #[instrument(
+        level = "debug",
+        skip(self, state),
+        fields(
+            actor_id = ?myself.get_id(),
+            message = message.kind(),
+            authenticated = state.authenticated
+        )
+    )]
     async fn handle(
         &self,
         myself: ActorRef<Self::Msg>,
@@ -61,25 +80,32 @@ impl Actor for ConnectionActor {
         state: &mut Self::State,
     ) -> Result<(), ActorProcessingErr> {
         match message {
-            ConnectionMessage::IncomingWSMessage(msg) => {
-                match msg {
-                    GatewayMessage::Connect(_req) => {
-                        // For now, always authenticate
-                        state.authenticated = true;
+            ConnectionMessage::IncomingWSMessage(msg) => match msg {
+                GatewayMessage::Connect(req) => {
+                    if !authenticate(state.auth_token.as_deref(), req.auth_token.as_deref()) {
+                        warn!("connection authentication failed");
+                        send_error(state, "AUTH_FAILED", "Authentication failed").await;
+                        return Ok(());
+                    }
 
-                        // Get route groups from gateway manager
-                        let reply = ractor::call_t!(
-                            state.gateway_manager,
-                            GatewayManagerMessage::GetRouteGroups,
-                            100
-                        );
+                    state.authenticated = true;
+                    info!("connection authenticated");
 
-                        if let Ok(groups) = reply {
-                            let route_groups = groups
+                    let reply = ractor::call_t!(
+                        state.gateway_manager,
+                        GatewayManagerMessage::GetAvailableModels,
+                        1_000
+                    )
+                    .map_err(|error| ActorProcessingErr::from(error.to_string()))?;
+
+                    match reply {
+                        Ok(models) => {
+                            info!(available_models = models.len(), "sending connected event");
+                            let available_models = models
                                 .into_iter()
-                                .map(|g| RouteGroupInfo {
-                                    id: g.id.clone(),
-                                    name: g.name.clone(),
+                                .map(|model| AvailableModelInfo {
+                                    model_name: model.model_name,
+                                    capabilities: model.capabilities,
                                 })
                                 .collect();
 
@@ -87,123 +113,79 @@ impl Actor for ConnectionActor {
                                 .ws_sender
                                 .send(GatewayEnvelope::new(GatewayMessage::Connected(
                                     ConnectedEvent {
-                                        gateway_id: "llm-bridge-v1".to_string(),
-                                        route_groups,
+                                        gateway_id: state.gateway_id.clone(),
+                                        available_models,
                                     },
                                 )))
                                 .await;
-                        } else {
-                            let _ = state
-                                .ws_sender
-                                .send(GatewayEnvelope::new(GatewayMessage::Error(ErrorEvent {
-                                    code: "INTERNAL_ERROR".to_string(),
-                                    message: "Failed to fetch route groups".to_string(),
-                                })))
-                                .await;
+                        }
+                        Err(error) => {
+                            send_error(state, "INTERNAL_ERROR", &error).await;
                         }
                     }
-                    GatewayMessage::SelectRoute(req) => {
-                        if !state.authenticated {
-                            return Ok(()); // Ignore or send error
-                        }
-
-                        let reply = ractor::call_t!(
-                            state.gateway_manager,
-                            |reply| GatewayManagerMessage::GetRouteGroup(
-                                req.route_id.clone(),
-                                reply
-                            ),
-                            100
-                        );
-
-                        if let Ok(Some(group)) = reply {
-                            state.current_route_group = Some(group.clone());
-
-                            // Return the capabilities of the primary model (first one)
-                            if let Some(primary_model) =
-                                group.route_policy.fallback_chain.models.first()
-                            {
-                                let _ = state
-                                    .ws_sender
-                                    .send(GatewayEnvelope::new(GatewayMessage::RouteSelected(
-                                        RouteSelectedEvent {
-                                            route_id: group.id.clone(),
-                                            capabilities: primary_model.capabilities.clone(),
-                                        },
-                                    )))
-                                    .await;
-                            } else {
-                                let _ = state
-                                    .ws_sender
-                                    .send(GatewayEnvelope::new(GatewayMessage::Error(ErrorEvent {
-                                        code: "ROUTE_ERROR".to_string(),
-                                        message: "Selected route group has no models".to_string(),
-                                    })))
-                                    .await;
-                            }
-                        } else {
-                            let _ = state
-                                .ws_sender
-                                .send(GatewayEnvelope::new(GatewayMessage::Error(ErrorEvent {
-                                    code: "ROUTE_NOT_FOUND".to_string(),
-                                    message: "Route group not found".to_string(),
-                                })))
-                                .await;
-                        }
-                    }
-                    GatewayMessage::Chat(req) => {
-                        if !state.authenticated {
-                            return Ok(());
-                        }
-
-                        let Some(group) = resolve_route_group(state, &req).await? else {
-                            send_error(state, "NO_ROUTE", "No route group selected").await;
-                            return Ok(());
-                        };
-
-                        let Some(primary_model) =
-                            group.route_policy.fallback_chain.models.first().cloned()
-                        else {
-                            send_error(state, "ROUTE_ERROR", "Selected route group has no models")
-                                .await;
-                            return Ok(());
-                        };
-
-                        let Some(provider_candidate) =
-                            primary_model.provider_candidates.first().cloned()
-                        else {
-                            send_error(
-                                state,
-                                "ROUTE_ERROR",
-                                "Selected canonical model has no provider candidates",
-                            )
-                            .await;
-                            return Ok(());
-                        };
-
-                        let Some(provider_config) =
-                            fetch_provider_config(state, &provider_candidate.provider_id).await?
-                        else {
-                            send_error(
-                                state,
-                                "PROVIDER_NOT_FOUND",
-                                &format!("Provider {} not found", provider_candidate.provider_id),
-                            )
-                            .await;
-                            return Ok(());
-                        };
-
-                        start_provider_stream(
-                            myself.clone(),
-                            req,
-                            provider_candidate,
-                            provider_config,
-                        )
-                        .await?;
-                    }
-                    _ => {}
                 }
-            }
+                GatewayMessage::Chat(req) => {
+                    if !state.authenticated {
+                        warn!("chat request rejected because connection is unauthenticated");
+                        send_error(
+                            state,
+                            "AUTH_REQUIRED",
+                            "Connect before sending chat requests",
+                        )
+                        .await;
+                        return Ok(());
+                    }
+
+                    let route = ractor::call_t!(
+                        state.gateway_manager,
+                        |reply| GatewayManagerMessage::ResolveModel(
+                            req.canonical_model_name.clone(),
+                            reply,
+                        ),
+                        5_000
+                    )
+                    .map_err(|error| ActorProcessingErr::from(error.to_string()))?;
+
+                    let route = match route {
+                        Ok(route) => route,
+                        Err(error) => {
+                            warn!(model = %req.canonical_model_name, error = %error, "model route resolve failed");
+                            send_error(state, "MODEL_NOT_AVAILABLE", &error).await;
+                            return Ok(());
+                        }
+                    };
+
+                    info!(
+                        model = %req.canonical_model_name,
+                        provider = %route.provider_name,
+                        provider_model = %route.provider_model_name,
+                        "resolved model route for chat request"
+                    );
+
+                    let api_key = match read_keyring_secret(
+                        &route.keyring_service,
+                        &route.keyring_account,
+                    ) {
+                        Ok(api_key) => api_key,
+                        Err(error) => {
+                            warn!(provider = %route.provider_name, error = %error, "provider credentials unavailable");
+                            send_error(state, "PROVIDER_CREDENTIALS_ERROR", &error).await;
+                            return Ok(());
+                        }
+                    };
+
+                    let provider_config = ProviderRuntimeConfig {
+                        id: route.provider_name,
+                        provider_type: route.provider_type,
+                        api_key,
+                        base_url: route.base_url,
+                    };
+
+                    start_provider_stream(myself, req, route.provider_model_name, provider_config)
+                        .await?;
+                }
+                _ => {}
+            },
             ConnectionMessage::ProviderChunk(chunk) => {
                 let _ = state
                     .ws_sender
@@ -213,66 +195,44 @@ impl Actor for ConnectionActor {
                     .await;
             }
             ConnectionMessage::ProviderError(err) => {
-                let _ = state
-                    .ws_sender
-                    .send(GatewayEnvelope::new(GatewayMessage::Error(ErrorEvent {
-                        code: "PROVIDER_ERROR".to_string(),
-                        message: err,
-                    })))
-                    .await;
+                send_error(state, "PROVIDER_ERROR", &err).await;
             }
         }
+
         Ok(())
     }
 }
 
-async fn resolve_route_group(
-    state: &mut ConnectionState,
-    request: &crate::protocol::ChatRequest,
-) -> Result<Option<Arc<RouteGroup>>, ActorProcessingErr> {
-    if let Some(route_id) = &request.route_id {
-        let group = ractor::call_t!(
-            state.gateway_manager,
-            |reply| GatewayManagerMessage::GetRouteGroup(route_id.clone(), reply),
-            1000
-        )
-        .map_err(|error| ActorProcessingErr::from(error.to_string()))?;
-
-        if let Some(group) = group {
-            state.current_route_group = Some(group.clone());
-            return Ok(Some(group));
-        }
-
-        return Ok(None);
+fn authenticate(expected: Option<&str>, provided: Option<&str>) -> bool {
+    match expected {
+        Some(expected) => provided == Some(expected),
+        None => true,
     }
-
-    Ok(state.current_route_group.clone())
 }
 
-async fn fetch_provider_config(
-    state: &ConnectionState,
-    provider_id: &str,
-) -> Result<Option<ProviderConfig>, ActorProcessingErr> {
-    ractor::call_t!(
-        state.gateway_manager,
-        |reply| GatewayManagerMessage::GetProviderConfig(provider_id.to_string(), reply),
-        1000
+#[instrument(
+    level = "info",
+    skip(connection_ref, request, provider_config),
+    fields(
+        provider = %provider_config.id,
+        provider_type = ?provider_config.provider_type,
+        provider_model = %provider_model_name,
+        message_count = request.messages.len()
     )
-    .map_err(|error| ActorProcessingErr::from(error.to_string()))
-}
-
+)]
 async fn start_provider_stream(
     connection_ref: ActorRef<ConnectionMessage>,
     request: crate::protocol::ChatRequest,
-    model: ProviderCandidate,
-    provider_config: ProviderConfig,
+    provider_model_name: String,
+    provider_config: ProviderRuntimeConfig,
 ) -> Result<(), ActorProcessingErr> {
+    info!("starting provider stream");
     let (provider_ref, provider_handle) = Actor::spawn(None, ProviderActor, provider_config)
         .await
         .map_err(|error| ActorProcessingErr::from(error.to_string()))?;
 
     let provider_request = ProviderChatRequest {
-        model: model.resolved_model_name,
+        model: provider_model_name,
         messages: request.messages,
     };
 
@@ -284,26 +244,34 @@ async fn start_provider_stream(
     .map_err(|error| ActorProcessingErr::from(error.to_string()))?
     .map_err(ActorProcessingErr::from)?;
 
-    tokio::spawn(async move {
-        let mut stream = stream;
-        while let Some(item) = stream.next().await {
-            let cast_result = match item {
-                Ok(chunk) => connection_ref.cast(ConnectionMessage::ProviderChunk(chunk)),
-                Err(error) => connection_ref.cast(ConnectionMessage::ProviderError(error)),
-            };
+    tokio::spawn(
+        async move {
+            let mut stream = stream;
+            while let Some(item) = stream.next().await {
+                let cast_result = match item {
+                    Ok(chunk) => connection_ref.cast(ConnectionMessage::ProviderChunk(chunk)),
+                    Err(error) => {
+                        warn!(error = %error, "provider stream returned error chunk");
+                        connection_ref.cast(ConnectionMessage::ProviderError(error))
+                    }
+                };
 
-            if cast_result.is_err() {
-                break;
+                if cast_result.is_err() {
+                    break;
+                }
             }
-        }
 
-        provider_ref.stop(None);
-        let _ = provider_handle.await;
-    });
+            provider_ref.stop(None);
+            let _ = provider_handle.await;
+            debug!("provider stream task finished");
+        }
+        .instrument(info_span!("provider_stream_forwarder")),
+    );
 
     Ok(())
 }
 
+#[instrument(level = "debug", skip(state, message), fields(code = code))]
 async fn send_error(state: &ConnectionState, code: &str, message: &str) {
     let _ = state
         .ws_sender

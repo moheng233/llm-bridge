@@ -1,3 +1,4 @@
+pub mod anthropic;
 pub mod openai;
 
 use crate::config::models::ProviderType;
@@ -11,7 +12,7 @@ pub async fn stream_chat(
 ) -> Result<(), String> {
     match state.provider_type {
         ProviderType::OpenAI => openai::stream_chat(state, request, tx).await,
-        ProviderType::Anthropic => Err("provider anthropic is not implemented yet".to_string()),
+        ProviderType::Anthropic => anthropic::stream_chat(state, request, tx).await,
         ProviderType::Gemini => Err("provider gemini is not implemented yet".to_string()),
     }
 }

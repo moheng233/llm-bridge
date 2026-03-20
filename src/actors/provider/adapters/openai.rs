@@ -5,6 +5,7 @@ use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use tracing::instrument;
 
 use crate::types::{
     LMResponsePart, LanguageModelChatMessage, LanguageModelChatMessageRole, LanguageModelDataPart,
@@ -17,6 +18,15 @@ use super::super::{ProviderChatRequest, ProviderResponseSender, ProviderState};
 
 const DEFAULT_OPENAI_BASE_URL: &str = "https://api.openai.com/v1";
 
+#[instrument(
+    level = "info",
+    skip(state, request, tx),
+    fields(
+        provider = %state.provider_id,
+        model = %request.model,
+        message_count = request.messages.len()
+    )
+)]
 pub async fn stream_chat(
     state: &ProviderState,
     request: ProviderChatRequest,

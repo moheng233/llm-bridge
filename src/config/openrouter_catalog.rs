@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use reqwest::StatusCode;
 use serde::Deserialize;
+use tracing::{debug, info, instrument};
 
 use crate::config::models::ModelCatalogConfig;
 use crate::types::{EndpointEditToolName, LMModelInfo};
@@ -19,8 +20,24 @@ impl ModelCatalogSnapshot {
         self.models.get(canonical_model)
     }
 
+    pub fn into_models(self) -> HashMap<String, LMModelInfo> {
+        self.models
+    }
+
     pub fn len(&self) -> usize {
         self.models.len()
+    }
+
+    pub fn new(
+        models: HashMap<String, LMModelInfo>,
+        fetched_count: usize,
+        reported_count: Option<usize>,
+    ) -> Self {
+        Self {
+            models,
+            fetched_count,
+            reported_count,
+        }
     }
 }
 
@@ -29,18 +46,25 @@ pub struct OpenRouterCatalogClient {
     base_url: String,
     output_modalities: String,
     check_count: bool,
+    auth_enabled: bool,
 }
 
 impl OpenRouterCatalogClient {
-    pub fn new(config: &ModelCatalogConfig, api_key: &str) -> Result<Self, String> {
-        let client = reqwest::Client::builder()
+    pub fn new(config: &ModelCatalogConfig, api_key: Option<&str>) -> Result<Self, String> {
+        let auth_enabled = api_key.is_some();
+        let mut client_builder = reqwest::Client::builder()
             .timeout(Duration::from_secs(config.request_timeout_secs))
             .user_agent(concat!(
                 env!("CARGO_PKG_NAME"),
                 "/",
                 env!("CARGO_PKG_VERSION")
-            ))
-            .default_headers(build_auth_headers(api_key)?)
+            ));
+
+        if let Some(api_key) = api_key {
+            client_builder = client_builder.default_headers(build_auth_headers(api_key)?);
+        }
+
+        let client = client_builder
             .build()
             .map_err(|error| format!("failed to build openrouter catalog client: {error}"))?;
 
@@ -49,10 +73,13 @@ impl OpenRouterCatalogClient {
             base_url: config.base_url.trim_end_matches('/').to_string(),
             output_modalities: config.output_modalities.clone(),
             check_count: config.count_consistency_check,
+            auth_enabled,
         })
     }
 
+    #[instrument(level = "info", skip(self), fields(base_url = %self.base_url, output_modalities = %self.output_modalities, auth_enabled = self.auth_enabled, check_count = self.check_count))]
     pub async fn fetch_snapshot(&self) -> Result<ModelCatalogSnapshot, String> {
+        debug!("requesting openrouter models list");
         let list_url = format!(
             "{}/models?output_modalities={}",
             self.base_url, self.output_modalities
@@ -88,6 +115,11 @@ impl OpenRouterCatalogClient {
             None
         };
 
+        info!(
+            fetched_count,
+            reported_count, "openrouter catalog fetch completed"
+        );
+
         Ok(ModelCatalogSnapshot {
             models,
             fetched_count,
@@ -95,6 +127,7 @@ impl OpenRouterCatalogClient {
         })
     }
 
+    #[instrument(level = "debug", skip(self), fields(base_url = %self.base_url, output_modalities = %self.output_modalities))]
     async fn fetch_count(&self) -> Result<usize, String> {
         let count_url = format!(
             "{}/models/count?output_modalities={}",
