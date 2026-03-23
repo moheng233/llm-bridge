@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use axum::{
     Extension, Router,
     extract::ws::{Message as AxumWsMessage, WebSocket, WebSocketUpgrade},
@@ -11,7 +13,9 @@ use tracing::{Instrument, debug, error, info, info_span, instrument, warn};
 
 use crate::actors::connection::{ConnectionActor, ConnectionMessage};
 use crate::actors::gateway_manager::GatewayManagerMessage;
+use crate::db::DatabaseRepo;
 use crate::protocol::GatewayEnvelope;
+use crate::server::admin::admin_routes;
 
 /// Server state shared across requests
 #[derive(Clone)]
@@ -19,6 +23,7 @@ pub struct AppState {
     pub gateway_manager: ActorRef<GatewayManagerMessage>,
     pub gateway_id: String,
     pub auth_token: Option<String>,
+    pub db: Arc<DatabaseRepo>,
 }
 
 #[instrument(
@@ -34,6 +39,7 @@ pub struct AppState {
 pub async fn start_server(state: AppState, host: &str, port: u16) -> Result<(), std::io::Error> {
     let app = Router::new()
         .route("/ws", get(ws_handler))
+        .merge(admin_routes())
         .layer(Extension(state));
 
     let addr = format!("{}:{}", host, port);

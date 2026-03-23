@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use keyring::{Entry, Error as KeyringError};
 use ractor::{Actor, ActorProcessingErr, ActorRef};
 use tracing::{Instrument, debug, info, info_span, instrument};
@@ -10,12 +12,12 @@ pub struct GatewayManagerActor;
 
 pub struct GatewayManagerArgs {
     pub settings: RuntimeSettings,
-    pub database: DatabaseRepo,
+    pub database: Arc<DatabaseRepo>,
 }
 
 pub struct GatewayManagerState {
     pub settings: RuntimeSettings,
-    pub database: DatabaseRepo,
+    pub database: Arc<DatabaseRepo>,
 }
 
 #[derive(Debug)]

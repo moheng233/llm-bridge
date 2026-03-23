@@ -6,7 +6,7 @@ edition = "2024"
 [dependencies]
 axum = { version = "0.8.8", features = ["ws"] }
 base64 = "0.22.1"
-bincode-next = { version = "2.1.0", features = ["serde"] }
+bincode-next = { version = "2.1.0", features = ["serde", "derive"] }
 bitflags = { version = "2.11.0", features = ["serde", "std"] }
 fjall = "3.1.2"
 futures = "0.3.32"

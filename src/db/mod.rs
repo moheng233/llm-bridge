@@ -1,9 +1,9 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use bincode_next::config::{self, Configuration};
+use bincode_next::{Decode, Encode, config::{self, Configuration}};
 use fjall::{Database, Keyspace, KeyspaceCreateOptions, PersistMode};
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::config::models::ProviderType;
@@ -34,14 +34,14 @@ pub enum DbError {
     CatalogModelNotFound(String),
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 pub struct CatalogModelRecord {
     pub model_name: String,
     pub capabilities: LMModelInfo,
     pub fetched_at: i64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 pub struct ProviderRecord {
     pub provider_name: String,
     pub provider_type: ProviderType,
@@ -50,7 +50,7 @@ pub struct ProviderRecord {
     pub keyring_account: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 pub struct ProviderModelRecord {
     pub model_name: String,
     pub provider_name: String,
@@ -58,12 +58,12 @@ pub struct ProviderModelRecord {
     pub priority: u32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 struct SchemaVersionRecord {
     version: u32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 struct CatalogRefreshRecord {
     fetched_at: i64,
     fetched_count: usize,
@@ -152,6 +152,61 @@ impl DatabaseRepo {
     pub fn get_provider(&self, provider_name: &str) -> Result<Option<ProviderRecord>, DbError> {
         let value = self.providers.get(provider_name.as_bytes())?;
         Ok(value.map(|bytes| decode(bytes.as_ref())).transpose()?)
+    }
+
+    pub fn list_providers(&self) -> Result<Vec<ProviderRecord>, DbError> {
+        let mut providers = Vec::new();
+        for guard in self.providers.iter() {
+            let (_, value) = guard.into_inner()?;
+            providers.push(decode(value.as_ref())?);
+        }
+        Ok(providers)
+    }
+
+    pub fn delete_provider(&self, provider_name: &str) -> Result<bool, DbError> {
+        if self.providers.get(provider_name.as_bytes())?.is_none() {
+            return Ok(false);
+        }
+
+        let mut binding_keys = Vec::new();
+        for guard in self.provider_models.iter() {
+            let (key, value) = guard.into_inner()?;
+            let record: ProviderModelRecord = decode(value.as_ref())?;
+            if record.provider_name == provider_name {
+                binding_keys.push(key);
+            }
+        }
+        for key in binding_keys {
+            self.provider_models.remove(key)?;
+        }
+
+        self.providers.remove(provider_name.as_bytes())?;
+        self.db.persist(PersistMode::SyncAll)?;
+        Ok(true)
+    }
+
+    pub fn list_catalog_models(&self) -> Result<Vec<CatalogModelRecord>, DbError> {
+        let mut models = Vec::new();
+        for guard in self.catalog_models.iter() {
+            let (_, value) = guard.into_inner()?;
+            models.push(decode(value.as_ref())?);
+        }
+        Ok(models)
+    }
+
+    pub fn list_provider_models_by_provider(
+        &self,
+        provider_name: &str,
+    ) -> Result<Vec<ProviderModelRecord>, DbError> {
+        let mut records = Vec::new();
+        for guard in self.provider_models.iter() {
+            let (_, value) = guard.into_inner()?;
+            let record: ProviderModelRecord = decode(value.as_ref())?;
+            if record.provider_name == provider_name {
+                records.push(record);
+            }
+        }
+        Ok(records)
     }
 
     pub fn put_provider_model(&self, record: &ProviderModelRecord) -> Result<(), DbError> {
@@ -306,12 +361,12 @@ impl DatabaseRepo {
     }
 }
 
-fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>, bincode_next::error::EncodeError> {
-    bincode_next::serde::encode_to_vec(value, bincode_config())
+fn encode<T: Encode>(value: &T) -> Result<Vec<u8>, bincode_next::error::EncodeError> {
+    bincode_next::encode_to_vec(value, bincode_config())
 }
 
-fn decode<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, bincode_next::error::DecodeError> {
-    let (value, _) = bincode_next::serde::decode_from_slice(bytes, bincode_config())?;
+fn decode<T: Decode<()>>(bytes: &[u8]) -> Result<T, bincode_next::error::DecodeError> {
+    let (value, _) = bincode_next::decode_from_slice(bytes, bincode_config())?;
     Ok(value)
 }
 

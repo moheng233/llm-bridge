@@ -1,8 +1,9 @@
 use std::env;
 
+use bincode_next::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 #[serde(rename_all = "camelCase")]
 pub struct RuntimeSettings {
     pub gateway_id: String,
@@ -22,7 +23,7 @@ impl RuntimeSettings {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 #[serde(rename_all = "camelCase")]
 pub struct ServerConfig {
     pub host: String,
@@ -40,7 +41,7 @@ impl ServerConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 #[serde(rename_all = "camelCase")]
 pub struct DatabaseConfig {
     pub path: String,
@@ -54,7 +55,7 @@ impl DatabaseConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelCatalogConfig {
     pub base_url: String,
@@ -95,7 +96,7 @@ impl ModelCatalogConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Encode, Decode)]
 #[serde(rename_all = "lowercase")]
 pub enum ProviderType {
     OpenAI,
@@ -103,7 +104,7 @@ pub enum ProviderType {
     Gemini,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Encode, Decode)]
 #[serde(rename_all = "camelCase")]
 pub struct KeyringSecretRef {
     pub service: String,

@@ -1,4 +1,5 @@
 use bitflags::bitflags;
+use bincode_next::{Decode, Encode};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 use serde_repr::{Deserialize_repr, Serialize_repr};
@@ -185,7 +186,7 @@ impl<'de> Deserialize<'de> for EndpointEditToolName {
 }
 
 /// BYOK 模型能力，对应 BYOKModelCapabilities
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 #[serde(rename_all = "camelCase")]
 pub struct LMModelInfo {
     pub name: String,
@@ -199,5 +200,6 @@ pub struct LMModelInfo {
     pub adaptive_thinking: Option<bool>,
     #[serde(default = "EndpointEditToolName::empty")]
     #[serde(skip_serializing_if = "EndpointEditToolName::is_empty")]
+    #[bincode(with_serde)]
     pub edit_tools: EndpointEditToolName,
 }
