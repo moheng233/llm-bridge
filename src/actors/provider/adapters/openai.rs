@@ -22,7 +22,6 @@ const DEFAULT_OPENAI_BASE_URL: &str = "https://api.openai.com/v1";
     level = "info",
     skip(state, request, tx),
     fields(
-        provider = %state.provider_id,
         model = %request.model,
         message_count = request.messages.len()
     )

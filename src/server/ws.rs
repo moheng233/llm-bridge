@@ -1,10 +1,8 @@
 use std::sync::Arc;
 
 use axum::{
-    Extension, Router,
-    extract::ws::{Message as AxumWsMessage, WebSocket, WebSocketUpgrade},
+    extract::{State, ws::{Message as AxumWsMessage, WebSocket, WebSocketUpgrade}},
     response::IntoResponse,
-    routing::get,
 };
 use futures_util::{SinkExt, StreamExt};
 use ractor::{Actor, ActorRef};
@@ -15,7 +13,7 @@ use crate::actors::connection::{ConnectionActor, ConnectionMessage};
 use crate::actors::gateway_manager::GatewayManagerMessage;
 use crate::db::DatabaseRepo;
 use crate::protocol::GatewayEnvelope;
-use crate::server::admin::admin_routes;
+use crate::server::admin::all_routes;
 
 /// Server state shared across requests
 #[derive(Clone)]
@@ -37,10 +35,8 @@ pub struct AppState {
     )
 )]
 pub async fn start_server(state: AppState, host: &str, port: u16) -> Result<(), std::io::Error> {
-    let app = Router::new()
-        .route("/ws", get(ws_handler))
-        .merge(admin_routes())
-        .layer(Extension(state));
+    let (router, _routes) = all_routes();
+    let app = router.with_state(state);
 
     let addr = format!("{}:{}", host, port);
     info!("Starting WebSocket server on {}", addr);
@@ -53,9 +49,9 @@ pub async fn start_server(state: AppState, host: &str, port: u16) -> Result<(), 
     skip(ws, state),
     fields(gateway_id = %state.gateway_id, auth_required = state.auth_token.is_some())
 )]
-async fn ws_handler(
+pub async fn ws_handler(
     ws: WebSocketUpgrade,
-    Extension(state): Extension<AppState>,
+    State(state): State<AppState>,
 ) -> impl IntoResponse {
     ws.on_upgrade(move |socket| handle_socket(socket, state))
 }

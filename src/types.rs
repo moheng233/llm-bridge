@@ -1,11 +1,12 @@
-use bitflags::bitflags;
 use bincode_next::{Decode, Encode};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 use serde_repr::{Deserialize_repr, Serialize_repr};
+use ts_rs::TS;
 
 /// 消息角色，对应 LanguageModelChatMessageRole 枚举（User = 1, Assistant = 2）
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize_repr, Deserialize_repr)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize_repr, Deserialize_repr, TS)]
+#[ts(export)]
 #[repr(u8)]
 pub enum LanguageModelChatMessageRole {
     User = 1,
@@ -133,29 +134,39 @@ impl LanguageModelChatMessage {
     }
 }
 
-bitflags! {
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-    pub struct EndpointEditToolName: u8 {
-        const FIND_REPLACE = 1 << 0;
-        const MULTI_FIND_REPLACE = 1 << 1;
-        const APPLY_PATCH = 1 << 2;
-        const CODE_REWRITE = 1 << 3;
+/// 编辑工具名称集合，序列化为字符串数组
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, TS)]
+#[ts(export)]
+pub struct EndpointEditToolName {
+    pub find_replace: bool,
+    pub multi_find_replace: bool,
+    pub apply_patch: bool,
+    pub code_rewrite: bool,
+}
+
+impl EndpointEditToolName {
+    pub fn empty() -> Self {
+        Self::default()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        !self.find_replace && !self.multi_find_replace && !self.apply_patch && !self.code_rewrite
     }
 }
 
 impl Serialize for EndpointEditToolName {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let mut values = Vec::new();
-        if self.contains(Self::FIND_REPLACE) {
+        if self.find_replace {
             values.push("find-replace");
         }
-        if self.contains(Self::MULTI_FIND_REPLACE) {
+        if self.multi_find_replace {
             values.push("multi-find-replace");
         }
-        if self.contains(Self::APPLY_PATCH) {
+        if self.apply_patch {
             values.push("apply-patch");
         }
-        if self.contains(Self::CODE_REWRITE) {
+        if self.code_rewrite {
             values.push("code-rewrite");
         }
         values.serialize(serializer)
@@ -165,14 +176,14 @@ impl Serialize for EndpointEditToolName {
 impl<'de> Deserialize<'de> for EndpointEditToolName {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let values = Vec::<String>::deserialize(deserializer)?;
-        let mut flags = Self::empty();
+        let mut result = Self::empty();
 
         for value in values {
             match value.as_str() {
-                "find-replace" => flags |= Self::FIND_REPLACE,
-                "multi-find-replace" => flags |= Self::MULTI_FIND_REPLACE,
-                "apply-patch" => flags |= Self::APPLY_PATCH,
-                "code-rewrite" => flags |= Self::CODE_REWRITE,
+                "find-replace" => result.find_replace = true,
+                "multi-find-replace" => result.multi_find_replace = true,
+                "apply-patch" => result.apply_patch = true,
+                "code-rewrite" => result.code_rewrite = true,
                 other => {
                     return Err(serde::de::Error::custom(format!(
                         "unknown EndpointEditToolName: {other}"
@@ -181,12 +192,13 @@ impl<'de> Deserialize<'de> for EndpointEditToolName {
             }
         }
 
-        Ok(flags)
+        Ok(result)
     }
 }
 
 /// BYOK 模型能力，对应 BYOKModelCapabilities
-#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
+#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub struct LMModelInfo {
     pub name: String,

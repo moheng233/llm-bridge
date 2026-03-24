@@ -5,7 +5,26 @@
   import ProvidersPage from "./lib/ProvidersPage.svelte";
   import BindingsPage from "./lib/BindingsPage.svelte";
 
-  let page = $state<"models" | "providers" | "bindings">("models");
+  type Page = "models" | "providers" | "bindings";
+  const validPages = new Set<Page>(["models", "providers", "bindings"]);
+
+  function getPageFromHash(): Page {
+    const hash = window.location.hash.slice(1);
+    return validPages.has(hash as Page) ? (hash as Page) : "models";
+  }
+
+  let page = $state<Page>(getPageFromHash());
+
+  function setPage(p: Page) {
+    page = p;
+    window.location.hash = p;
+  }
+
+  $effect(() => {
+    const onHashChange = () => { page = getPageFromHash(); };
+    window.addEventListener("hashchange", onHashChange);
+    return () => window.removeEventListener("hashchange", onHashChange);
+  });
 
   const navItems = [
     { id: "models" as const, label: "模型目录", icon: "📦" },
@@ -32,7 +51,7 @@
         <Sidebar.Menu>
           {#each navItems as item}
             <Sidebar.MenuItem>
-              <Sidebar.MenuButton isActive={page === item.id} onclick={() => (page = item.id)}>
+              <Sidebar.MenuButton isActive={page === item.id} onclick={() => setPage(item.id)}>
                 <span>{item.icon}</span>
                 <span>{item.label}</span>
               </Sidebar.MenuButton>

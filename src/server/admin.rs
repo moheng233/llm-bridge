@@ -1,37 +1,64 @@
+use axfetchum::ApiRouter;
 use axum::{
-    Extension, Json, Router,
-    extract::Path,
+    Json, Router,
+    extract::{Path, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
-    routing::{delete, get},
 };
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
 use crate::config::models::ProviderType;
 use crate::db::{CatalogModelRecord, DbError, ProviderModelRecord, ProviderRecord};
-use crate::server::ws::AppState;
+use crate::server::ws::{AppState, ws_handler};
 use crate::types::LMModelInfo;
 
-pub fn admin_routes() -> Router {
-    Router::new()
-        .route("/api/v1/models", get(list_catalog_models))
-        .route("/api/v1/models/available", get(list_available_models))
-        .route(
-            "/api/v1/providers",
-            get(list_providers).post(create_provider),
-        )
-        .route(
-            "/api/v1/providers/{provider_name}",
-            get(get_provider).put(update_provider).delete(delete_provider),
-        )
-        .route(
-            "/api/v1/providers/{provider_name}/models",
-            get(list_provider_models).post(create_provider_model),
-        )
-        .route(
-            "/api/v1/providers/{provider_name}/models/{model_name}",
-            delete(delete_provider_model_binding),
-        )
+pub fn all_routes() -> (Router<AppState>, axfetchum::RouteCollection) {
+    ApiRouter::<AppState>::new()
+        .group("ws")
+        .get("/ws", ws_handler)
+            .as_("connect")
+        .group("models")
+        .get("/api/v1/models", list_catalog_models)
+            .response::<Vec<CatalogModelResponse>>()
+            .auth()
+            .done()
+        .get("/api/v1/models/available", list_available_models)
+            .response::<Vec<AvailableModelResponse>>()
+            .auth()
+            .done()
+        .group("providers")
+        .get("/api/v1/providers", list_providers)
+            .response::<Vec<ProviderResponse>>()
+            .auth()
+            .done()
+        .post("/api/v1/providers", create_provider)
+            .json::<CreateProviderRequest, ProviderResponse>()
+            .auth()
+            .done()
+        .get("/api/v1/providers/{provider_name}", get_provider)
+            .response::<ProviderResponse>()
+            .auth()
+            .done()
+        .put("/api/v1/providers/{provider_name}", update_provider)
+            .json::<UpdateProviderRequest, ProviderResponse>()
+            .auth()
+            .done()
+        .delete("/api/v1/providers/{provider_name}", delete_provider)
+            .auth()
+            .done()
+        .get("/api/v1/providers/{provider_name}/models", list_provider_models)
+            .response::<Vec<ProviderModelResponse>>()
+            .auth()
+            .done()
+        .post("/api/v1/providers/{provider_name}/models", create_provider_model)
+            .json::<CreateProviderModelRequest, ProviderModelResponse>()
+            .auth()
+            .done()
+        .delete("/api/v1/providers/{provider_name}/models/{model_name}", delete_provider_model_binding)
+            .auth()
+            .done()
+        .build()
 }
 
 fn check_auth(state: &AppState, headers: &HeaderMap) -> Result<(), Response> {
@@ -65,14 +92,16 @@ fn db_err(e: DbError) -> Response {
         .into_response()
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
+#[ts(export)]
 struct ErrorBody {
     error: String,
 }
 
 // ── Models ────────────────────────────────────────────────────────────────────
 
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
+#[ts(export)]
 struct CatalogModelResponse {
     model_name: String,
     capabilities: LMModelInfo,
@@ -89,7 +118,7 @@ impl From<CatalogModelRecord> for CatalogModelResponse {
 
 /// List every model in the OpenRouter catalog snapshot.
 async fn list_catalog_models(
-    Extension(state): Extension<AppState>,
+    State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Response {
     if let Err(e) = check_auth(&state, &headers) {
@@ -104,7 +133,8 @@ async fn list_catalog_models(
     }
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
+#[ts(export)]
 struct AvailableModelResponse {
     model_name: String,
     capabilities: LMModelInfo,
@@ -112,7 +142,7 @@ struct AvailableModelResponse {
 
 /// List only models that have at least one active provider binding.
 async fn list_available_models(
-    Extension(state): Extension<AppState>,
+    State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Response {
     if let Err(e) = check_auth(&state, &headers) {
@@ -135,7 +165,8 @@ async fn list_available_models(
 
 // ── Providers ─────────────────────────────────────────────────────────────────
 
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
+#[ts(export)]
 struct ProviderResponse {
     provider_name: String,
     provider_type: ProviderType,
@@ -156,7 +187,8 @@ impl From<ProviderRecord> for ProviderResponse {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 struct CreateProviderRequest {
     provider_name: String,
@@ -166,7 +198,8 @@ struct CreateProviderRequest {
     keyring_account: String,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 struct UpdateProviderRequest {
     provider_type: ProviderType,
@@ -176,7 +209,7 @@ struct UpdateProviderRequest {
 }
 
 async fn list_providers(
-    Extension(state): Extension<AppState>,
+    State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Response {
     if let Err(e) = check_auth(&state, &headers) {
@@ -192,7 +225,7 @@ async fn list_providers(
 }
 
 async fn create_provider(
-    Extension(state): Extension<AppState>,
+    State(state): State<AppState>,
     headers: HeaderMap,
     Json(req): Json<CreateProviderRequest>,
 ) -> Response {
@@ -231,7 +264,7 @@ async fn create_provider(
 }
 
 async fn get_provider(
-    Extension(state): Extension<AppState>,
+    State(state): State<AppState>,
     headers: HeaderMap,
     Path(provider_name): Path<String>,
 ) -> Response {
@@ -252,7 +285,7 @@ async fn get_provider(
 }
 
 async fn update_provider(
-    Extension(state): Extension<AppState>,
+    State(state): State<AppState>,
     headers: HeaderMap,
     Path(provider_name): Path<String>,
     Json(req): Json<UpdateProviderRequest>,
@@ -286,7 +319,7 @@ async fn update_provider(
 }
 
 async fn delete_provider(
-    Extension(state): Extension<AppState>,
+    State(state): State<AppState>,
     headers: HeaderMap,
     Path(provider_name): Path<String>,
 ) -> Response {
@@ -308,7 +341,8 @@ async fn delete_provider(
 
 // ── Provider-model bindings ───────────────────────────────────────────────────
 
-#[derive(Serialize)]
+#[derive(Serialize, TS)]
+#[ts(export)]
 struct ProviderModelResponse {
     model_name: String,
     provider_name: String,
@@ -327,7 +361,8 @@ impl From<ProviderModelRecord> for ProviderModelResponse {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 struct CreateProviderModelRequest {
     model_name: String,
@@ -336,7 +371,7 @@ struct CreateProviderModelRequest {
 }
 
 async fn list_provider_models(
-    Extension(state): Extension<AppState>,
+    State(state): State<AppState>,
     headers: HeaderMap,
     Path(provider_name): Path<String>,
 ) -> Response {
@@ -364,7 +399,7 @@ async fn list_provider_models(
 }
 
 async fn create_provider_model(
-    Extension(state): Extension<AppState>,
+    State(state): State<AppState>,
     headers: HeaderMap,
     Path(provider_name): Path<String>,
     Json(req): Json<CreateProviderModelRequest>,
@@ -401,7 +436,7 @@ async fn create_provider_model(
 }
 
 async fn delete_provider_model_binding(
-    Extension(state): Extension<AppState>,
+    State(state): State<AppState>,
     headers: HeaderMap,
     Path((provider_name, model_name)): Path<(String, String)>,
 ) -> Response {

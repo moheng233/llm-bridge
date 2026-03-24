@@ -26,6 +26,12 @@
       ],
       "$lib/*": [
         "./src/lib/*"
+      ],
+      "$bindings": [
+        "./src/bindings"
+      ],
+      "$bindings/*": [
+        "./src/bindings/*"
       ]
     }
   },

@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { api, type Provider, type CreateProviderRequest } from "./api";
+  import { createApiClient } from "$bindings/client";
+  import type { ProviderResponse, CreateProviderRequest, UpdateProviderRequest } from "$bindings";
   import * as Card from "$lib/components/ui/card/index.js";
   import * as Dialog from "$lib/components/ui/dialog/index.js";
   import * as Select from "$lib/components/ui/select/index.js";
@@ -11,7 +12,9 @@
   import { Alert, AlertDescription } from "$lib/components/ui/alert/index.js";
   import { Separator } from "$lib/components/ui/separator/index.js";
 
-  let providers = $state<Provider[]>([]);
+  const api = createApiClient({ baseUrl: "", credentials: "include" });
+
+  let providers = $state<ProviderResponse[]>([]);
   let loading = $state(true);
   let error = $state("");
   let dialogOpen = $state(false);
@@ -30,7 +33,7 @@
     loading = true;
     error = "";
     try {
-      providers = await api.listProviders();
+      providers = await api.providers.listProviders();
     } catch (e: any) {
       error = e.message;
     } finally {
@@ -47,14 +50,14 @@
     formError = "";
   }
 
-  function startEdit(p: Provider) {
-    editing = p.providerName;
+  function startEdit(p: ProviderResponse) {
+    editing = p.provider_name;
     form = {
-      providerName: p.providerName,
-      providerType: p.providerType,
-      baseUrl: p.baseUrl ?? "",
-      keyringService: p.keyringService,
-      keyringAccount: p.keyringAccount,
+      providerName: p.provider_name,
+      providerType: p.provider_type,
+      baseUrl: p.base_url ?? "",
+      keyringService: p.keyring_service,
+      keyringAccount: p.keyring_account,
     };
     dialogOpen = true;
     formError = "";
@@ -64,16 +67,16 @@
     formError = "";
     try {
       if (editing) {
-        await api.updateProvider(editing, {
+        await api.providers.updateProvider(editing, {
           providerType: form.providerType,
-          baseUrl: form.baseUrl || undefined,
+          baseUrl: form.baseUrl || null,
           keyringService: form.keyringService,
           keyringAccount: form.keyringAccount,
         });
       } else {
-        await api.createProvider({
+        await api.providers.createProvider({
           ...form,
-          baseUrl: form.baseUrl || undefined,
+          baseUrl: form.baseUrl || null,
         });
       }
       resetForm();
@@ -85,7 +88,7 @@
 
   async function handleDelete(name: string) {
     try {
-      await api.deleteProvider(name);
+      await api.providers.deleteProvider(name);
       await load();
     } catch (e: any) {
       error = e.message;
@@ -186,28 +189,28 @@
           <Card.Header>
             <div class="flex items-start justify-between">
               <div>
-                <Card.Title class="text-base">{p.providerName}</Card.Title>
-                <Badge class="mt-1 {typeBadgeVariant[p.providerType] ?? ''}">
-                  {typeLabels[p.providerType] ?? p.providerType}
+                <Card.Title class="text-base">{p.provider_name}</Card.Title>
+                <Badge class="mt-1 {typeBadgeVariant[p.provider_type] ?? ''}">
+                  {typeLabels[p.provider_type] ?? p.provider_type}
                 </Badge>
               </div>
               <div class="flex gap-1">
                 <Button variant="ghost" size="sm" onclick={() => startEdit(p)}>✏️</Button>
-                <Button variant="ghost" size="sm" onclick={() => handleDelete(p.providerName)}>🗑️</Button>
+                <Button variant="ghost" size="sm" onclick={() => handleDelete(p.provider_name)}>🗑️</Button>
               </div>
             </div>
           </Card.Header>
           <Card.Content>
             <dl class="space-y-1.5 text-xs text-muted-foreground">
-              {#if p.baseUrl}
+              {#if p.base_url}
                 <div class="flex gap-2">
                   <dt class="shrink-0 font-medium">URL</dt>
-                  <dd class="truncate font-mono">{p.baseUrl}</dd>
+                  <dd class="truncate font-mono">{p.base_url}</dd>
                 </div>
               {/if}
               <div class="flex gap-2">
                 <dt class="shrink-0 font-medium">Keyring</dt>
-                <dd class="font-mono">{p.keyringService}/{p.keyringAccount}</dd>
+                <dd class="font-mono">{p.keyring_service}/{p.keyring_account}</dd>
               </div>
             </dl>
           </Card.Content>

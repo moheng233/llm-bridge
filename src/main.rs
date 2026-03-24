@@ -1,13 +1,10 @@
-pub mod actors;
-pub mod config;
-pub mod db;
-pub mod observability;
-pub mod protocol;
-pub mod routing;
-pub mod server;
-pub mod types;
-
 use std::sync::Arc;
+
+use llm_bridge::actors;
+use llm_bridge::config;
+use llm_bridge::db;
+use llm_bridge::observability;
+use llm_bridge::server;
 
 use ractor::Actor;
 use tracing::info;

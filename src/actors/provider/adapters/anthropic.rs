@@ -24,7 +24,6 @@ const DEFAULT_MAX_TOKENS: u32 = 4096;
     level = "info",
     skip(state, request, tx),
     fields(
-        provider = %state.provider_id,
         model = %request.model,
         message_count = request.messages.len()
     )

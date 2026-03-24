@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { api, type Provider, type ProviderModel, type CatalogModel, type CreateBindingRequest } from "./api";
+  import { createApiClient } from "$bindings/client";
+  import type { ProviderResponse, ProviderModelResponse, CatalogModelResponse, CreateProviderModelRequest } from "$bindings";
   import * as Table from "$lib/components/ui/table/index.js";
   import * as Select from "$lib/components/ui/select/index.js";
   import * as Dialog from "$lib/components/ui/dialog/index.js";
@@ -10,17 +11,19 @@
   import { Spinner } from "$lib/components/ui/spinner/index.js";
   import { Alert, AlertDescription } from "$lib/components/ui/alert/index.js";
 
-  let providers = $state<Provider[]>([]);
-  let catalogModels = $state<CatalogModel[]>([]);
+  const api = createApiClient({ baseUrl: "", credentials: "include" });
+
+  let providers = $state<ProviderResponse[]>([]);
+  let catalogModels = $state<CatalogModelResponse[]>([]);
   let selectedProvider = $state("");
-  let bindings = $state<ProviderModel[]>([]);
+  let bindings = $state<ProviderModelResponse[]>([]);
   let loading = $state(true);
   let bindingsLoading = $state(false);
   let error = $state("");
   let dialogOpen = $state(false);
   let formError = $state("");
 
-  let form = $state<CreateBindingRequest>({
+  let form = $state<CreateProviderModelRequest>({
     modelName: "",
     providerModelName: "",
     priority: 0,
@@ -30,9 +33,9 @@
     loading = true;
     error = "";
     try {
-      [providers, catalogModels] = await Promise.all([api.listProviders(), api.listModels()]);
+      [providers, catalogModels] = await Promise.all([api.providers.listProviders(), api.models.listCatalogModels()]);
       if (providers.length > 0 && !selectedProvider) {
-        selectedProvider = providers[0].providerName;
+        selectedProvider = providers[0].provider_name;
       }
     } catch (e: any) {
       error = e.message;
@@ -45,7 +48,7 @@
     if (!selectedProvider) { bindings = []; return; }
     bindingsLoading = true;
     try {
-      bindings = await api.listBindings(selectedProvider);
+      bindings = await api.providers.listProviderModels(selectedProvider);
     } catch (e: any) {
       error = e.message;
     } finally {
@@ -65,7 +68,7 @@
   async function handleSubmit() {
     formError = "";
     try {
-      await api.createBinding(selectedProvider, form);
+      await api.providers.createProviderModel(selectedProvider, form);
       resetForm();
       await loadBindings();
     } catch (e: any) {
@@ -75,7 +78,7 @@
 
   async function handleDelete(modelName: string) {
     try {
-      await api.deleteBinding(selectedProvider, modelName);
+      await api.providers.deleteProviderModelBinding(selectedProvider, modelName);
       await loadBindings();
     } catch (e: any) {
       error = e.message;
@@ -90,7 +93,7 @@
   }
 
   let availableModels = $derived(
-    catalogModels.filter((m) => !bindings.some((b) => b.modelName === m.modelName)),
+    catalogModels.filter((m) => !bindings.some((b) => b.model_name === m.model_name)),
   );
 </script>
 
@@ -121,11 +124,11 @@
       <Label class="text-sm font-medium">选择提供者：</Label>
       <Select.Root type="single" bind:value={selectedProvider}>
         <Select.Trigger class="w-[280px]">
-          {providers.find((p) => p.providerName === selectedProvider)?.providerName ?? "选择提供者"}
+          {providers.find((p) => p.provider_name === selectedProvider)?.provider_name ?? "选择提供者"}
         </Select.Trigger>
         <Select.Content>
           {#each providers as p}
-            <Select.Item value={p.providerName}>{p.providerName} ({p.providerType})</Select.Item>
+            <Select.Item value={p.provider_name}>{p.provider_name} ({p.provider_type})</Select.Item>
           {/each}
         </Select.Content>
       </Select.Root>
@@ -155,7 +158,7 @@
                   </Select.Trigger>
                   <Select.Content>
                     {#each availableModels as m}
-                      <Select.Item value={m.modelName}>{m.modelName}</Select.Item>
+                      <Select.Item value={m.model_name}>{m.model_name}</Select.Item>
                     {/each}
                   </Select.Content>
                 </Select.Root>
@@ -199,13 +202,13 @@
         <Table.Body>
           {#each bindings as b}
             <Table.Row>
-              <Table.Cell class="font-mono text-xs">{b.modelName}</Table.Cell>
-              <Table.Cell class="font-mono text-xs">{b.providerModelName}</Table.Cell>
+              <Table.Cell class="font-mono text-xs">{b.model_name}</Table.Cell>
+              <Table.Cell class="font-mono text-xs">{b.provider_model_name}</Table.Cell>
               <Table.Cell class="text-right">
                 <Badge variant="secondary">{b.priority}</Badge>
               </Table.Cell>
               <Table.Cell class="text-center">
-                <Button variant="ghost" size="sm" onclick={() => handleDelete(b.modelName)}>🗑️</Button>
+                <Button variant="ghost" size="sm" onclick={() => handleDelete(b.model_name)}>🗑️</Button>
               </Table.Cell>
             </Table.Row>
           {/each}

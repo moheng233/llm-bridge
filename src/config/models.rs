@@ -2,6 +2,7 @@ use std::env;
 
 use bincode_next::{Decode, Encode};
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 #[serde(rename_all = "camelCase")]
@@ -96,7 +97,8 @@ impl ModelCatalogConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Encode, Decode)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Encode, Decode, TS)]
+#[ts(export)]
 #[serde(rename_all = "lowercase")]
 pub enum ProviderType {
     OpenAI,

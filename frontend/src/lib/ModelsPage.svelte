@@ -1,23 +1,29 @@
 <script lang="ts">
-  import { api, type CatalogModel } from "./api";
+  import { createApiClient } from "$bindings/client";
+  import type { CatalogModelResponse } from "$bindings";
+  import { stockFeatures, createSortedRowModel, createFilteredRowModel } from "@tanstack/table-core";
+  import { createTable, FlexRender } from "$lib/components/table";
   import * as Table from "$lib/components/ui/table/index.js";
-  import * as Tabs from "$lib/components/ui/tabs/index.js";
   import { Input } from "$lib/components/ui/input/index.js";
   import { Badge } from "$lib/components/ui/badge/index.js";
-  import { Spinner } from "$lib/components/ui/spinner/index.js";
   import { Alert, AlertDescription } from "$lib/components/ui/alert/index.js";
+  import { Checkbox } from "$lib/components/ui/checkbox/index.js";
+  import { Label } from "$lib/components/ui/label/index.js";
 
-  let models = $state<CatalogModel[]>([]);
+  const api = createApiClient({ baseUrl: "", credentials: "include" });
+
+  let models = $state<CatalogModelResponse[]>([]);
   let loading = $state(true);
   let error = $state("");
   let search = $state("");
-  let tab = $state<"catalog" | "available">("catalog");
+  let onlyAvailable = $state(false);
+  const loadingRows = Array.from({ length: 8 }, (_, index) => index);
 
   async function load() {
     loading = true;
     error = "";
     try {
-      models = tab === "catalog" ? await api.listModels() : await api.listAvailableModels();
+      models = onlyAvailable ? await api.models.listAvailableModels() : await api.models.listCatalogModels();
     } catch (e: any) {
       error = e.message;
     } finally {
@@ -26,94 +32,213 @@
   }
 
   $effect(() => {
-    tab;
+    onlyAvailable;
     load();
   });
-
-let filtered = $derived(
-  search
-    ? models.filter((m) => m.capabilities.name.toLowerCase().includes(search.toLowerCase()))
-    : models,
-);
 
   function formatTokens(n: number): string {
     if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
     if (n >= 1_000) return `${(n / 1_000).toFixed(0)}K`;
     return n.toString();
   }
+
+  const columns = [
+    {
+      accessorFn: (row: CatalogModelResponse) => row.capabilities.name,
+      id: "name",
+      header: "模型名称",
+      cell: (info: any) => info.getValue(),
+      enableSorting: true,
+      enableColumnFilter: true,
+      filterFn: "includesString" as const,
+    },
+    {
+      accessorFn: (row: CatalogModelResponse) => row.capabilities.maxInputTokens,
+      id: "inputTokens",
+      header: () => "输入 / 输出",
+      cell: (info: any) => {
+        const output = info.row.original.capabilities.maxOutputTokens;
+        return `${formatTokens(info.getValue())} / ${formatTokens(output)}`;
+      },
+      enableSorting: true,
+      sortDescFirst: true,
+    },
+    {
+      accessorFn: (row: CatalogModelResponse) => row.capabilities.toolCalling,
+      id: "toolCalling",
+      header: "工具",
+      cell: (info: any) => info.getValue(),
+      enableSorting: true,
+    },
+    {
+      accessorFn: (row: CatalogModelResponse) => row.capabilities.vision,
+      id: "vision",
+      header: "视觉",
+      cell: (info: any) => info.getValue(),
+      enableSorting: true,
+    },
+    {
+      accessorFn: (row: CatalogModelResponse) => row.capabilities.thinking,
+      id: "thinking",
+      header: "推理",
+      cell: (info: any) => info.getValue(),
+      enableSorting: true,
+    },
+  ];
+
+  let sorting = $state<Array<{ id: string; desc: boolean }>>([]);
+  let columnFilters = $state<Array<{ id: string; value: unknown }>>([]);
+
+  let table = $derived(
+    createTable({
+      _features: { ...stockFeatures },
+      _rowModels: {
+        sortedRowModel: createSortedRowModel({}),
+        filteredRowModel: createFilteredRowModel({}),
+      },
+      columns,
+      data: models,
+      state: {
+        get sorting() { return sorting; },
+        get columnFilters() { return columnFilters; },
+      },
+      onSortingChange: (updater: any) => {
+        sorting = updater instanceof Function ? updater(sorting) : updater;
+      },
+      onColumnFiltersChange: (updater: any) => {
+        columnFilters = updater instanceof Function ? updater(columnFilters) : updater;
+      },
+    }),
+  );
+
+  $effect(() => {
+    if (search) {
+      columnFilters = [{ id: "name", value: search }];
+    } else {
+      columnFilters = [];
+    }
+  });
 </script>
 
-<div class="flex flex-col h-full gap-4">
-  <div class="shrink-0 space-y-4">
-    <div class="flex items-center justify-between">
-      <h2 class="text-xl font-semibold">模型目录</h2>
-      <Badge variant="secondary">{models.length} 个模型</Badge>
+<div class="flex h-full min-h-0 flex-col gap-4">
+  <section class="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border bg-background shadow-sm">
+    <div class="flex shrink-0 flex-col gap-3 border-b px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
+      <div class="flex items-center gap-3">
+        <h2 class="text-xl font-semibold">模型目录</h2>
+        <Badge variant="secondary">{models.length} 个模型</Badge>
+        {#if loading}
+          <span class="inline-flex items-center gap-2 text-sm text-muted-foreground">
+            <span class="size-3 rounded-full border-2 border-muted-foreground/25 border-t-muted-foreground animate-spin"></span>
+            正在同步
+          </span>
+        {/if}
+      </div>
+
+      <div class="flex w-full flex-col gap-3 lg:w-auto lg:flex-row lg:items-center">
+        <Label class="flex items-center gap-2 text-sm font-normal text-muted-foreground">
+          <Checkbox
+            bind:checked={onlyAvailable}
+            class="data-checked:bg-primary data-checked:border-primary"
+          />
+          只显示可用
+        </Label>
+        <Input type="text" placeholder="搜索模型名称..." bind:value={search} class="lg:min-w-[24rem]" />
+        <Badge variant="outline">显示 {loading ? "--" : table.getRowModel().rows.length} 条</Badge>
+      </div>
     </div>
 
-    <Tabs.Root value={tab} onValueChange={(v) => (tab = v as "catalog" | "available")}>
-      <Tabs.List>
-        <Tabs.Trigger value="catalog">全部模型</Tabs.Trigger>
-        <Tabs.Trigger value="available">已绑定可用</Tabs.Trigger>
-      </Tabs.List>
-    </Tabs.Root>
+    <div class="min-h-0 flex-1 overflow-auto">
+      <table class="min-w-full border-separate border-spacing-0 text-sm">
+        <Table.Header>
+          {#each table.getHeaderGroups() as headerGroup}
+            <Table.Row class="hover:bg-transparent">
+              {#each headerGroup.headers as header}
+                <Table.Head
+                  class="sticky top-0 z-20 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/80 {header.column.getCanSort() ? 'cursor-pointer select-none' : ''} {header.column.id === 'inputTokens' || header.column.id === 'name' ? '' : 'text-center'} {header.column.id === 'inputTokens' ? 'text-right' : ''}"
+                  onclick={header.column.getToggleSortingHandler()}
+                >
+                  <div class="flex items-center gap-1 {header.column.id === 'inputTokens' ? 'justify-end' : header.column.id === 'name' ? '' : 'justify-center'}">
+                    <FlexRender content={header.column.columnDef.header} context={header.getContext()} />
+                    {#if header.column.getIsSorted() === "asc"}
+                      <span>↑</span>
+                    {:else if header.column.getIsSorted() === "desc"}
+                      <span>↓</span>
+                    {/if}
+                  </div>
+                </Table.Head>
+              {/each}
+            </Table.Row>
+          {/each}
+        </Table.Header>
 
-    <Input type="text" placeholder="搜索模型名称..." bind:value={search} />
-  </div>
-
-  {#if loading}
-    <div class="flex items-center justify-center py-16">
-      <Spinner class="size-8" />
+        <Table.Body>
+          {#if loading}
+            {#each loadingRows as skeletonRow}
+              <Table.Row class="animate-pulse">
+                <Table.Cell class="font-mono text-xs">
+                  <div class="h-4 w-40 rounded bg-muted/80 transition-opacity duration-300" style={`animation-delay: ${skeletonRow * 60}ms;`}></div>
+                </Table.Cell>
+                <Table.Cell class="text-right font-mono text-xs">
+                  <div class="ml-auto h-4 w-24 rounded bg-muted/80 transition-opacity duration-300" style={`animation-delay: ${skeletonRow * 60 + 40}ms;`}></div>
+                </Table.Cell>
+                <Table.Cell class="text-center">
+                  <div class="mx-auto h-5 w-8 rounded-full bg-muted/70 transition-opacity duration-300" style={`animation-delay: ${skeletonRow * 60 + 80}ms;`}></div>
+                </Table.Cell>
+                <Table.Cell class="text-center">
+                  <div class="mx-auto h-5 w-8 rounded-full bg-muted/70 transition-opacity duration-300" style={`animation-delay: ${skeletonRow * 60 + 120}ms;`}></div>
+                </Table.Cell>
+                <Table.Cell class="text-center">
+                  <div class="mx-auto h-5 w-8 rounded-full bg-muted/70 transition-opacity duration-300" style={`animation-delay: ${skeletonRow * 60 + 160}ms;`}></div>
+                </Table.Cell>
+              </Table.Row>
+            {/each}
+          {:else if error}
+            <Table.Row class="hover:bg-transparent">
+              <Table.Cell colspan={columns.length} class="p-4">
+                <Alert variant="destructive">
+                  <AlertDescription>{error}</AlertDescription>
+                </Alert>
+              </Table.Cell>
+            </Table.Row>
+          {:else if table.getRowModel().rows.length === 0}
+            <Table.Row class="hover:bg-transparent">
+              <Table.Cell colspan={columns.length} class="py-12 text-center text-sm text-muted-foreground">
+                {search ? "没有匹配的模型" : onlyAvailable ? "暂无可用模型" : "暂无模型数据"}
+              </Table.Cell>
+            </Table.Row>
+          {:else}
+            {#each table.getRowModel().rows as row}
+              <Table.Row>
+                {#each row.getVisibleCells() as cell}
+                  <Table.Cell class="{cell.column.id === 'name' ? 'font-mono text-xs' : ''} {cell.column.id === 'inputTokens' ? 'text-right font-mono text-xs' : ''} {!['name', 'inputTokens'].includes(cell.column.id) ? 'text-center' : ''}">
+                    {#if cell.column.id === "toolCalling"}
+                      {#if cell.getValue()}
+                        <Badge variant="default" class="bg-emerald-100 text-emerald-700 hover:bg-emerald-100">✓</Badge>
+                      {:else}
+                        <span class="text-muted-foreground">—</span>
+                      {/if}
+                    {:else if cell.column.id === "vision"}
+                      {#if cell.getValue()}
+                        <Badge variant="default" class="bg-blue-100 text-blue-700 hover:bg-blue-100">✓</Badge>
+                      {:else}
+                        <span class="text-muted-foreground">—</span>
+                      {/if}
+                    {:else if cell.column.id === "thinking"}
+                      {#if cell.getValue()}
+                        <Badge variant="default" class="bg-purple-100 text-purple-700 hover:bg-purple-100">✓</Badge>
+                      {:else}
+                        <span class="text-muted-foreground">—</span>
+                      {/if}
+                    {:else}
+                      <FlexRender content={cell.column.columnDef.cell} context={cell.getContext()} />
+                    {/if}
+                  </Table.Cell>
+                {/each}
+              </Table.Row>
+            {/each}
+          {/if}
+        </Table.Body>
+      </table>
     </div>
-  {:else if error}
-    <Alert variant="destructive">
-      <AlertDescription>{error}</AlertDescription>
-    </Alert>
-  {:else if filtered.length === 0}
-    <div class="rounded-lg border border-dashed py-12 text-center text-sm text-muted-foreground">
-      {search ? "没有匹配的模型" : "暂无模型数据"}
-    </div>
-  {:else}
-    <div class="flex-1 min-h-0 overflow-auto rounded-md border">
-    <Table.Root>
-      <Table.Header>
-        <Table.Row>
-          <Table.Head class="sticky top-0 bg-background z-10">模型名称</Table.Head>
-          <Table.Head class="text-right sticky top-0 bg-background z-10">输入 / 输出</Table.Head>
-          <Table.Head class="text-center sticky top-0 bg-background z-10">工具</Table.Head>
-          <Table.Head class="text-center sticky top-0 bg-background z-10">视觉</Table.Head>
-          <Table.Head class="text-center sticky top-0 bg-background z-10">推理</Table.Head>
-        </Table.Row>
-      </Table.Header>
-      <Table.Body>
-        {#each filtered as m}
-          <Table.Row>
-            <Table.Cell class="font-mono text-xs">{m.capabilities.name}</Table.Cell>
-            <Table.Cell class="text-right font-mono text-xs">{formatTokens(m.capabilities.maxInputTokens)} / {formatTokens(m.capabilities.maxOutputTokens)}</Table.Cell>
-            <Table.Cell class="text-center">
-              {#if m.capabilities.toolCalling}
-                <Badge variant="default" class="bg-emerald-100 text-emerald-700 hover:bg-emerald-100">✓</Badge>
-              {:else}
-                <span class="text-muted-foreground">—</span>
-              {/if}
-            </Table.Cell>
-            <Table.Cell class="text-center">
-              {#if m.capabilities.vision}
-                <Badge variant="default" class="bg-blue-100 text-blue-700 hover:bg-blue-100">✓</Badge>
-              {:else}
-                <span class="text-muted-foreground">—</span>
-              {/if}
-            </Table.Cell>
-            <Table.Cell class="text-center">
-              {#if m.capabilities.thinking}
-                <Badge variant="default" class="bg-purple-100 text-purple-700 hover:bg-purple-100">✓</Badge>
-              {:else}
-                <span class="text-muted-foreground">—</span>
-              {/if}
-            </Table.Cell>
-          </Table.Row>
-        {/each}
-      </Table.Body>
-    </Table.Root>
-    </div>
-  {/if}
+  </section>
 </div>
