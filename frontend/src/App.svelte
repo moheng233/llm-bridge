@@ -1,48 +1,55 @@
 <script lang="ts">
+  import Router from "svelte-spa-router";
+  import { push, router } from "svelte-spa-router";
   import * as Sidebar from "$lib/components/ui/sidebar/index.js";
-  import * as Tooltip from "$lib/components/ui/tooltip/index.js";
   import ModelsPage from "./lib/ModelsPage.svelte";
   import ProvidersPage from "./lib/ProvidersPage.svelte";
   import BindingsPage from "./lib/BindingsPage.svelte";
 
-  type Page = "models" | "providers" | "bindings";
-  const validPages = new Set<Page>(["models", "providers", "bindings"]);
+  type PagePath = "/models" | "/providers" | "/bindings";
 
-  function getPageFromHash(): Page {
-    const hash = window.location.hash.slice(1);
-    return validPages.has(hash as Page) ? (hash as Page) : "models";
+  const routes = {
+    "/": ModelsPage,
+    "/models": ModelsPage,
+    "/providers": ProvidersPage,
+    "/bindings": BindingsPage,
+  };
+
+  const resolveCurrentPage = (path: string): PagePath => {
+    if (path === "/" || path === "/models") return "/models";
+    if (path === "/providers") return "/providers";
+    if (path === "/bindings") return "/bindings";
+    return "/models";
+  };
+
+  let currentPath = $derived(resolveCurrentPage(router.location));
+
+  function navigate(path: PagePath) {
+    push(path);
   }
-
-  let page = $state<Page>(getPageFromHash());
-
-  function setPage(p: Page) {
-    page = p;
-    window.location.hash = p;
-  }
-
-  $effect(() => {
-    const onHashChange = () => { page = getPageFromHash(); };
-    window.addEventListener("hashchange", onHashChange);
-    return () => window.removeEventListener("hashchange", onHashChange);
-  });
 
   const navItems = [
-    { id: "models" as const, label: "模型目录", icon: "📦" },
-    { id: "providers" as const, label: "提供者管理", icon: "🔧" },
-    { id: "bindings" as const, label: "模型绑定", icon: "🔗" },
+    { path: "/models" as const, label: "模型目录", icon: "📦" },
+    { path: "/providers" as const, label: "提供者管理", icon: "🔧" },
+    { path: "/bindings" as const, label: "模型绑定", icon: "🔗" },
   ];
 </script>
 
 <Sidebar.Provider class="h-svh overflow-hidden">
-  <Sidebar.Root>
+  <Sidebar.Root collapsible="icon">
     <Sidebar.Header>
-      <div class="flex items-center gap-2.5 px-2 py-1.5">
+      <div
+        class="flex items-center gap-2.5 px-2 py-1.5 group-data-[collapsible=icon]:gap-0 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0"
+      >
         <div
-          class="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground text-sm font-bold"
+          class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground text-sm font-bold"
         >
           LB
         </div>
-        <span class="text-sm font-semibold">LLM Bridge</span>
+        <span
+          class="text-sm font-semibold overflow-hidden whitespace-nowrap transition-[opacity,max-width] duration-200 ease-linear group-data-[state=collapsed]:opacity-0 group-data-[state=collapsed]:max-w-0 group-data-[state=expanded]:opacity-100 group-data-[state=expanded]:max-w-[200px]"
+          >LLM Bridge</span
+        >
       </div>
     </Sidebar.Header>
     <Sidebar.Content>
@@ -51,9 +58,16 @@
         <Sidebar.Menu>
           {#each navItems as item}
             <Sidebar.MenuItem>
-              <Sidebar.MenuButton isActive={page === item.id} onclick={() => setPage(item.id)}>
+              <Sidebar.MenuButton
+                isActive={currentPath === item.path}
+                onclick={() => navigate(item.path)}
+                tooltipContent={item.label}
+              >
                 <span>{item.icon}</span>
-                <span>{item.label}</span>
+                <span
+                  class="overflow-hidden whitespace-nowrap transition-[opacity,max-width] duration-200 ease-linear group-data-[state=collapsed]:opacity-0 group-data-[state=collapsed]:max-w-0 group-data-[state=expanded]:opacity-100 group-data-[state=expanded]:max-w-[200px]"
+                  >{item.label}</span
+                >
               </Sidebar.MenuButton>
             </Sidebar.MenuItem>
           {/each}
@@ -61,24 +75,22 @@
       </Sidebar.Group>
     </Sidebar.Content>
     <Sidebar.Footer>
-      <div class="px-2 py-1.5 text-xs text-muted-foreground">llm-bridge admin</div>
+      <div
+        class="px-2 py-1.5 text-xs text-muted-foreground overflow-hidden whitespace-nowrap transition-[opacity,max-width] duration-200 ease-linear group-data-[state=collapsed]:opacity-0 group-data-[state=collapsed]:max-w-0 group-data-[state=expanded]:opacity-100 group-data-[state=expanded]:max-w-[200px]"
+      >
+        llm-bridge admin
+      </div>
     </Sidebar.Footer>
   </Sidebar.Root>
   <Sidebar.Inset class="overflow-hidden min-h-0">
     <header class="flex h-12 shrink-0 items-center gap-2 border-b px-4">
       <Sidebar.Trigger class="-ml-1" />
       <span class="text-sm font-medium text-muted-foreground">
-        {navItems.find((n) => n.id === page)?.label}
+        {navItems.find((n) => n.path === currentPath)?.label}
       </span>
     </header>
     <main class="flex-1 min-h-0 overflow-hidden p-6 flex flex-col">
-      {#if page === "models"}
-        <ModelsPage />
-      {:else if page === "providers"}
-        <ProvidersPage />
-      {:else if page === "bindings"}
-        <BindingsPage />
-      {/if}
+      <Router {routes} />
     </main>
   </Sidebar.Inset>
 </Sidebar.Provider>

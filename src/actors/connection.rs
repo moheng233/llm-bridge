@@ -3,7 +3,7 @@ use tokio::sync::mpsc;
 use tokio_stream::StreamExt;
 use tracing::{Instrument, debug, info, info_span, instrument, warn};
 
-use crate::actors::gateway_manager::{GatewayManagerMessage, read_keyring_secret};
+use crate::actors::gateway_manager::GatewayManagerMessage;
 use crate::actors::provider::{
     ProviderActor, ProviderChatRequest, ProviderMessage, ProviderRuntimeConfig,
 };
@@ -162,22 +162,10 @@ impl Actor for ConnectionActor {
                         "resolved model route for chat request"
                     );
 
-                    let api_key = match read_keyring_secret(
-                        &route.keyring_service,
-                        &route.keyring_account,
-                    ) {
-                        Ok(api_key) => api_key,
-                        Err(error) => {
-                            warn!(provider = %route.provider_name, error = %error, "provider credentials unavailable");
-                            send_error(state, "PROVIDER_CREDENTIALS_ERROR", &error).await;
-                            return Ok(());
-                        }
-                    };
-
                     let provider_config = ProviderRuntimeConfig {
                         id: route.provider_name,
                         provider_type: route.provider_type,
-                        api_key,
+                        api_key: route.api_key,
                         base_url: route.base_url,
                     };
 

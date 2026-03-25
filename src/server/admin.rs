@@ -47,6 +47,10 @@ pub fn all_routes() -> (Router<AppState>, axfetchum::RouteCollection) {
         .delete("/api/v1/providers/{provider_name}", delete_provider)
             .auth()
             .done()
+        .put("/api/v1/providers/{provider_name}/secret", update_provider_secret)
+            .body::<UpdateProviderSecretRequest>()
+            .auth()
+            .done()
         .get("/api/v1/providers/{provider_name}/models", list_provider_models)
             .response::<Vec<ProviderModelResponse>>()
             .auth()
@@ -171,8 +175,6 @@ struct ProviderResponse {
     provider_name: String,
     provider_type: ProviderType,
     base_url: Option<String>,
-    keyring_service: String,
-    keyring_account: String,
 }
 
 impl From<ProviderRecord> for ProviderResponse {
@@ -181,8 +183,6 @@ impl From<ProviderRecord> for ProviderResponse {
             provider_name: r.provider_name,
             provider_type: r.provider_type,
             base_url: r.base_url,
-            keyring_service: r.keyring_service,
-            keyring_account: r.keyring_account,
         }
     }
 }
@@ -194,8 +194,7 @@ struct CreateProviderRequest {
     provider_name: String,
     provider_type: ProviderType,
     base_url: Option<String>,
-    keyring_service: String,
-    keyring_account: String,
+    api_key: String,
 }
 
 #[derive(Deserialize, TS)]
@@ -204,8 +203,14 @@ struct CreateProviderRequest {
 struct UpdateProviderRequest {
     provider_type: ProviderType,
     base_url: Option<String>,
-    keyring_service: String,
-    keyring_account: String,
+    api_key: String,
+}
+
+#[derive(Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+struct UpdateProviderSecretRequest {
+    api_key: String,
 }
 
 async fn list_providers(
@@ -253,12 +258,15 @@ async fn create_provider(
         provider_name: req.provider_name,
         provider_type: req.provider_type,
         base_url: req.base_url,
-        keyring_service: req.keyring_service,
-        keyring_account: req.keyring_account,
     };
 
     match state.db.put_provider(&record) {
-        Ok(()) => (StatusCode::CREATED, Json(ProviderResponse::from(record))).into_response(),
+        Ok(()) => {
+            if let Err(e) = state.db.put_provider_secret(&record.provider_name, &req.api_key) {
+                return db_err(e);
+            }
+            (StatusCode::CREATED, Json(ProviderResponse::from(record))).into_response()
+        }
         Err(e) => db_err(e),
     }
 }
@@ -308,12 +316,15 @@ async fn update_provider(
         provider_name: provider_name.clone(),
         provider_type: req.provider_type,
         base_url: req.base_url,
-        keyring_service: req.keyring_service,
-        keyring_account: req.keyring_account,
     };
 
     match state.db.put_provider(&record) {
-        Ok(()) => Json(ProviderResponse::from(record)).into_response(),
+        Ok(()) => {
+            if let Err(e) = state.db.put_provider_secret(&provider_name, &req.api_key) {
+                return db_err(e);
+            }
+            Json(ProviderResponse::from(record)).into_response()
+        }
         Err(e) => db_err(e),
     }
 }
@@ -335,6 +346,32 @@ async fn delete_provider(
             }),
         )
             .into_response(),
+        Err(e) => db_err(e),
+    }
+}
+
+async fn update_provider_secret(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(provider_name): Path<String>,
+    Json(req): Json<UpdateProviderSecretRequest>,
+) -> Response {
+    if let Err(e) = check_auth(&state, &headers) {
+        return e;
+    }
+
+    if state.db.get_provider(&provider_name).ok().flatten().is_none() {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(ErrorBody {
+                error: format!("provider '{}' not found", provider_name),
+            }),
+        )
+            .into_response();
+    }
+
+    match state.db.put_provider_secret(&provider_name, &req.api_key) {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(e) => db_err(e),
     }
 }

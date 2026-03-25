@@ -1,5 +1,5 @@
-import { constructTableHelper } from '@tanstack/table-core'
-import { createTable } from './createTable.svelte'
+import { constructTableHelper } from "@tanstack/table-core";
+import { createTable } from "./createTable.svelte";
 import type {
   RowData,
   Table,
@@ -7,19 +7,19 @@ import type {
   TableHelperOptions,
   TableHelper_Core,
   TableOptions,
-} from '@tanstack/table-core'
+} from "@tanstack/table-core";
 
 export type TableHelper<
   TFeatures extends TableFeatures,
   TData extends RowData = any,
-> = Omit<TableHelper_Core<TFeatures>, 'tableCreator'> & {
+> = Omit<TableHelper_Core<TFeatures>, "tableCreator"> & {
   createTable: (
     tableOptions: Omit<
       TableOptions<TFeatures, TData>,
-      '_features' | '_rowModels'
+      "_features" | "_rowModels"
     >,
-  ) => Table<TFeatures, TData>
-}
+  ) => Table<TFeatures, TData>;
+};
 
 export function createTableHelper<
   TFeatures extends TableFeatures,
@@ -29,22 +29,25 @@ export function createTableHelper<
 ): TableHelper<TFeatures, TData> {
   // Create a wrapper function that matches the expected signature
   const tableCreator = <TDataInner extends RowData>(
-    tableOptions: Omit<TableOptions<TFeatures, TDataInner>, '_features' | '_rowModels'>,
+    tableOptions: Omit<
+      TableOptions<TFeatures, TDataInner>,
+      "_features" | "_rowModels"
+    >,
     selector?: any,
   ): Table<TFeatures, TDataInner> => {
     // Merge the helper options with the table options
     const fullOptions = {
       ...tableHelperOptions,
       ...tableOptions,
-    } as TableOptions<TFeatures, TDataInner>
-    return createTable(fullOptions, selector)
-  }
+    } as TableOptions<TFeatures, TDataInner>;
+    return createTable(fullOptions, selector);
+  };
 
-  const tableHelper = constructTableHelper(tableCreator, tableHelperOptions)
+  const tableHelper = constructTableHelper(tableCreator, tableHelperOptions);
   return {
     ...tableHelper,
     createTable: tableHelper.tableCreator,
-  } as any
+  } as any;
 }
 
 // test

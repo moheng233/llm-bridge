@@ -79,9 +79,7 @@ GET /api/v1/providers
   {
     "providerName": "my-openai",
     "providerType": "openai",
-    "baseUrl": null,
-    "keyringService": "llm-bridge",
-    "keyringAccount": "my-openai-key"
+    "baseUrl": null
   }
 ]
 ```
@@ -102,10 +100,7 @@ Content-Type: application/json
 | `providerName`  | string                           | ✅   | 唯一标识，创建后不可更改              |
 | `providerType`  | `"openai"` \| `"anthropic"` \| `"gemini"` | ✅   | 提供者协议类型                        |
 | `baseUrl`       | string \| null                   | ❌   | 覆盖默认 API 地址（如私有部署）       |
-| `keyringService`| string                           | ✅   | 系统密钥环 service 名称               |
-| `keyringAccount`| string                           | ✅   | 系统密钥环 account 名称               |
-
-> API 密钥本身通过操作系统密钥环（keyring）存储，不在此接口中传递。
+| `apiKey`        | string                           | ✅   | API 密钥                             |
 
 **响应 201** — 返回刚创建的提供者对象
 
@@ -138,8 +133,7 @@ Content-Type: application/json
 |-----------------|----------------------------------|------|
 | `providerType`  | string                           | ✅   |
 | `baseUrl`       | string \| null                   | ❌   |
-| `keyringService`| string                           | ✅   |
-| `keyringAccount`| string                           | ✅   |
+| `apiKey`        | string                           | ✅   |
 
 **响应 200** — 返回更新后的提供者对象
 
@@ -156,6 +150,25 @@ DELETE /api/v1/providers/:provider_name
 删除提供者的同时会级联删除该提供者下的所有模型绑定。
 
 **响应 204** — 删除成功
+
+**响应 404** — 提供者不存在
+
+---
+
+### 更新提供者密钥
+
+```
+PUT /api/v1/providers/:provider_name/secret
+Content-Type: application/json
+```
+
+**请求体**
+
+| 字段      | 类型   | 必填 | 说明     |
+|---------|--------|------|--------|
+| `apiKey`| string | ✅   | API 密钥 |
+
+**响应 204** — 更新成功
 
 **响应 404** — 提供者不存在
 

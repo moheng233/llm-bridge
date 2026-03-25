@@ -8,7 +8,7 @@ fn config() -> GeneratorConfig {
         factory_name: "createApiClient".into(),
         error_class_name: "ApiError".into(),
         options_interface_name: "ApiClientOptions".into(),
-        type_import_prefix: "./".into(),
+        type_import_prefix: ".".into(),
         ..Default::default()
     }
 }

@@ -1,4 +1,4 @@
-import type { Component, ComponentProps, Snippet } from 'svelte'
+import type { Component, ComponentProps, Snippet } from "svelte";
 
 /**
  * A helper class to make it easy to identify Svelte components in
@@ -73,7 +73,7 @@ export const renderComponent = <
 >(
   component: TComponent,
   props: TProps,
-) => new RenderComponentConfig(component, props)
+) => new RenderComponentConfig(component, props);
 
 /**
  * A helper function to help create cells from Svelte Snippets through ColumnDef's `cell` and `header` properties.
@@ -102,4 +102,4 @@ export const renderComponent = <
 export const renderSnippet = <TProps>(
   snippet: Snippet<[TProps]>,
   params: TProps,
-) => new RenderSnippetConfig(snippet, params)
+) => new RenderSnippetConfig(snippet, params);

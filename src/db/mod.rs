@@ -17,6 +17,7 @@ pub struct DatabaseRepo {
     catalog_models: Keyspace,
     pub providers: Keyspace,
     pub provider_models: Keyspace,
+    pub provider_secrets: Keyspace,
     metadata: Keyspace,
 }
 
@@ -46,8 +47,6 @@ pub struct ProviderRecord {
     pub provider_name: String,
     pub provider_type: ProviderType,
     pub base_url: Option<String>,
-    pub keyring_service: String,
-    pub keyring_account: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
@@ -85,8 +84,7 @@ pub struct ResolvedProviderRoute {
     pub priority: u32,
     pub provider_type: ProviderType,
     pub base_url: Option<String>,
-    pub keyring_service: String,
-    pub keyring_account: String,
+    pub api_key: String,
 }
 
 impl DatabaseRepo {
@@ -94,14 +92,14 @@ impl DatabaseRepo {
         let db = Database::builder(path).open()?;
         let catalog_models = db.keyspace("catalog_models", KeyspaceCreateOptions::default)?;
         let providers = db.keyspace("providers", KeyspaceCreateOptions::default)?;
-        let provider_models = db.keyspace("provider_models", KeyspaceCreateOptions::default)?;
-        let metadata = db.keyspace("metadata", KeyspaceCreateOptions::default)?;
+        let provider_models = db.keyspace("provider_models", KeyspaceCreateOptions::default)?;        let provider_secrets = db.keyspace("provider_secrets", KeyspaceCreateOptions::default)?;        let metadata = db.keyspace("metadata", KeyspaceCreateOptions::default)?;
 
         let repo = Self {
             db,
             catalog_models,
             providers,
             provider_models,
+            provider_secrets,
             metadata,
         };
 
@@ -180,9 +178,35 @@ impl DatabaseRepo {
             self.provider_models.remove(key)?;
         }
 
+        self.provider_secrets.remove(provider_name.as_bytes())?;
         self.providers.remove(provider_name.as_bytes())?;
         self.db.persist(PersistMode::SyncAll)?;
         Ok(true)
+    }
+
+    pub fn put_provider_secret(&self, provider_name: &str, api_key: &str) -> Result<(), DbError> {
+        self.provider_secrets
+            .insert(provider_name.as_bytes(), api_key.as_bytes().to_vec())?;
+        self.db.persist(PersistMode::SyncAll)?;
+        Ok(())
+    }
+
+    pub fn get_provider_secret(&self, provider_name: &str) -> Result<Option<String>, DbError> {
+        let value = self.provider_secrets.get(provider_name.as_bytes())?;
+        match value {
+            Some(bytes) => {
+                let secret = String::from_utf8(bytes.to_vec())
+                    .map_err(|e| DbError::Decode(bincode_next::error::DecodeError::Other(Box::leak(e.to_string().into_boxed_str()))))?;
+                Ok(Some(secret))
+            }
+            None => Ok(None),
+        }
+    }
+
+    pub fn delete_provider_secret(&self, provider_name: &str) -> Result<(), DbError> {
+        self.provider_secrets.remove(provider_name.as_bytes())?;
+        self.db.persist(PersistMode::SyncAll)?;
+        Ok(())
     }
 
     pub fn list_catalog_models(&self) -> Result<Vec<CatalogModelRecord>, DbError> {
@@ -292,6 +316,11 @@ impl DatabaseRepo {
             };
 
             let provider_record: ProviderRecord = decode(provider_value.as_ref())?;
+            let api_key = match self.get_provider_secret(&provider_record.provider_name) {
+                Ok(Some(key)) => key,
+                _ => continue,
+            };
+
             routes.push(ResolvedProviderRoute {
                 model_name: model_record.model_name,
                 capabilities: catalog_record.capabilities.clone(),
@@ -300,8 +329,7 @@ impl DatabaseRepo {
                 priority: model_record.priority,
                 provider_type: provider_record.provider_type,
                 base_url: provider_record.base_url,
-                keyring_service: provider_record.keyring_service,
-                keyring_account: provider_record.keyring_account,
+                api_key,
             });
         }
 
@@ -414,8 +442,6 @@ mod tests {
             provider_name: "test-provider".to_string(),
             provider_type: ProviderType::OpenAI,
             base_url: Some("https://api.example.com".to_string()),
-            keyring_service: "llm-bridge".to_string(),
-            keyring_account: "test-account".to_string(),
         };
 
         db.put_provider(&provider).expect("failed to put provider");

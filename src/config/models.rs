@@ -65,7 +65,7 @@ pub struct ModelCatalogConfig {
     pub request_timeout_secs: u64,
     pub strict_bootstrap: bool,
     pub count_consistency_check: bool,
-    pub api_key: KeyringSecretRef,
+    pub api_key: Option<String>,
 }
 
 impl ModelCatalogConfig {
@@ -89,10 +89,7 @@ impl ModelCatalogConfig {
                 "LLM_BRIDGE_CATALOG_COUNT_CONSISTENCY_CHECK",
                 true,
             )?,
-            api_key: KeyringSecretRef {
-                service: env_or_default("LLM_BRIDGE_CATALOG_KEYRING_SERVICE", "llm-bridge"),
-                account: env_or_default("LLM_BRIDGE_CATALOG_KEYRING_ACCOUNT", "openrouter-catalog"),
-            },
+            api_key: env::var("LLM_BRIDGE_CATALOG_API_KEY").ok(),
         })
     }
 }
@@ -104,13 +101,6 @@ pub enum ProviderType {
     OpenAI,
     Anthropic,
     Gemini,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Encode, Decode)]
-#[serde(rename_all = "camelCase")]
-pub struct KeyringSecretRef {
-    pub service: String,
-    pub account: String,
 }
 
 fn env_or_default(key: &str, default: &str) -> String {

@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use keyring::{Entry, Error as KeyringError};
 use ractor::{Actor, ActorProcessingErr, ActorRef};
 use tracing::{Instrument, debug, info, info_span, instrument};
 
@@ -182,27 +181,14 @@ async fn refresh_catalog(
 
 #[instrument(level = "info", skip(settings), fields(base_url = %settings.model_catalog.base_url))]
 async fn fetch_model_catalog(settings: &RuntimeSettings) -> Result<ModelCatalogSnapshot, String> {
-    let api_key = read_keyring_secret(
-        &settings.model_catalog.api_key.service,
-        &settings.model_catalog.api_key.account,
-    )
-    .map(Some)
-    .unwrap_or_else(|error| {
-        tracing::warn!(
-            "openrouter catalog key not available for {}/{} ({}); using unauthenticated /models request",
-            settings.model_catalog.api_key.service,
-            settings.model_catalog.api_key.account,
-            error
-        );
-        None
-    });
+    let api_key = settings.model_catalog.api_key.as_deref();
 
     info!(
         authenticated = api_key.is_some(),
         "building openrouter catalog client"
     );
 
-    let client = OpenRouterCatalogClient::new(&settings.model_catalog, api_key.as_deref())?;
+    let client = OpenRouterCatalogClient::new(&settings.model_catalog, api_key)?;
     client.fetch_snapshot().await
 }
 
@@ -215,43 +201,16 @@ async fn resolve_model_route(
         .resolve_model(model_name)
         .map_err(|error| format!("failed to resolve model {model_name}: {error}"))?;
 
-    if routes.is_empty() {
-        return Err(format!("no provider mapping found for model {model_name}"));
-    }
+    let route = routes
+        .into_iter()
+        .next()
+        .ok_or_else(|| format!("no usable provider found for model {model_name}"))?;
 
-    let mut last_error = None;
+    info!(
+        provider = %route.provider_name,
+        provider_model = %route.provider_model_name,
+        "resolved provider route"
+    );
 
-    for route in routes {
-        match read_keyring_secret(&route.keyring_service, &route.keyring_account) {
-            Ok(_) => {
-                info!(
-                    provider = %route.provider_name,
-                    provider_model = %route.provider_model_name,
-                    "resolved provider route"
-                );
-                return Ok(route);
-            }
-            Err(error) => {
-                debug!(provider = %route.provider_name, error = %error, "provider credentials unavailable");
-                last_error = Some(format!(
-                    "provider {} credentials unavailable: {}",
-                    route.provider_name, error
-                ));
-            }
-        }
-    }
-
-    Err(last_error.unwrap_or_else(|| format!("no usable provider found for model {model_name}")))
-}
-
-pub fn read_keyring_secret(service: &str, account: &str) -> Result<String, String> {
-    let entry = Entry::new(service, account).map_err(|error| error.to_string())?;
-    entry.get_password().map_err(map_keyring_error)
-}
-
-fn map_keyring_error(error: KeyringError) -> String {
-    match error {
-        KeyringError::NoEntry => "secret not found".to_string(),
-        other => other.to_string(),
-    }
+    Ok(route)
 }
