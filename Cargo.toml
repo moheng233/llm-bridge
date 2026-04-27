@@ -7,9 +7,7 @@ edition = "2024"
 axfetchum = { version = "0.1.0", features = ["axum"] }
 axum = { version = "0.8.8", features = ["ws"] }
 base64 = "0.22.1"
-bincode-next = { version = "2.1.0", features = ["derive", "serde"] }
 bitflags = { version = "2.11.0", features = ["serde", "std"] }
-fjall = "3.1.2"
 futures = "0.3.32"
 futures-util = "0.3.32"
 opentelemetry = { version = "0.31.0", features = ["logs"] }
@@ -36,7 +34,6 @@ tokio = { version = "1.50.0", features = [
   "time"
 ] }
 tokio-stream = { version = "0.1.18", features = ["sync"] }
-tokio-tungstenite = "0.29.0"
 tracing = "0.1.44"
 tracing-opentelemetry = "0.32.1"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }

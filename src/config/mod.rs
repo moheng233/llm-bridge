@@ -1,2 +1,2 @@
 pub mod models;
-pub mod openrouter_catalog;
+pub mod models_dev_catalog;

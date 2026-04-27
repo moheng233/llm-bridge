@@ -1,2 +1,2 @@
 pub mod admin;
-pub mod ws;
+pub mod openai_api;

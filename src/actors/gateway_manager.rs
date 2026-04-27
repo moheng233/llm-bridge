@@ -4,19 +4,19 @@ use ractor::{Actor, ActorProcessingErr, ActorRef};
 use tracing::{Instrument, debug, info, info_span, instrument};
 
 use crate::config::models::RuntimeSettings;
-use crate::config::openrouter_catalog::{ModelCatalogSnapshot, OpenRouterCatalogClient};
-use crate::db::{AvailableModel, DatabaseRepo, ResolvedProviderRoute};
+use crate::config::models_dev_catalog::ModelsDevCatalogClient;
+use crate::store::{AvailableModel, ResolvedProviderRoute, Store};
 
 pub struct GatewayManagerActor;
 
 pub struct GatewayManagerArgs {
     pub settings: RuntimeSettings,
-    pub database: Arc<DatabaseRepo>,
+    pub store: Arc<Store>,
 }
 
 pub struct GatewayManagerState {
     pub settings: RuntimeSettings,
-    pub database: Arc<DatabaseRepo>,
+    pub store: Arc<Store>,
 }
 
 #[derive(Debug)]
@@ -24,7 +24,7 @@ pub enum GatewayManagerMessage {
     GetAvailableModels(ractor::RpcReplyPort<Result<Vec<AvailableModel>, String>>),
     ResolveModel(
         String,
-        ractor::RpcReplyPort<Result<ResolvedProviderRoute, String>>,
+        ractor::RpcReplyPort<Result<Vec<ResolvedProviderRoute>, String>>,
     ),
     RefreshCatalog,
 }
@@ -52,7 +52,7 @@ impl Actor for GatewayManagerActor {
         args: Self::Arguments,
     ) -> Result<Self::State, ActorProcessingErr> {
         info!("gateway manager starting");
-        initialize_catalog(&args.database, &args.settings)
+        initialize_catalog(&args.store, &args.settings)
             .await
             .map_err(ActorProcessingErr::from)?;
 
@@ -61,7 +61,7 @@ impl Actor for GatewayManagerActor {
 
         Ok(GatewayManagerState {
             settings: args.settings,
-            database: args.database,
+            store: args.store,
         })
     }
 
@@ -79,20 +79,21 @@ impl Actor for GatewayManagerActor {
         match message {
             GatewayManagerMessage::GetAvailableModels(reply) => {
                 debug!("handling GetAvailableModels");
-                let result = state
-                    .database
-                    .list_available_models()
-                    .map_err(|error| error.to_string());
-                let _ = reply.send(result);
+                let models = state.store.list_available_models();
+                let _ = reply.send(Ok(models));
             }
             GatewayManagerMessage::ResolveModel(model_name, reply) => {
                 debug!(model = %model_name, "handling ResolveModel");
-                let result = resolve_model_route(&state.database, &model_name).await;
-                let _ = reply.send(result);
+                let routes = state.store.resolve_model(&model_name);
+                if routes.is_empty() {
+                    let _ = reply.send(Err(format!("model '{}' is not available", model_name)));
+                } else {
+                    let _ = reply.send(Ok(routes));
+                }
             }
             GatewayManagerMessage::RefreshCatalog => {
                 debug!("handling RefreshCatalog");
-                if let Err(error) = refresh_catalog(&state.database, &state.settings).await {
+                if let Err(error) = refresh_catalog(&state.store, &state.settings).await {
                     tracing::error!("failed to refresh model catalog: {}", error);
                 }
             }
@@ -126,91 +127,83 @@ fn spawn_refresh_loop(myself: ActorRef<GatewayManagerMessage>, interval_secs: u6
     );
 }
 
-#[instrument(level = "info", skip(database, settings), fields(strict_bootstrap = settings.model_catalog.strict_bootstrap))]
+#[instrument(level = "info", skip(store, settings), fields(strict_bootstrap = settings.model_catalog.strict_bootstrap))]
 async fn initialize_catalog(
-    database: &DatabaseRepo,
+    store: &Store,
     settings: &RuntimeSettings,
 ) -> Result<(), String> {
-    match refresh_catalog(database, settings).await {
-        Ok(()) => Ok(()),
-        Err(error) => {
-            if settings.model_catalog.strict_bootstrap
-                && database.catalog_model_count().unwrap_or(0) == 0
-            {
-                Err(error)
+    // Try loading from local cache first.
+    match ModelsDevCatalogClient::load_cache(settings.store_path.as_ref()) {
+        Ok(Some((data, metadata))) => {
+            info!(
+                fetched_at = metadata.fetched_at,
+                "catalog loaded from local cache"
+            );
+            store
+                .replace_catalog(data, metadata)
+                .map_err(|e| e.to_string())?;
+        }
+        Ok(None) => {
+            info!("no local cache found, fetching from models.dev");
+            do_fetch_and_store(store, settings).await?;
+        }
+        Err(e) => {
+            tracing::warn!("failed to load cache: {}, fetching from models.dev", e);
+            do_fetch_and_store(store, settings).await?;
+        }
+    }
+
+    Ok(())
+}
+
+async fn do_fetch_and_store(
+    store: &Store,
+    settings: &RuntimeSettings,
+) -> Result<(), String> {
+    let client = ModelsDevCatalogClient::new(&settings.model_catalog)?;
+    match client.fetch(None).await {
+        Ok((data, metadata)) => {
+            store
+                .replace_catalog(data, metadata)
+                .map_err(|e| e.to_string())?;
+            Ok(())
+        }
+        Err(e) if e == "unchanged" => Ok(()),
+        Err(e) => {
+            // If strict_bootstrap and store is empty, fail.
+            if settings.model_catalog.strict_bootstrap && store.catalog_model_count() == 0 {
+                Err(format!("catalog bootstrap failed and store is empty: {e}"))
             } else {
-                tracing::warn!("catalog bootstrap skipped: {}", error);
+                tracing::warn!("catalog refresh failed: {}", e);
                 Ok(())
             }
         }
     }
 }
 
-#[instrument(level = "info", skip(database, settings), fields(check_count = settings.model_catalog.count_consistency_check))]
+#[instrument(level = "info", skip(store, settings))]
 async fn refresh_catalog(
-    database: &DatabaseRepo,
+    store: &Store,
     settings: &RuntimeSettings,
 ) -> Result<(), String> {
-    info!("refreshing model catalog");
-    let snapshot = fetch_model_catalog(settings).await?;
+    info!("refreshing model catalog from models.dev");
+    let client = ModelsDevCatalogClient::new(&settings.model_catalog)?;
 
-    if settings.model_catalog.strict_bootstrap && snapshot.len() == 0 {
-        return Err("openrouter model catalog is empty".to_string());
-    }
-
-    if let Some(reported_count) = snapshot.reported_count {
-        if reported_count != snapshot.fetched_count {
-            tracing::warn!(
-                "openrouter model count mismatch: count endpoint reports {}, list returned {}",
-                reported_count,
-                snapshot.fetched_count
-            );
+    // Use the stored etag for conditional requests.
+    let metadata = store.get_metadata();
+    let (_data, metadata) = match client.fetch(metadata.etag.as_deref()).await {
+        Ok(result) => result,
+        Err(e) if e == "unchanged" => {
+            info!("catalog unchanged, skipping refresh");
+            return Ok(());
         }
-    }
+        Err(e) => return Err(e),
+    };
 
-    info!(
-        fetched_count = snapshot.fetched_count,
-        reported_count = snapshot.reported_count,
-        "persisting refreshed catalog snapshot"
-    );
-
-    database
-        .replace_catalog(snapshot)
-        .map_err(|error| format!("failed to persist model catalog: {error}"))
-}
-
-#[instrument(level = "info", skip(settings), fields(base_url = %settings.model_catalog.base_url))]
-async fn fetch_model_catalog(settings: &RuntimeSettings) -> Result<ModelCatalogSnapshot, String> {
-    let api_key = settings.model_catalog.api_key.as_deref();
-
-    info!(
-        authenticated = api_key.is_some(),
-        "building openrouter catalog client"
-    );
-
-    let client = OpenRouterCatalogClient::new(&settings.model_catalog, api_key)?;
-    client.fetch_snapshot().await
-}
-
-#[instrument(level = "info", skip(database), fields(model = %model_name))]
-async fn resolve_model_route(
-    database: &DatabaseRepo,
-    model_name: &str,
-) -> Result<ResolvedProviderRoute, String> {
-    let routes = database
-        .resolve_model(model_name)
-        .map_err(|error| format!("failed to resolve model {model_name}: {error}"))?;
-
-    let route = routes
-        .into_iter()
-        .next()
-        .ok_or_else(|| format!("no usable provider found for model {model_name}"))?;
-
-    info!(
-        provider = %route.provider_name,
-        provider_model = %route.provider_model_name,
-        "resolved provider route"
-    );
-
-    Ok(route)
+    // After a successful fetch, we need to properly write the cache.
+    // Re-fetch without etag to get the full data for caching.
+    let (data, metadata) = client.fetch(None).await?;
+    store
+        .replace_catalog(data, metadata)
+        .map_err(|e| e.to_string())
 }

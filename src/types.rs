@@ -1,8 +1,9 @@
-use bincode_next::{Decode, Encode};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 use serde_repr::{Deserialize_repr, Serialize_repr};
 use ts_rs::TS;
+
+use crate::models_dev::ModelsDevModel;
 
 /// 消息角色，对应 LanguageModelChatMessageRole 枚举（User = 1, Assistant = 2）
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize_repr, Deserialize_repr, TS)]
@@ -197,7 +198,7 @@ impl<'de> Deserialize<'de> for EndpointEditToolName {
 }
 
 /// BYOK 模型能力，对应 BYOKModelCapabilities
-#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode, TS)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub struct LMModelInfo {
@@ -212,6 +213,28 @@ pub struct LMModelInfo {
     pub adaptive_thinking: Option<bool>,
     #[serde(default = "EndpointEditToolName::empty")]
     #[serde(skip_serializing_if = "EndpointEditToolName::is_empty")]
-    #[bincode(with_serde)]
     pub edit_tools: EndpointEditToolName,
+}
+
+impl From<&ModelsDevModel> for LMModelInfo {
+    fn from(m: &ModelsDevModel) -> Self {
+        let default_context = 4096u32;
+        let limit = m.limit.as_ref();
+        Self {
+            name: m.id.clone(),
+            max_input_tokens: limit.map(|l| l.context).unwrap_or(default_context),
+            max_output_tokens: limit
+                .map(|l| l.output)
+                .unwrap_or(default_context),
+            tool_calling: m.tool_call,
+            vision: m
+                .modalities
+                .as_ref()
+                .map(|mods| mods.input.iter().any(|s| s == "image"))
+                .unwrap_or(false),
+            thinking: if m.reasoning { Some(true) } else { None },
+            adaptive_thinking: if m.interleaved.is_some() { Some(true) } else { None },
+            edit_tools: EndpointEditToolName::empty(),
+        }
+    }
 }

@@ -2,9 +2,9 @@ use std::sync::Arc;
 
 use llm_bridge::actors;
 use llm_bridge::config;
-use llm_bridge::db;
 use llm_bridge::observability;
 use llm_bridge::server;
+use llm_bridge::store::Store;
 
 use ractor::Actor;
 use tracing::info;
@@ -13,8 +13,8 @@ use crate::actors::gateway_manager::{
     GatewayManagerActor, GatewayManagerArgs, GatewayManagerMessage,
 };
 use crate::config::models::RuntimeSettings;
-use crate::db::DatabaseRepo;
-use crate::server::ws::{AppState, start_server};
+use crate::server::openai_api::AppState;
+use crate::server::openai_api::start_server;
 
 type MainResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
@@ -32,20 +32,24 @@ async fn main() -> MainResult {
 #[tracing::instrument]
 async fn run_server() -> MainResult {
     let settings = load_runtime_settings()?;
-    let database = open_database(&settings)?;
+    let store = open_store(&settings.store_path)?;
 
     let (gateway_manager, gateway_handle) = Actor::spawn(
         None,
         GatewayManagerActor,
         GatewayManagerArgs {
             settings: settings.clone(),
-            database: Arc::clone(&database),
+            store: Arc::clone(&store),
         },
     )
     .await
     .map_err(|error| std::io::Error::other(error.to_string()))?;
 
-    let state = build_app_state(&settings, gateway_manager, database);
+    let state = AppState {
+        gateway_manager,
+        store,
+        auth_token: settings.server.auth_token.clone(),
+    };
 
     let server_result = start_server(state, &settings.server.host, settings.server.port).await;
 
@@ -62,28 +66,17 @@ fn load_runtime_settings() -> Result<RuntimeSettings, std::io::Error> {
         gateway_id = %settings.gateway_id,
         host = %settings.server.host,
         port = settings.server.port,
+        store_path = %settings.store_path,
         auth_required = settings.server.auth_token.is_some(),
+        catalog_base_url = %settings.model_catalog.base_url,
         "runtime settings loaded"
     );
 
     Ok(settings)
 }
 
-fn open_database(settings: &RuntimeSettings) -> Result<Arc<DatabaseRepo>, crate::db::DbError> {
-    let database = DatabaseRepo::open(&settings.database.path)?;
-    info!(db_path = %settings.database.path, "database opened");
-    Ok(Arc::new(database))
-}
-
-fn build_app_state(
-    settings: &RuntimeSettings,
-    gateway_manager: ractor::ActorRef<GatewayManagerMessage>,
-    database: Arc<DatabaseRepo>,
-) -> AppState {
-    AppState {
-        gateway_manager,
-        gateway_id: settings.gateway_id.clone(),
-        auth_token: settings.server.auth_token.clone(),
-        db: database,
-    }
+fn open_store(path: &str) -> Result<Arc<Store>, std::io::Error> {
+    let store = Store::open(path).map_err(std::io::Error::other)?;
+    info!(store_path = %path, "store opened");
+    Ok(Arc::new(store))
 }

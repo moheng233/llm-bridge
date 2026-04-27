@@ -8,6 +8,7 @@ TS_RS_LARGE_INT = "number"
 [unstable]
 build-dir-new-layout = true
 codegen-backend = true
+mtime_on_use = true
 
 [target.x86_64-unknown-linux-gnu]
 linker = "clang"
