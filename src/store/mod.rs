@@ -102,9 +102,8 @@ impl Store {
         // Auto-register newly discovered providers.
         {
             let mut providers_map = self.providers.read().unwrap().clone();
-            for (pid, pdata) in &data {
+            for (pid, _pdata) in &data {
                 if !providers_map.contains_key(pid) {
-                    let compat = npm_to_compatibilities(&pdata.npm);
                     providers_map.insert(
                         pid.clone(),
                         ProviderConfig {
@@ -112,7 +111,7 @@ impl Store {
                             priority: 0,
                             base_url_override: None,
                             api_keys: Vec::new(),
-                            compatibilities: compat,
+                            compat_settings: None,
                         },
                     );
                 }
@@ -233,11 +232,9 @@ impl Store {
 
             let capabilities = model_info_from_models_dev(mdata);
 
-            // Create one route per enabled compatibility.
-            for (compat, compat_config) in &pconfig.compatibilities {
-                if !compat_config.enabled {
-                    continue;
-                }
+            // Create one route per auto-derived compatibility.
+            let derived_compat = npm_to_compatibilities(&pdata.npm);
+            for compat in derived_compat.keys() {
                 routes.push(ResolvedProviderRoute {
                     model_name: model_name.to_string(),
                     capabilities: capabilities.clone(),
@@ -245,7 +242,7 @@ impl Store {
                     provider_model_name: mdata.id.clone(),
                     priority: pconfig.priority,
                     compatibility: compat.clone(),
-                    compat_settings: compat_config.settings.clone(),
+                    compat_settings: pconfig.compat_settings.clone(),
                     base_url: base_url.clone(),
                     api_key: selected_key.key.clone(),
                     key_label: selected_key.label.clone(),
@@ -297,6 +294,14 @@ impl Store {
             .iter()
             .map(|(pid, config)| {
                 let catalog_info = catalog.get(pid);
+                let derived_compat: HashMap<ProviderCompatibility, ProviderCompatConfig> = catalog_info
+                    .map(|ci| {
+                        npm_to_compatibilities(&ci.npm)
+                            .into_iter()
+                            .map(|(k, _v)| (k, ProviderCompatConfig { enabled: true, settings: None }))
+                            .collect()
+                    })
+                    .unwrap_or_default();
                 ProviderInfo {
                     id: pid.clone(),
                     name: catalog_info
@@ -309,7 +314,8 @@ impl Store {
                         weight: k.weight,
                         masked_key: mask_key(&k.key),
                     }).collect(),
-                    compatibilities: config.compatibilities.clone(),
+                    compatibilities: derived_compat,
+                    compat_settings: config.compat_settings.clone(),
                     base_url_override: config.base_url_override.clone(),
                     model_count: catalog_info.map(|p| p.models.len()).unwrap_or(0),
                 }
@@ -351,7 +357,10 @@ pub struct ProviderInfo {
     pub enabled: bool,
     pub priority: u32,
     pub api_keys: Vec<ApiKeyDisplay>,
+    /// Compatibilities auto-derived from models.dev catalog (read-only display).
     pub compatibilities: HashMap<ProviderCompatibility, ProviderCompatConfig>,
+    /// User-editable custom HTTP settings.
+    pub compat_settings: Option<CompatibilitySettings>,
     pub base_url_override: Option<String>,
     pub model_count: usize,
 }

@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use ts_rs::TS;
 
-use crate::config::models::{ApiKeyEntry, ProviderCompatConfig, ProviderCompatibility, ProviderConfig};
+use crate::config::models::{ApiKeyEntry, CompatibilitySettings, ProviderCompatConfig, ProviderCompatibility, ProviderConfig};
 use crate::server::openai_api::AppState;
 use crate::store::{ProviderInfo, StoreError};
 use crate::types::LMModelInfo;
@@ -144,6 +144,7 @@ struct ProviderResponse {
     priority: u32,
     api_keys: Vec<ApiKeyDisplay>,
     compatibilities: HashMap<ProviderCompatibility, ProviderCompatConfig>,
+    compat_settings: Option<CompatibilitySettings>,
     base_url_override: Option<String>,
     model_count: usize,
 }
@@ -169,13 +170,15 @@ impl From<ProviderInfo> for ProviderResponse {
                 masked_key: k.masked_key,
             }).collect(),
             compatibilities: p.compatibilities,
+            compat_settings: p.compat_settings,
             base_url_override: p.base_url_override,
             model_count: p.model_count,
         }
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 struct UpdateProviderRequest {
     #[serde(default)]
@@ -185,8 +188,7 @@ struct UpdateProviderRequest {
     base_url_override: Option<String>,
     #[serde(default)]
     api_keys: Vec<ApiKeyEntry>,
-    #[serde(default)]
-    compatibilities: HashMap<ProviderCompatibility, ProviderCompatConfig>,
+    compat_settings: Option<CompatibilitySettings>,
 }
 
 async fn list_providers(
@@ -223,11 +225,9 @@ async fn update_provider(
             existing.as_ref().and_then(|c| c.base_url_override.clone())
         }),
         api_keys: req.api_keys,
-        compatibilities: if req.compatibilities.is_empty() {
-            existing.map(|c| c.compatibilities).unwrap_or_default()
-        } else {
-            req.compatibilities
-        },
+        compat_settings: req.compat_settings.or_else(|| {
+            existing.as_ref().and_then(|c| c.compat_settings.clone())
+        }),
     };
 
     match state.store.upsert_provider(&provider_name, config) {

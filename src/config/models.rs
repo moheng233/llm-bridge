@@ -103,7 +103,8 @@ pub struct ProviderCompatConfig {
 }
 
 /// A single API key entry with scheduling metadata.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub struct ApiKeyEntry {
     pub label: String,
@@ -127,8 +128,8 @@ pub struct ProviderConfig {
     pub base_url_override: Option<String>,
     #[serde(default)]
     pub api_keys: Vec<ApiKeyEntry>,
-    #[serde(default)]
-    pub compatibilities: HashMap<ProviderCompatibility, ProviderCompatConfig>,
+    /// Custom HTTP headers/params/path-suffix (applied to all compatibilities).
+    pub compat_settings: Option<CompatibilitySettings>,
 }
 
 fn env_or_default(key: &str, default: &str) -> String {
