@@ -1,19 +1,19 @@
 use std::sync::Arc;
 
+use axfetchum::ApiRouter;
 use axum::{
     Json, Router,
     extract::State,
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response, sse::{Event, Sse}},
-    routing::{get, post},
 };
 use futures_util::stream::Stream;
 use ractor::Actor;
 use serde::{Deserialize, Serialize};
 use tokio_stream::StreamExt;
-use tracing::{debug, info, instrument};
+use tracing::{info, instrument};
 
-use crate::actors::gateway_manager::GatewayManagerMessage;
+use crate::actors::{gateway_manager::GatewayManagerMessage, provider::adapters::openai_chat_completions::flatten_thinking_value_for_sse};
 use crate::actors::provider::{ProviderActor, ProviderChatRequest, ProviderMessage, ProviderRuntimeConfig};
 use crate::store::Store;
 use crate::types::{LMResponsePart, LanguageModelChatMessage, LanguageModelChatMessageRole, LanguageModelInputPart, LanguageModelTextPart};
@@ -49,7 +49,7 @@ fn check_auth(state: &AppState, headers: &HeaderMap) -> Result<(), Response> {
 // ── GET /v1/models ──
 
 #[derive(Debug, Serialize)]
-struct OpenAiModelList {
+pub(super) struct OpenAiModelList {
     object: &'static str,
     data: Vec<OpenAiModelEntry>,
 }
@@ -213,9 +213,14 @@ pub async fn chat_completions(
         // Non-streaming: collect all chunks and concatenate.
         let mut stream = stream;
         let mut content = String::new();
+        let mut reasoning_content = String::new();
         while let Some(item) = stream.next().await {
             match item {
                 Ok(LMResponsePart::Text(t)) => content.push_str(&t.value),
+                Ok(LMResponsePart::Thinking(t)) => {
+                    let text = crate::actors::provider::adapters::openai_chat_completions::flatten_thinking_value_for_sse(&t.value);
+                    reasoning_content.push_str(&text);
+                }
                 Ok(_) => {},
                 Err(e) => {
                     cleanup_ref.stop(None);
@@ -227,6 +232,14 @@ pub async fn chat_completions(
         cleanup_ref.stop(None);
         let _ = cleanup_handle.await;
 
+        let mut message = serde_json::json!({
+            "role": "assistant",
+            "content": content,
+        });
+        if !reasoning_content.is_empty() {
+            message["reasoning_content"] = serde_json::Value::String(reasoning_content);
+        }
+
         Ok(Json(serde_json::json!({
             "id": "chatcmpl-llm-bridge",
             "object": "chat.completion",
@@ -234,10 +247,7 @@ pub async fn chat_completions(
             "model": req.model,
             "choices": [{
                 "index": 0,
-                "message": {
-                    "role": "assistant",
-                    "content": content
-                },
+                "message": message,
                 "finish_reason": "stop"
             }]
         })).into_response())
@@ -251,11 +261,28 @@ fn stream_to_sse(
     stream.map(move |item| {
         match item {
             Ok(part) => {
-                let (delta_content, finish_reason) = match &part {
-                    LMResponsePart::Text(t) => (Some(t.value.clone()), None),
-                    LMResponsePart::ToolCall(_tc) => (None, Some("tool_calls")),
-                    _ => (None, None),
-                };
+                let mut delta = serde_json::Map::new();
+                let finish_reason;
+
+                match &part {
+                    LMResponsePart::Text(t) => {
+                        delta.insert("content".to_string(), serde_json::Value::String(t.value.clone()));
+                        finish_reason = None;
+                    }
+                    LMResponsePart::Thinking(t) => {
+                        // Reasoning/thinking content — exposed as `reasoning_content` per DeepSeek / OpenAI extended format.
+                        let text = flatten_thinking_value_for_sse(&t.value);
+                        delta.insert("reasoning_content".to_string(), serde_json::Value::String(text));
+                        finish_reason = None;
+                    }
+                    LMResponsePart::ToolCall(_tc) => {
+                        delta.insert("tool_calls".to_string(), serde_json::Value::Array(vec![]));
+                        finish_reason = Some("tool_calls");
+                    }
+                    _ => {
+                        finish_reason = None;
+                    }
+                }
 
                 let chunk = serde_json::json!({
                     "id": "chatcmpl-llm-bridge",
@@ -264,9 +291,7 @@ fn stream_to_sse(
                     "model": model,
                     "choices": [{
                         "index": 0,
-                        "delta": {
-                            "content": delta_content,
-                        },
+                        "delta": delta,
                         "finish_reason": finish_reason,
                     }]
                 });
@@ -343,10 +368,16 @@ fn internal_error(msg: &str) -> Response {
 
 // ── Server Startup ──
 
-fn openai_routes() -> Router<AppState> {
-    Router::new()
-        .route("/v1/models", get(list_models))
-        .route("/v1/chat/completions", post(chat_completions))
+fn openai_routes() -> (Router<AppState>, axfetchum::RouteCollection) {
+    ApiRouter::<AppState>::new()
+        .group("openai")
+        .get("/v1/models", list_models)
+            .response::<OpenAiModelList>()
+            .auth()
+            .done()
+        .post("/v1/chat/completions", chat_completions)
+            .done()
+        .build()
 }
 
 #[instrument(
@@ -360,7 +391,7 @@ fn openai_routes() -> Router<AppState> {
 )]
 pub async fn start_server(state: AppState, host: &str, port: u16) -> Result<(), std::io::Error> {
     let (admin_router, _admin_routes) = all_routes();
-    let openai_router = openai_routes();
+    let (openai_router, _openai_routes) = openai_routes();
 
     let app = admin_router
         .merge(openai_router)

@@ -7,10 +7,11 @@ use llm_bridge::server;
 use llm_bridge::store::Store;
 
 use ractor::Actor;
+use rustls::crypto::ring::default_provider;
 use tracing::info;
 
 use crate::actors::gateway_manager::{
-    GatewayManagerActor, GatewayManagerArgs, GatewayManagerMessage,
+    GatewayManagerActor, GatewayManagerArgs,
 };
 use crate::config::models::RuntimeSettings;
 use crate::server::openai_api::AppState;
@@ -20,6 +21,10 @@ type MainResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
 #[tokio::main]
 async fn main() -> MainResult {
+    default_provider()
+        .install_default()
+        .expect("failed to install rustls ring crypto provider");
+
     let observability = observability::init("llm-bridge")?;
 
     info!("llm-bridge process starting");

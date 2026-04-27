@@ -236,6 +236,11 @@ fn flatten_thinking_value(value: &LanguageModelThinkingValue) -> String {
     }
 }
 
+/// Public helper — flattens thinking content for SSE `reasoning_content` field.
+pub fn flatten_thinking_value_for_sse(value: &LanguageModelThinkingValue) -> String {
+    flatten_thinking_value(value)
+}
+
 fn resolve_base_url(base_url: Option<&str>) -> String {
     base_url
         .unwrap_or(DEFAULT_OPENAI_BASE_URL)
@@ -342,7 +347,7 @@ fn map_event(data: &str, state: &mut OpenAiChatStreamState) -> Result<Vec<LMResp
                             name: name.clone(),
                             input,
                         }));
-                    } else if let Some(arguments) = &tc.function.arguments {
+                    } else if let Some(_arguments) = &tc.function.arguments {
                         // Continuing tool call arguments (already emitted above)
                         // In streaming, we get incremental arguments
                         // For simplicity, we'll handle this by accumulating

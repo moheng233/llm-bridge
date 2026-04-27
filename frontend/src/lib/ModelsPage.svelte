@@ -29,8 +29,11 @@
     error = "";
     try {
       models = onlyAvailable
-        ? await api.models.listAvailableModels()
-        : await api.models.listCatalogModels();
+        ? (await api.models.listAvailableModels()).map((m) => ({
+            ...m,
+            provider_ids: [] as string[],
+          }))
+        : await api.models.listAllModels();
     } catch (e: any) {
       error = e.message;
     } finally {

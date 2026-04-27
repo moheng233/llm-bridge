@@ -191,7 +191,7 @@ async fn refresh_catalog(
 
     // Use the stored etag for conditional requests.
     let metadata = store.get_metadata();
-    let (_data, metadata) = match client.fetch(metadata.etag.as_deref()).await {
+    let (_data, _metadata) = match client.fetch(metadata.etag.as_deref()).await {
         Ok(result) => result,
         Err(e) if e == "unchanged" => {
             info!("catalog unchanged, skipping refresh");

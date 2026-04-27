@@ -2,4 +2,7 @@
 import type { ProviderCompatConfig } from "./ProviderCompatConfig";
 import type { ProviderCompatibility } from "./ProviderCompatibility";
 
-export type UpdateProviderRequest = { compatibilities: Record<ProviderCompatibility, ProviderCompatConfig>, baseUrl: string | null, apiKey: string, };
+export type ApiKeyEntry = { label: string, key: string, weight: number, };
+
+export type UpdateProviderRequest = { enabled: boolean, priority: number, base_url_override: string | null, api_keys: Array<ApiKeyEntry>, compatibilities: Record<ProviderCompatibility, ProviderCompatConfig>, };
+

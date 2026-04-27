@@ -13,9 +13,7 @@ mod catalog;
 mod error;
 mod providers;
 
-pub use catalog::*;
 pub use error::StoreError;
-pub use providers::*;
 
 /// Central data store — holds models.dev catalog and user provider configuration.
 pub struct Store {
@@ -136,18 +134,21 @@ impl Store {
     // ── Models ──
 
     /// List all models known to the catalog (regardless of provider availability).
+    /// Models are grouped by their human-readable `name` field, merging providers
+    /// that offer the same named model.
     pub fn list_all_models(&self) -> Vec<AvailableModel> {
         let catalog = self.catalog.read().unwrap();
         let mut seen: HashMap<String, AvailableModel> = HashMap::new();
 
         for (pid, pdata) in catalog.iter() {
-            for (mid, mdata) in &pdata.models {
+            for (_mid, mdata) in &pdata.models {
                 if mdata.status.as_deref() == Some("deprecated") {
                     continue;
                 }
-                let entry = seen.entry(mid.clone()).or_insert_with(|| AvailableModel {
-                    model_name: mid.clone(),
-                    capabilities: LMModelInfo::from(mdata),
+                let model_name = mdata.name.clone();
+                let entry = seen.entry(model_name.clone()).or_insert_with(|| AvailableModel {
+                    model_name,
+                    capabilities: model_info_from_models_dev(mdata),
                     provider_ids: Vec::new(),
                 });
                 entry.provider_ids.push(pid.clone());
@@ -169,13 +170,14 @@ impl Store {
                 continue;
             }
 
-            for (mid, mdata) in &pdata.models {
+            for (_mid, mdata) in &pdata.models {
                 if mdata.status.as_deref() == Some("deprecated") {
                     continue;
                 }
-                let entry = available.entry(mid.clone()).or_insert_with(|| AvailableModel {
-                    model_name: mid.clone(),
-                    capabilities: LMModelInfo::from(mdata),
+                let model_name = mdata.name.clone();
+                let entry = available.entry(model_name.clone()).or_insert_with(|| AvailableModel {
+                    model_name,
+                    capabilities: model_info_from_models_dev(mdata),
                     provider_ids: Vec::new(),
                 });
                 entry.provider_ids.push(pid.clone());
@@ -185,15 +187,15 @@ impl Store {
         available.into_values().collect()
     }
 
-    /// Get a single model's info from the catalog.
+    /// Get a single model's info from the catalog (looked up by human-readable name).
     pub fn get_model_info(&self, model_name: &str) -> Option<LMModelInfo> {
         let catalog = self.catalog.read().unwrap();
         for pdata in catalog.values() {
-            if let Some(mdata) = pdata.models.get(model_name) {
+            if let Some(mdata) = pdata.models.values().find(|m| m.name == model_name) {
                 if mdata.status.as_deref() == Some("deprecated") {
                     continue;
                 }
-                return Some(LMModelInfo::from(mdata));
+                return Some(model_info_from_models_dev(mdata));
             }
         }
         None
@@ -202,6 +204,7 @@ impl Store {
     // ── Route Resolution ──
 
     /// Resolve a canonical model name to a list of provider routes.
+    /// The model_name is matched against the human-readable `name` field of models.
     /// Returns routes sorted by provider priority, with a selected API key for each.
     pub fn resolve_model(&self, model_name: &str) -> Vec<ResolvedProviderRoute> {
         let catalog = self.catalog.read().unwrap();
@@ -213,7 +216,9 @@ impl Store {
             if !pconfig.enabled || pconfig.api_keys.is_empty() {
                 continue;
             }
-            let Some(mdata) = pdata.models.get(model_name) else { continue };
+            let Some(mdata) = pdata.models.values().find(|m| m.name == model_name) else {
+                continue;
+            };
             if mdata.status.as_deref() == Some("deprecated") {
                 continue;
             }
@@ -226,7 +231,7 @@ impl Store {
                 .clone()
                 .or_else(|| determine_provider_base_url(pdata, mdata));
 
-            let capabilities = LMModelInfo::from(mdata);
+            let capabilities = model_info_from_models_dev(mdata);
 
             // Create one route per enabled compatibility.
             for (compat, compat_config) in &pconfig.compatibilities {
@@ -363,6 +368,31 @@ fn mask_key(key: &str) -> String {
         return "***".to_string();
     }
     format!("{}...{}", &key[..4], &key[key.len() - 4..])
+}
+
+/// Build an `LMModelInfo` from a models.dev model entry.
+pub fn model_info_from_models_dev(m: &ModelsDevModel) -> LMModelInfo {
+    let default_context = 4096u32;
+    let limit = m.limit.as_ref();
+    LMModelInfo {
+        name: m.name.clone(),
+        max_input_tokens: limit.map(|l| l.context).unwrap_or(default_context),
+        max_output_tokens: limit.map(|l| l.output).unwrap_or(default_context),
+        tool_calling: m.tool_call,
+        vision: m
+            .modalities
+            .as_ref()
+            .map(|mods| mods.input.iter().any(|s| s == "image"))
+            .unwrap_or(false),
+        thinking: if m.reasoning { Some(true) } else { None },
+        adaptive_thinking: m
+            .interleaved
+            .as_ref()
+            .map(|il| il.is_active())
+            .or(Some(false))
+            .filter(|&b| b),
+        edit_tools: crate::types::EndpointEditToolName::empty(),
+    }
 }
 
 /// Determine the effective base URL for a provider.

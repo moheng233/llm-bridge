@@ -4,21 +4,18 @@
   import * as Sidebar from "$lib/components/ui/sidebar/index.js";
   import ModelsPage from "./lib/ModelsPage.svelte";
   import ProvidersPage from "./lib/ProvidersPage.svelte";
-  import BindingsPage from "./lib/BindingsPage.svelte";
 
-  type PagePath = "/models" | "/providers" | "/bindings";
+  type PagePath = "/models" | "/providers";
 
   const routes = {
     "/": ModelsPage,
     "/models": ModelsPage,
     "/providers": ProvidersPage,
-    "/bindings": BindingsPage,
   };
 
   const resolveCurrentPage = (path: string): PagePath => {
     if (path === "/" || path === "/models") return "/models";
     if (path === "/providers") return "/providers";
-    if (path === "/bindings") return "/bindings";
     return "/models";
   };
 
@@ -31,7 +28,6 @@
   const navItems = [
     { path: "/models" as const, label: "模型目录", icon: "📦" },
     { path: "/providers" as const, label: "提供者管理", icon: "🔧" },
-    { path: "/bindings" as const, label: "模型绑定", icon: "🔗" },
   ];
 </script>
 

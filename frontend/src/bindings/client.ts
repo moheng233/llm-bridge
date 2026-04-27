@@ -2,12 +2,8 @@
 
 import type { AvailableModelResponse } from "./AvailableModelResponse";
 import type { CatalogModelResponse } from "./CatalogModelResponse";
-import type { CreateProviderModelRequest } from "./CreateProviderModelRequest";
-import type { CreateProviderRequest } from "./CreateProviderRequest";
-import type { ProviderModelResponse } from "./ProviderModelResponse";
 import type { ProviderResponse } from "./ProviderResponse";
 import type { UpdateProviderRequest } from "./UpdateProviderRequest";
-import type { UpdateProviderSecretRequest } from "./UpdateProviderSecretRequest";
 
 export class ApiError extends Error {
   constructor(message: string, public status: number, public body?: unknown) {
@@ -97,32 +93,16 @@ export function createApiClient(options: ApiClientOptions) {
 
   return {
     models: {
-      listCatalogModels: () => request<CatalogModelResponse[]>("/api/v1/models", { auth: true }),
+      listAllModels: () => request<CatalogModelResponse[]>("/api/v1/models", { auth: true }),
       listAvailableModels: () => request<AvailableModelResponse[]>("/api/v1/models/available", { auth: true }),
     },
 
     providers: {
       listProviders: () => request<ProviderResponse[]>("/api/v1/providers", { auth: true }),
-      createProvider: (body: CreateProviderRequest) =>
-        request<ProviderResponse>("/api/v1/providers", { method: "POST", auth: true, body }),
-      getProvider: (provider_name: string) =>
-        request<ProviderResponse>(`/api/v1/providers/${provider_name}`, { auth: true }),
       updateProvider: (provider_name: string, body: UpdateProviderRequest) =>
         request<ProviderResponse>(`/api/v1/providers/${provider_name}`, { method: "PUT", auth: true, body }),
       deleteProvider: (provider_name: string) =>
         request<void>(`/api/v1/providers/${provider_name}`, { method: "DELETE", auth: true }),
-      updateProviderSecret: (provider_name: string, body: UpdateProviderSecretRequest) =>
-        request<void>(`/api/v1/providers/${provider_name}/secret`, { method: "PUT", auth: true, body }),
-      listProviderModels: (provider_name: string) =>
-        request<ProviderModelResponse[]>(`/api/v1/providers/${provider_name}/models`, { auth: true }),
-      createProviderModel: (provider_name: string, body: CreateProviderModelRequest) =>
-        request<ProviderModelResponse>(`/api/v1/providers/${provider_name}/models`, { method: "POST", auth: true, body }),
-      deleteProviderModelBinding: (provider_name: string, model_name: string) =>
-        request<void>(`/api/v1/providers/${provider_name}/models/${model_name}`, { method: "DELETE", auth: true }),
-    },
-
-    ws: {
-      connect: () => request<void>("/ws"),
     },
   };
 }

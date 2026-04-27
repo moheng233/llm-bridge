@@ -4,6 +4,7 @@
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 /// Top-level type: api.json is a flat map of provider_id → provider.
 pub type ModelsDevRoot = HashMap<String, ModelsDevProvider>;
@@ -48,12 +49,21 @@ pub struct ModelsDevModel {
     pub cost: Option<ModelsDevCost>,
     pub limit: Option<ModelsDevLimit>,
     pub modalities: Option<ModelsDevModalities>,
-    pub interleaved: Option<ModelsDevInterleaved>,
+    pub interleaved: Option<ModelsDevInterleavedOrBool>,
     /// `"alpha" | "beta" | "deprecated"` or absent.
+    #[serde(default)]
     pub status: Option<String>,
+    #[serde(default)]
     pub family: Option<String>,
     /// Per-model provider overrides (e.g. a specific npm/api for this model within a wrapper).
+    #[serde(default)]
     pub provider: Option<ModelsDevModelProvider>,
+    /// `experimental.modes` settings.
+    #[serde(default)]
+    pub experimental: HashMap<String, Value>,
+    /// Catch-all for any other unknown fields.
+    #[serde(flatten)]
+    pub extra: HashMap<String, Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -73,6 +83,8 @@ pub struct ModelsDevCost {
     pub cache_write: Option<f64>,
     pub input_audio: Option<f64>,
     pub output_audio: Option<f64>,
+    #[serde(flatten)]
+    pub extra: HashMap<String, Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -97,6 +109,23 @@ pub struct ModelsDevModalities {
 pub struct ModelsDevInterleaved {
     /// `"reasoning_content"` or `"reasoning_details"`.
     pub field: String,
+}
+
+/// `interleaved` can be a boolean `true` or an object `{field: "..."}`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ModelsDevInterleavedOrBool {
+    Bool(bool),
+    Object(ModelsDevInterleaved),
+}
+
+impl ModelsDevInterleavedOrBool {
+    pub fn is_active(&self) -> bool {
+        match self {
+            Self::Bool(b) => *b,
+            Self::Object(_) => true,
+        }
+    }
 }
 
 /// Cached snapshot of models.dev data with metadata.

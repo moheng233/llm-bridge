@@ -17,9 +17,19 @@ mod actors {
 
         #[derive(Debug, Clone)]
         pub struct ProviderState {
+            pub provider_id: String,
+            pub compatibility: String,
             pub api_key: String,
             pub base_url: Option<String>,
+            pub compat_settings: Option<CompatSettings>,
             pub client: reqwest::Client,
+        }
+
+        #[derive(Debug, Clone)]
+        pub struct CompatSettings {
+            pub path_suffix: Option<String>,
+            pub custom_headers: std::collections::HashMap<String, String>,
+            pub custom_params: std::collections::HashMap<String, String>,
         }
 
         #[derive(Debug, Clone)]
@@ -32,7 +42,7 @@ mod actors {
             pub mod anthropic {
                 include!(concat!(
                     env!("CARGO_MANIFEST_DIR"),
-                    "/src/actors/provider/adapters/anthropic.rs"
+                    "/src/actors/provider/adapters/anthropic_messages.rs"
                 ));
             }
         }
@@ -74,8 +84,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let state = ProviderState {
+        provider_id: "anthropic-example".to_string(),
+        compatibility: "anthropic".to_string(),
         api_key,
         base_url: Some(url),
+        compat_settings: None,
         client: reqwest::Client::builder()
             .user_agent(concat!(
                 env!("CARGO_PKG_NAME"),
