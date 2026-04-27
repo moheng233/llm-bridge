@@ -32,15 +32,22 @@ pub async fn stream_chat(
     tx: ProviderResponseSender,
 ) -> Result<(), String> {
     let payload = build_request_body(&request)?;
-    let endpoint = format!("{}/responses", resolve_base_url(state.base_url.as_deref()));
-    let response = state
-        .client
-        .post(endpoint)
-        .bearer_auth(&state.api_key)
+    let endpoint = build_endpoint(state);
+    
+    let mut req_builder = state.client.post(&endpoint).bearer_auth(&state.api_key);
+    
+    // Apply custom headers from compatibility settings
+    if let Some(settings) = &state.compat_settings {
+        for (key, value) in &settings.custom_headers {
+            req_builder = req_builder.header(key, value);
+        }
+    }
+    
+    let response = req_builder
         .json(&payload)
         .send()
         .await
-        .map_err(|error| format!("openai request failed: {error}"))?;
+        .map_err(|error| format!("openai responses request failed: {error}"))?;
 
     let status = response.status();
     if !status.is_success() {
@@ -233,6 +240,17 @@ fn flatten_thinking_value(value: &LanguageModelThinkingValue) -> String {
         LanguageModelThinkingValue::String(value) => value.clone(),
         LanguageModelThinkingValue::Array(values) => values.join("\n"),
     }
+}
+
+fn build_endpoint(state: &ProviderState) -> String {
+    let base = resolve_base_url(state.base_url.as_deref());
+    let path_suffix = state
+        .compat_settings
+        .as_ref()
+        .and_then(|s| s.path_suffix.as_deref())
+        .unwrap_or("");
+    
+    format!("{base}{path_suffix}/responses")
 }
 
 fn resolve_base_url(base_url: Option<&str>) -> String {

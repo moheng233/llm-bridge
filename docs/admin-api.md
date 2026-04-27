@@ -78,7 +78,10 @@ GET /api/v1/providers
 [
   {
     "providerName": "my-openai",
-    "providerType": "openai",
+    "compatibilities": {
+      "open_ai_responses": { "enabled": true, "settings": null },
+      "anthropic_messages": { "enabled": false, "settings": null }
+    },
     "baseUrl": null
   }
 ]
@@ -95,12 +98,61 @@ Content-Type: application/json
 
 **请求体**
 
-| 字段              | 类型                              | 必填 | 说明                                 |
-|-----------------|----------------------------------|------|--------------------------------------|
-| `providerName`  | string                           | ✅   | 唯一标识，创建后不可更改              |
-| `providerType`  | `"openai"` \| `"anthropic"` \| `"gemini"` | ✅   | 提供者协议类型                        |
-| `baseUrl`       | string \| null                   | ❌   | 覆盖默认 API 地址（如私有部署）       |
-| `apiKey`        | string                           | ✅   | API 密钥                             |
+| 字段                | 类型                                                                 | 必填 | 说明                                 |
+|-------------------|---------------------------------------------------------------------|------|--------------------------------------|
+| `providerName`    | string                                                              | ✅   | 唯一标识，创建后不可更改              |
+| `compatibilities` | object（见下方兼容性配置）                                            | ✅   | 启用的兼容性协议及其设置              |
+| `baseUrl`         | string \| null                                                      | ❌   | 覆盖默认 API 地址（如私有部署）       |
+| `apiKey`          | string                                                              | ✅   | API 密钥                             |
+
+#### 兼容性配置
+
+`compatibilities` 是一个对象，key 为兼容性协议标识符，value 为配置对象：
+
+| Key                          | 说明                        |
+|------------------------------|-----------------------------|
+| `open_ai_chat_completions`   | OpenAI Chat Completions API |
+| `open_ai_responses`          | OpenAI Responses API        |
+| `anthropic_messages`         | Anthropic Messages API      |
+
+每个兼容性配置对象包含：
+
+| 字段        | 类型                                              | 必填 | 说明                                      |
+|------------|--------------------------------------------------|------|-------------------------------------------|
+| `enabled`  | boolean                                          | ✅   | 是否启用此兼容性                           |
+| `settings` | object \| null                                   | ❌   | 可选的独立设置（见下方）                   |
+
+`settings` 对象（可选）：
+
+| 字段             | 类型                        | 必填 | 说明                                              |
+|-----------------|----------------------------|------|---------------------------------------------------|
+| `pathSuffix`    | string \| null             | ❌   | 追加到 base URL 的路径后缀（如 `/v1`）             |
+| `customHeaders` | object（string → string）  | ❌   | 额外 HTTP 请求头                                  |
+| `customParams`  | object（string → string）  | ❌   | 额外合并到请求体的 JSON 参数                      |
+
+**请求示例**
+
+```json
+{
+  "providerName": "my-provider",
+  "compatibilities": {
+    "open_ai_responses": {
+      "enabled": true,
+      "settings": {
+        "pathSuffix": "/v1",
+        "customHeaders": { "X-Custom-Header": "value" },
+        "customParams": {}
+      }
+    },
+    "anthropic_messages": {
+      "enabled": true,
+      "settings": null
+    }
+  },
+  "baseUrl": null,
+  "apiKey": "sk-xxx"
+}
+```
 
 **响应 201** — 返回刚创建的提供者对象
 
@@ -131,7 +183,7 @@ Content-Type: application/json
 
 | 字段              | 类型                              | 必填 |
 |-----------------|----------------------------------|------|
-| `providerType`  | string                           | ✅   |
+| `compatibilities`| object                           | ✅   |
 | `baseUrl`       | string \| null                   | ❌   |
 | `apiKey`        | string                           | ✅   |
 

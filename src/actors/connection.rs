@@ -164,9 +164,10 @@ impl Actor for ConnectionActor {
 
                     let provider_config = ProviderRuntimeConfig {
                         id: route.provider_name,
-                        provider_type: route.provider_type,
+                        compatibility: route.compatibility,
                         api_key: route.api_key,
                         base_url: route.base_url,
+                        compat_settings: route.compat_settings,
                     };
 
                     start_provider_stream(myself, req, route.provider_model_name, provider_config)
@@ -203,7 +204,7 @@ fn authenticate(expected: Option<&str>, provided: Option<&str>) -> bool {
     skip(connection_ref, request, provider_config),
     fields(
         provider = %provider_config.id,
-        provider_type = ?provider_config.provider_type,
+        compatibility = ?provider_config.compatibility,
         provider_model = %provider_model_name,
         message_count = request.messages.len()
     )

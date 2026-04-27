@@ -1,7 +1,8 @@
-pub mod anthropic;
-pub mod openai;
+pub mod anthropic_messages;
+pub mod openai_chat_completions;
+pub mod openai_responses;
 
-use crate::config::models::ProviderType;
+use crate::config::models::ProviderCompatibility;
 
 use super::{ProviderChatRequest, ProviderResponseSender, ProviderState};
 
@@ -10,9 +11,15 @@ pub async fn stream_chat(
     request: ProviderChatRequest,
     tx: ProviderResponseSender,
 ) -> Result<(), String> {
-    match state.provider_type {
-        ProviderType::OpenAI => openai::stream_chat(state, request, tx).await,
-        ProviderType::Anthropic => anthropic::stream_chat(state, request, tx).await,
-        ProviderType::Gemini => Err("provider gemini is not implemented yet".to_string()),
+    match state.compatibility {
+        ProviderCompatibility::OpenAiChatCompletions => {
+            openai_chat_completions::stream_chat(state, request, tx).await
+        }
+        ProviderCompatibility::OpenAiResponses => {
+            openai_responses::stream_chat(state, request, tx).await
+        }
+        ProviderCompatibility::AnthropicMessages => {
+            anthropic_messages::stream_chat(state, request, tx).await
+        }
     }
 }

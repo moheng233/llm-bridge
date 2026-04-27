@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::collections::HashMap;
 use std::path::Path;
 
 use bincode_next::{Decode, Encode, config::{self, Configuration}};
@@ -6,11 +7,11 @@ use fjall::{Database, Keyspace, KeyspaceCreateOptions, PersistMode};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::config::models::ProviderType;
+use crate::config::models::{ProviderCompatibility, ProviderCompatConfig, CompatibilitySettings, ProviderType};
 use crate::config::openrouter_catalog::ModelCatalogSnapshot;
 use crate::types::LMModelInfo;
 
-const SCHEMA_VERSION: u32 = 1;
+const SCHEMA_VERSION: u32 = 2;
 
 pub struct DatabaseRepo {
     db: Database,
@@ -45,8 +46,31 @@ pub struct CatalogModelRecord {
 #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 pub struct ProviderRecord {
     pub provider_name: String,
-    pub provider_type: ProviderType,
+    /// Map of enabled compatibilities with their per-compatibility settings.
+    pub compatibilities: HashMap<ProviderCompatibility, ProviderCompatConfig>,
     pub base_url: Option<String>,
+}
+
+impl ProviderRecord {
+    /// Returns the list of enabled compatibilities for this provider.
+    pub fn enabled_compatibilities(&self) -> Vec<&ProviderCompatibility> {
+        self.compatibilities
+            .iter()
+            .filter(|(_, config)| config.enabled)
+            .map(|(compat, _)| compat)
+            .collect()
+    }
+
+    /// Get settings for a specific compatibility if enabled.
+    pub fn get_compat_settings(&self, compat: &ProviderCompatibility) -> Option<&CompatibilitySettings> {
+        self.compatibilities.get(compat).and_then(|c| {
+            if c.enabled {
+                c.settings.as_ref()
+            } else {
+                None
+            }
+        })
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
@@ -82,7 +106,8 @@ pub struct ResolvedProviderRoute {
     pub provider_name: String,
     pub provider_model_name: String,
     pub priority: u32,
-    pub provider_type: ProviderType,
+    pub compatibility: ProviderCompatibility,
+    pub compat_settings: Option<CompatibilitySettings>,
     pub base_url: Option<String>,
     pub api_key: String,
 }
@@ -321,16 +346,21 @@ impl DatabaseRepo {
                 _ => continue,
             };
 
-            routes.push(ResolvedProviderRoute {
-                model_name: model_record.model_name,
-                capabilities: catalog_record.capabilities.clone(),
-                provider_name: provider_record.provider_name,
-                provider_model_name: model_record.provider_model_name,
-                priority: model_record.priority,
-                provider_type: provider_record.provider_type,
-                base_url: provider_record.base_url,
-                api_key,
-            });
+            // Create one route per enabled compatibility
+            for compat in provider_record.enabled_compatibilities() {
+                let compat_settings = provider_record.get_compat_settings(compat).cloned();
+                routes.push(ResolvedProviderRoute {
+                    model_name: model_record.model_name.clone(),
+                    capabilities: catalog_record.capabilities.clone(),
+                    provider_name: provider_record.provider_name.clone(),
+                    provider_model_name: model_record.provider_model_name.clone(),
+                    priority: model_record.priority,
+                    compatibility: (*compat).clone(),
+                    compat_settings,
+                    base_url: provider_record.base_url.clone(),
+                    api_key: api_key.clone(),
+                });
+            }
         }
 
         routes.sort_by_key(|route| route.priority);
@@ -365,6 +395,10 @@ impl DatabaseRepo {
             Some(bytes) => {
                 let schema: SchemaVersionRecord = decode(bytes.as_ref())?;
                 if schema.version != SCHEMA_VERSION {
+                    // Run migrations based on current version
+                    if schema.version == 1 {
+                        self.migrate_v1_to_v2()?;
+                    }
                     self.metadata.insert(
                         b"schema_version",
                         encode(&SchemaVersionRecord {
@@ -387,6 +421,68 @@ impl DatabaseRepo {
 
         Ok(())
     }
+
+    /// Migrate from schema v1 (single provider_type) to v2 (multiple compatibilities).
+    fn migrate_v1_to_v2(&self) -> Result<(), DbError> {
+        let mut providers_to_update = Vec::new();
+
+        for guard in self.providers.iter() {
+            let (key, value) = guard.into_inner()?;
+            // Try to decode as v1 format first
+            let v1_record: V1ProviderRecord = match decode(value.as_ref()) {
+                Ok(r) => r,
+                Err(_) => continue, // Already migrated or corrupted
+            };
+
+            // Map old ProviderType to new ProviderCompatibility
+            let compatibilities = match v1_record.provider_type {
+                ProviderType::OpenAI => {
+                    let mut map = HashMap::new();
+                    map.insert(ProviderCompatibility::OpenAiResponses, ProviderCompatConfig {
+                        enabled: true,
+                        settings: None,
+                    });
+                    map
+                }
+                ProviderType::Anthropic => {
+                    let mut map = HashMap::new();
+                    map.insert(ProviderCompatibility::AnthropicMessages, ProviderCompatConfig {
+                        enabled: true,
+                        settings: None,
+                    });
+                    map
+                }
+                ProviderType::Gemini => {
+                    // Gemini not yet implemented, skip or mark as disabled
+                    HashMap::new()
+                }
+            };
+
+            let new_record = ProviderRecord {
+                provider_name: v1_record.provider_name,
+                compatibilities,
+                base_url: v1_record.base_url,
+            };
+
+            providers_to_update.push((key, new_record));
+        }
+
+        // Write all migrated providers
+        for (key, record) in providers_to_update {
+            self.providers.insert(key, encode(&record)?)?;
+        }
+
+        self.db.persist(PersistMode::SyncAll)?;
+        Ok(())
+    }
+}
+
+/// Legacy v1 provider record for migration purposes only.
+#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
+struct V1ProviderRecord {
+    provider_name: String,
+    provider_type: ProviderType,
+    base_url: Option<String>,
 }
 
 fn encode<T: Encode>(value: &T) -> Result<Vec<u8>, bincode_next::error::EncodeError> {
@@ -438,9 +534,15 @@ mod tests {
     fn test_put_and_get_provider() {
         let (db, _temp) = setup_test_db();
 
+        let mut compatibilities = HashMap::new();
+        compatibilities.insert(ProviderCompatibility::OpenAiResponses, ProviderCompatConfig {
+            enabled: true,
+            settings: None,
+        });
+
         let provider = ProviderRecord {
             provider_name: "test-provider".to_string(),
-            provider_type: ProviderType::OpenAI,
+            compatibilities,
             base_url: Some("https://api.example.com".to_string()),
         };
 

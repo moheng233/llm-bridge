@@ -6,9 +6,10 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use ts_rs::TS;
 
-use crate::config::models::ProviderType;
+use crate::config::models::{ProviderCompatibility, ProviderCompatConfig};
 use crate::db::{CatalogModelRecord, DbError, ProviderModelRecord, ProviderRecord};
 use crate::server::ws::{AppState, ws_handler};
 use crate::types::LMModelInfo;
@@ -173,7 +174,7 @@ async fn list_available_models(
 #[ts(export)]
 struct ProviderResponse {
     provider_name: String,
-    provider_type: ProviderType,
+    compatibilities: HashMap<ProviderCompatibility, ProviderCompatConfig>,
     base_url: Option<String>,
 }
 
@@ -181,7 +182,7 @@ impl From<ProviderRecord> for ProviderResponse {
     fn from(r: ProviderRecord) -> Self {
         Self {
             provider_name: r.provider_name,
-            provider_type: r.provider_type,
+            compatibilities: r.compatibilities,
             base_url: r.base_url,
         }
     }
@@ -192,7 +193,7 @@ impl From<ProviderRecord> for ProviderResponse {
 #[serde(rename_all = "camelCase")]
 struct CreateProviderRequest {
     provider_name: String,
-    provider_type: ProviderType,
+    compatibilities: HashMap<ProviderCompatibility, ProviderCompatConfig>,
     base_url: Option<String>,
     api_key: String,
 }
@@ -201,7 +202,7 @@ struct CreateProviderRequest {
 #[ts(export)]
 #[serde(rename_all = "camelCase")]
 struct UpdateProviderRequest {
-    provider_type: ProviderType,
+    compatibilities: HashMap<ProviderCompatibility, ProviderCompatConfig>,
     base_url: Option<String>,
     api_key: String,
 }
@@ -256,7 +257,7 @@ async fn create_provider(
 
     let record = ProviderRecord {
         provider_name: req.provider_name,
-        provider_type: req.provider_type,
+        compatibilities: req.compatibilities,
         base_url: req.base_url,
     };
 
@@ -314,7 +315,7 @@ async fn update_provider(
 
     let record = ProviderRecord {
         provider_name: provider_name.clone(),
-        provider_type: req.provider_type,
+        compatibilities: req.compatibilities,
         base_url: req.base_url,
     };
 

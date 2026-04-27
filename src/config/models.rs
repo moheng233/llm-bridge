@@ -1,5 +1,7 @@
 use std::env;
 
+use std::collections::HashMap;
+
 use bincode_next::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -94,6 +96,45 @@ impl ModelCatalogConfig {
     }
 }
 
+/// API compatibility protocol that a provider supports.
+/// Each compatibility can be independently enabled with its own settings.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, Encode, Decode, TS)]
+#[ts(export)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderCompatibility {
+    OpenAiChatCompletions,
+    OpenAiResponses,
+    AnthropicMessages,
+}
+
+/// Per-compatibility settings: path suffix, custom HTTP headers, custom HTTP params.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Encode, Decode, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub struct CompatibilitySettings {
+    /// Appended to the base URL path (e.g. "/v1" or "/openai/deployments/xxx")
+    pub path_suffix: Option<String>,
+    /// Extra HTTP headers to include in every request
+    #[serde(default)]
+    pub custom_headers: HashMap<String, String>,
+    /// Extra JSON parameters to merge into the request body (stored as raw JSON string)
+    #[serde(default)]
+    pub custom_params: HashMap<String, String>,
+}
+
+/// Configuration for a single compatibility slot on a provider.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Encode, Decode, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderCompatConfig {
+    /// Whether this compatibility is enabled for the provider
+    pub enabled: bool,
+    /// Optional per-compatibility overrides (path suffix, headers, params)
+    pub settings: Option<CompatibilitySettings>,
+}
+
+/// Legacy enum kept for backward compatibility during migration only.
+/// New code should use `ProviderCompatibility` instead.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Encode, Decode, TS)]
 #[ts(export)]
 #[serde(rename_all = "lowercase")]

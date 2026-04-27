@@ -35,18 +35,27 @@ pub async fn stream_chat(
 ) -> Result<(), String> {
     let (system, messages) = build_messages(&request.messages)?;
     let payload = build_request_body(&request.model, system, messages)?;
-    let endpoint = format!("{}/messages", resolve_base_url(state.base_url.as_deref()));
+    let endpoint = build_endpoint(state);
 
-    let response = state
+    let mut req_builder = state
         .client
-        .post(endpoint)
+        .post(&endpoint)
         .header("x-api-key", &state.api_key)
         .header("anthropic-version", ANTHROPIC_VERSION)
-        .header("content-type", "application/json")
+        .header("content-type", "application/json");
+    
+    // Apply custom headers from compatibility settings
+    if let Some(settings) = &state.compat_settings {
+        for (key, value) in &settings.custom_headers {
+            req_builder = req_builder.header(key, value);
+        }
+    }
+    
+    let response = req_builder
         .json(&payload)
         .send()
         .await
-        .map_err(|error| format!("anthropic request failed: {error}"))?;
+        .map_err(|error| format!("anthropic messages request failed: {error}"))?;
 
     let status = response.status();
     if !status.is_success() {
@@ -247,6 +256,17 @@ fn flatten_thinking_value(value: &LanguageModelThinkingValue) -> String {
         LanguageModelThinkingValue::String(s) => s.clone(),
         LanguageModelThinkingValue::Array(parts) => parts.join("\n"),
     }
+}
+
+fn build_endpoint(state: &ProviderState) -> String {
+    let base = resolve_base_url(state.base_url.as_deref());
+    let path_suffix = state
+        .compat_settings
+        .as_ref()
+        .and_then(|s| s.path_suffix.as_deref())
+        .unwrap_or("");
+    
+    format!("{base}{path_suffix}/messages")
 }
 
 fn resolve_base_url(base_url: Option<&str>) -> String {

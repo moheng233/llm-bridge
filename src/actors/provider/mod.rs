@@ -2,7 +2,7 @@ pub mod adapters;
 
 use std::pin::Pin;
 
-use crate::config::models::ProviderType;
+use crate::config::models::{ProviderCompatibility, CompatibilitySettings};
 use crate::types::{LMResponsePart, LanguageModelChatMessage};
 use ractor::{Actor, ActorProcessingErr, ActorRef};
 use tokio::sync::mpsc;
@@ -19,17 +19,19 @@ pub struct ProviderActor;
 #[derive(Debug, Clone)]
 pub struct ProviderRuntimeConfig {
     pub id: String,
-    pub provider_type: ProviderType,
+    pub compatibility: ProviderCompatibility,
     pub api_key: String,
     pub base_url: Option<String>,
+    pub compat_settings: Option<CompatibilitySettings>,
 }
 
 #[derive(Debug, Clone)]
 pub struct ProviderState {
     pub provider_id: String,
-    pub provider_type: ProviderType,
+    pub compatibility: ProviderCompatibility,
     pub api_key: String,
     pub base_url: Option<String>,
+    pub compat_settings: Option<CompatibilitySettings>,
     pub client: reqwest::Client,
 }
 
@@ -77,9 +79,10 @@ impl Actor for ProviderActor {
 
         Ok(ProviderState {
             provider_id: args.id,
-            provider_type: args.provider_type,
+            compatibility: args.compatibility,
             api_key: args.api_key,
             base_url: args.base_url,
+            compat_settings: args.compat_settings,
             client,
         })
     }
@@ -105,7 +108,7 @@ impl Actor for ProviderActor {
                 let stream_span = info_span!(
                     "provider_adapter_stream",
                     provider = %provider_state.provider_id,
-                    provider_type = ?provider_state.provider_type,
+                    compatibility = ?provider_state.compatibility,
                     model = %request.model,
                     message_count = request.messages.len()
                 );
