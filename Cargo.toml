@@ -4,30 +4,30 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-axfetchum = { version = "0.1.0", features = ["axum"] }
-axum = { version = "0.8.8", features = ["ws"] }
+axfetchum = { version = "0.1.4", features = ["axum"] }
+axum = { version = "0.8.9", features = ["ws"] }
 base64 = "0.22.1"
-bitflags = { version = "2.11.0", features = ["serde", "std"] }
+bitflags = { version = "2.11.1", features = ["serde", "std"] }
 futures = "0.3.32"
 futures-util = "0.3.32"
-opentelemetry = { version = "0.31.0", features = ["logs"] }
-opentelemetry-appender-tracing = "0.31.1"
-opentelemetry-otlp = "0.31.1"
-opentelemetry_sdk = { version = "0.31.0", features = ["logs"] }
-opentelemetry-stdout = "0.31.0"
-ractor = { version = "0.15.12", features = ["async-trait"] }
-reqwest = { version = "0.13.2", default-features = false, features = [
+opentelemetry = { version = "0.32.0", features = ["logs"] }
+opentelemetry-appender-tracing = "0.32.0"
+opentelemetry-otlp = "0.32.0"
+opentelemetry_sdk = { version = "0.32.0", features = ["logs"] }
+opentelemetry-stdout = "0.32.0"
+ractor = { version = "0.15.13", features = ["async-trait"] }
+reqwest = { version = "0.13.3", default-features = false, features = [
   "json",
   "rustls-no-provider",
   "stream"
 ] }
-rustls = { version = "0.23.37", default-features = false, features = ["ring", "std"] }
+rustls = { version = "0.23.40", default-features = false, features = ["ring", "std"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 serde_repr = "0.1.20"
 thiserror = "2.0.18"
 time = { version = "0.3.47", features = ["serde", "std"] }
-tokio = { version = "1.50.0", features = [
+tokio = { version = "1.52.3", features = [
   "macros",
   "rt-multi-thread",
   "sync",
@@ -38,7 +38,7 @@ tracing = "0.1.44"
 tracing-opentelemetry = "0.32.1"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 ts-rs = { version = "12.0.1", features = ["serde_json", "tokio", "uuid"] }
-uuid = { version = "1.22.0", features = ["serde", "v4"] }
+uuid = { version = "1.23.1", features = ["serde", "v4"] }
 
 [dev-dependencies]
-tempfile = "3.14.0"
+tempfile = "3.27.0"
