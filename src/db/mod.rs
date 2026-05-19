@@ -96,7 +96,7 @@ mod tests {
 
     #[tokio::test]
     async fn push_schema_creates_tables() {
-        let db = init(all_models(), "sqlite::memory:")
+        let mut db = init(all_models(), "sqlite::memory:")
             .await
             .expect("database initialization should succeed");
 
@@ -108,7 +108,7 @@ mod tests {
             role: models::UserRole::Member,
             active: true,
         })
-        .exec(&db)
+        .exec(&mut db)
         .await
         .expect("insert after push_schema should succeed");
     }

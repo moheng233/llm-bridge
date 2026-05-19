@@ -18,11 +18,14 @@ use tracing::{info, instrument};
 
 use crate::actors::{gateway_manager::GatewayManagerMessage, provider::adapters::openai_chat_completions::flatten_thinking_value_for_sse};
 use crate::actors::provider::{ProviderActor, ProviderChatRequest, ProviderMessage, ProviderRuntimeConfig};
+use crate::db;
+use crate::middleware::token_auth::TokenAuth;
 use crate::store::Store;
 use crate::types::{LMResponsePart, LanguageModelChatMessage, LanguageModelChatMessageRole, LanguageModelInputPart, LanguageModelTextPart};
 
 use super::admin::all_routes;
 use super::auth::{self, AuthState};
+use super::tokens;
 
 /// Shared application state for HTTP handlers.
 #[derive(Clone)]
@@ -32,10 +35,13 @@ pub struct AppState {
     pub auth_token: Option<String>,
     /// OIDC auth sub-state（仅在配置了 OIDC 时 Some）
     pub auth: Option<AuthState>,
+    /// SQLite 数据库句柄（始终可用）
+    pub db: db::Db,
 }
 
 // ── Auth ──
 
+#[allow(dead_code)]
 #[allow(clippy::result_large_err)]
 fn check_auth(state: &AppState, headers: &HeaderMap) -> Result<(), Response> {
     let Some(expected) = &state.auth_token else {
@@ -72,13 +78,23 @@ struct OpenAiModelEntry {
 #[instrument(level = "debug", skip(state))]
 pub async fn list_models(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    TokenAuth(token): TokenAuth,
 ) -> Result<Json<OpenAiModelList>, Response> {
-    check_auth(&state, &headers)?;
+    let all_models = state.store.list_available_models();
 
-    let models = state.store.list_available_models();
-    let data = models
+    // Filter models based on token's allowed_models
+    let allowed: Vec<String> =
+        serde_json::from_str(&token.allowed_models).unwrap_or_default();
+
+    let data = all_models
         .into_iter()
+        .filter(|m| {
+            if allowed.is_empty() {
+                true
+            } else {
+                allowed.iter().any(|a| a == &m.model_name)
+            }
+        })
         .map(|m| OpenAiModelEntry {
             id: m.model_name,
             object: "model",
@@ -148,13 +164,27 @@ pub struct OpenAiStreamOptions {
     pub include_usage: Option<bool>,
 }
 
-#[instrument(level = "info", skip(state, headers), fields(model = %req.model, stream = req.stream))]
+#[instrument(level = "info", skip(state, token), fields(model = %req.model, stream = req.stream))]
 pub async fn chat_completions(
     State(state): State<AppState>,
-    headers: HeaderMap,
+    TokenAuth(token): TokenAuth,
     Json(req): Json<ChatCompletionRequest>,
 ) -> Result<Response, Response> {
-    check_auth(&state, &headers)?;
+    // Check model access
+    let allowed: Vec<String> =
+        serde_json::from_str(&token.allowed_models).unwrap_or_default();
+    if !allowed.is_empty() && !allowed.iter().any(|a| a == &req.model) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({
+                "error": {
+                    "message": format!("model '{}' is not allowed for this token", req.model),
+                    "type": "model_access_denied",
+                    "code": "model_access_denied"
+                }
+            })),
+        ).into_response());
+    }
 
     let routes = state.store.resolve_model(&req.model);
     if routes.is_empty() {
@@ -172,6 +202,28 @@ pub async fn chat_completions(
 
     // Take the first (highest priority) route.
     let route = &routes[0];
+
+    // Phase 2: Quota check and deduct (before making upstream call)
+    let estimated_tokens = estimate_token_count(&req.messages);
+    if let Err(quota_err) = crate::auth::quota::check_and_deduct(
+        &state.db,
+        &token,
+        estimated_tokens,
+    )
+    .await
+    {
+        let msg = quota_err.to_string();
+        return Err((
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(serde_json::json!({
+                "error": {
+                    "message": msg,
+                    "type": "quota_exceeded",
+                    "code": "quota_exceeded"
+                }
+            })),
+        ).into_response());
+    }
 
     // Convert OpenAI messages to our internal format.
     let messages = convert_messages(&req.messages)?;
@@ -371,6 +423,25 @@ fn internal_error(msg: &str) -> Response {
     ).into_response()
 }
 
+/// Rough token count estimate for quota pre-check.
+/// Uses character count / 4 as a rough heuristic (common for English text).
+fn estimate_token_count(messages: &[OpenAiMessage]) -> i64 {
+    let total_chars: usize = messages
+        .iter()
+        .map(|m| match &m.content {
+            OpenAiContent::String(s) => s.len(),
+            OpenAiContent::Array(parts) => parts
+                .iter()
+                .filter_map(|p| match p {
+                    OpenAiContentPart::Text { text } => Some(text.len()),
+                    _ => None,
+                })
+                .sum(),
+        })
+        .sum();
+    (total_chars / 4) as i64
+}
+
 // ── Server Startup ──
 
 fn openai_routes() -> (Router<AppState>, axfetchum::RouteCollection) {
@@ -383,6 +454,14 @@ fn openai_routes() -> (Router<AppState>, axfetchum::RouteCollection) {
         .post("/v1/chat/completions", chat_completions)
             .done()
         .build()
+}
+
+fn token_routes() -> Router<AppState> {
+    axum::Router::new()
+        .route("/api/v1/tokens", axum::routing::get(tokens::list_tokens))
+        .route("/api/v1/tokens", axum::routing::post(tokens::create_token))
+        .route("/api/v1/tokens/{id}", axum::routing::patch(tokens::update_token))
+        .route("/api/v1/tokens/{id}", axum::routing::delete(tokens::delete_token))
 }
 
 #[instrument(
@@ -410,9 +489,14 @@ pub async fn start_server(state: AppState, host: &str, port: u16) -> Result<(), 
             .with_state(auth_state)
             .layer(session_layer.clone());
 
+        let tokens_router = token_routes()
+            .with_state(state.clone())
+            .layer(session_layer.clone());
+
         admin_router
             .merge(openai_router)
             .merge(auth_router)
+            .merge(tokens_router)
             .with_state(state)
             .layer(session_layer)
     } else {

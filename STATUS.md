@@ -146,10 +146,16 @@ src/
 ├── db/                         # 🆕 Phase 1 — toasty ORM 数据库层
 │   ├── mod.rs                  # 连接管理、init 函数、all_models()、集成测试
 │   └── models.rs               # User, Token, UsageRecord, Provider, ProviderModel
-├── auth/                       # 🆕 Phase 1 — 认证模块
+├── middleware/                  # 🆕 Phase 2 — 认证中间件
+│   ├── mod.rs                  # 模块入口
+│   ├── session_auth.rs         # Session 认证提取器（SessionAuth / AdminAuth）
+│   └── token_auth.rs           # Bearer Token 认证提取器（TokenAuth）
+├── auth/                       # 🆕 Phase 1-2 — 认证模块
 │   ├── mod.rs                  # 模块入口
 │   ├── oidc.rs                 # OIDC Service（discover / login_url / callback）
-│   └── session.rs              # Session 数据类型（OidcContext / SessionUser）
+│   ├── session.rs              # Session 数据类型（OidcContext / SessionUser）
+│   ├── token.rs                # 🆕 Token Service（创建/验证/CRUD/模型权限检查）
+│   └── quota.rs                # 🆕 Quota Service（周期计数/配额检查/扣减/重置）
 ├── store/
 │   ├── mod.rs                  # Store — 核心数据层（模型查询、路由解析、轮询选 Key）
 │   ├── catalog.rs              # catalog_cache.json 读写
@@ -169,6 +175,7 @@ src/
 │   ├── mod.rs
 │   ├── admin.rs                # Admin REST API（axfetchum 声明式路由）
 │   ├── auth.rs                 # 🆕 Auth API（/auth/login, callback, me, logout）
+│   ├── tokens.rs               # 🆕 Token 管理 API（CRUD）
 │   └── openai_api.rs           # OpenAI 兼容 API + 服务器启动
 └── observability/
     └── mod.rs                  # OpenTelemetry 初始化
@@ -208,11 +215,22 @@ src/
 | 1.5 实现 Session 管理 | ✅ | 2026-05-19 |
 | 1.6 实现 Auth API 端点 | ✅ | 2026-05-19 |
 
-### Phase 2-5
+### Phase 2：Token 体系 + 配额管理
+
+| 任务 | 状态 | 日期 |
+|------|------|------|
+| 2.1 实现 Token Service（创建/验证/CRUD） | ✅ | 2026-05-19 |
+| 2.2 实现 Quota Service（计数+重置+检查） | ✅ | 2026-05-19 |
+| 2.3 实现 Token 管理 API（CRUD） | ✅ | 2026-05-19 |
+| 2.4 实现配额后台重置任务 | ✅ | 2026-05-19 |
+| 2.5 实现 Token 认证中间件 | ✅ | 2026-05-19 |
+| 2.6 实现 Session 认证中间件 | ✅ | 2026-05-19 |
+| 2.7 管理员自动提升逻辑 | ✅ | 2026-05-19（Phase 1 已实现） |
+
+### Phase 3-5
 
 | Phase | 内容 | 状态 |
 |-------|------|------|
-| Phase 2 | Token 体系 + 配额管理 | ⬜ |
 | Phase 3 | 提供者与模型存储 + API 改造 | ⬜ |
 | Phase 4 | Admin API + 前端 | ⬜ |
 | Phase 5 | 测试与文档 | ⬜ |
@@ -284,7 +302,7 @@ cd frontend && bun run build
 |------|------|---------|
 | 需求分析与计划文档 | ✅ 已完成 | 2026-05-18 |
 | Phase 1：基础设施 | ✅ 已完成 (6/6) | 2026-05-19 |
-| Phase 2：Token 体系 | ⬜ 未开始 | — |
+| Phase 2：Token 体系 | ✅ 已完成 (7/7) | 2026-05-19 |
 | Phase 3：存储与 API | ⬜ 未开始 | — |
 | Phase 4：Admin + 前端 | ⬜ 未开始 | — |
 | Phase 5：测试与文档 | ⬜ 未开始 | — |
@@ -293,18 +311,19 @@ cd frontend && bun run build
 
 | 方面 | 重构前（当前代码） | 重构后（PLAN 目标） |
 |------|-----------------|------------------|
-| 存储 | JSON 文件 + RwLock | toasty + SQLite |
+| 存储 | JSON 文件 + RwLock | toasty + SQLite（部分迁移） |
 | 认证 | Bearer Token（环境变量） | OIDC + Session + API Token |
-| 模型目录 | models.dev 直接驱动路由 | models.dev 仅作发现，路由依赖本地 DB |
-| Admin API | Bearer Token 认证 | Session + RBAC（Admin / Member） |
+| 模型目录 | models.dev 直接驱动路由 | models.dev 仅作发现（计划中），运行时暂用 Store |
+| Admin API | Bearer Token 认证 | Session + RBAC（计划中） |
 | Token 管理 | 无 | 用户创建多 Token，每 Token 独立配额 + 模型范围 |
-| 前端 | 无认证 | OIDC 登录 + Token 管理页面 |
+| API 认证 | Bearer Token（环境变量） | TokenAuth 提取器（bcrypt 验证 Token） |
+| 前端 | 无认证 | OIDC 登录 + Token 管理页面（API 已就绪） |
 
 ---
 
 ## 9. 总结
 
-LLM-Bridge 当前处于**重构 Phase 1 完成、Phase 2 待开始**。核心路径（OpenAI 兼容 API → 模型路由 → 多提供者适配 → 流式响应）已完整实现。
+LLM-Bridge 当前处于**重构 Phase 2 完成、Phase 3 待开始**。核心路径（OpenAI 兼容 API → 模型路由 → 多提供者适配 → 流式响应）已完整实现。
 
 **Phase 1 已完成：**
 - 引入 `toasty` ORM + `jiff` 时间库，新增 `openidconnect` + `tower-sessions` + `bcrypt` + `rand` 依赖
@@ -320,4 +339,15 @@ LLM-Bridge 当前处于**重构 Phase 1 完成、Phase 2 待开始**。核心路
 - 2 个集成测试（建表 + 插入查询往返）
 - `cargo clippy --lib` — 0 warnings
 
-**Phase 2 待开始：** Token 体系 + 配额管理
+**Phase 2 已完成：**
+- 实现 `src/auth/token.rs` — Token Service（随机生成 `lb_` 前缀 + base62 + bcrypt 哈希，CRUD，模型权限精确匹配）
+- 实现 `src/auth/quota.rs` — Quota Service（daily/monthly/unlimited 周期，配额检查 + 原子扣减，后台过期周期清理）
+- 实现 `src/server/tokens.rs` — Token 管理 API（GET/POST/PATCH/DELETE `/api/v1/tokens`，Session 认证 + 所有权验证）
+- 实现 `src/middleware/session_auth.rs` — SessionAuth / AdminAuth 提取器（`FromRequestParts`）
+- 实现 `src/middleware/token_auth.rs` — TokenAuth 提取器（Bearer Token bcrypt 验证）
+- 更新 GatewayManagerActor — 新增 `ResetQuota` 消息 + 每小时配额重置后台循环
+- 更新 `openai_api.rs` — `/v1/models` 和 `/v1/chat/completions` 迁移到 TokenAuth，增加配额前置检查
+- `AppState` 新增 `db: db::Db` 字段，auth API 与 token API 共享数据库句柄
+- 38 个测试全部通过，`cargo clippy --lib` — 0 warnings
+
+**Phase 3 待开始：** 提供者与模型存储 + API 改造

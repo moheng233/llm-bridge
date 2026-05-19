@@ -2,6 +2,7 @@ pub mod actors;
 pub mod auth;
 pub mod config;
 pub mod db;
+pub mod middleware;
 pub mod models_dev;
 pub mod observability;
 pub mod server;

@@ -1,4 +1,3 @@
-use std::path::Path;
 use std::sync::Arc;
 
 use llm_bridge::actors;
@@ -44,7 +43,7 @@ async fn run_server() -> MainResult {
     let store = open_store(&settings.store_path)?;
 
     // Phase 1: 初始化 SQLite 数据库
-    let db = db::init(db::all_models(), &format!("sqlite:{}/llm-bridge.db", &settings.store_path))
+    let db = db::init(db::all_models(), &format!("sqlite:{}/llm-bridge.db", settings.store_path))
         .await
         .map_err(|e| std::io::Error::other(e.to_string()))?;
 
@@ -70,6 +69,7 @@ async fn run_server() -> MainResult {
         GatewayManagerArgs {
             settings: settings.clone(),
             store: Arc::clone(&store),
+            db: db.clone(),
         },
     )
     .await
@@ -80,6 +80,7 @@ async fn run_server() -> MainResult {
         store,
         auth_token: settings.server.auth_token.clone(),
         auth: auth_state,
+        db: db.clone(),
     };
 
     let server_result = start_server(state, &settings.server.host, settings.server.port).await;

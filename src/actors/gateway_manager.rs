@@ -3,8 +3,10 @@ use std::sync::Arc;
 use ractor::{Actor, ActorProcessingErr, ActorRef};
 use tracing::{Instrument, debug, info, info_span, instrument};
 
+use crate::auth::quota;
 use crate::config::models::RuntimeSettings;
 use crate::config::models_dev_catalog::ModelsDevCatalogClient;
+use crate::db;
 use crate::store::{AvailableModel, ResolvedProviderRoute, Store};
 
 pub struct GatewayManagerActor;
@@ -12,11 +14,13 @@ pub struct GatewayManagerActor;
 pub struct GatewayManagerArgs {
     pub settings: RuntimeSettings,
     pub store: Arc<Store>,
+    pub db: db::Db,
 }
 
 pub struct GatewayManagerState {
     pub settings: RuntimeSettings,
     pub store: Arc<Store>,
+    pub db: db::Db,
 }
 
 #[derive(Debug)]
@@ -27,6 +31,7 @@ pub enum GatewayManagerMessage {
         ractor::RpcReplyPort<Result<Vec<ResolvedProviderRoute>, String>>,
     ),
     RefreshCatalog,
+    ResetQuota,
 }
 
 impl GatewayManagerMessage {
@@ -35,6 +40,7 @@ impl GatewayManagerMessage {
             Self::GetAvailableModels(_) => "get_available_models",
             Self::ResolveModel(_, _) => "resolve_model",
             Self::RefreshCatalog => "refresh_catalog",
+            Self::ResetQuota => "reset_quota",
         }
     }
 }
@@ -56,12 +62,14 @@ impl Actor for GatewayManagerActor {
             .await
             .map_err(ActorProcessingErr::from)?;
 
-        spawn_refresh_loop(myself, args.settings.model_catalog.refresh_interval_secs);
+        spawn_refresh_loop(myself.clone(), args.settings.model_catalog.refresh_interval_secs);
+        spawn_quota_reset_loop(myself.clone());
         info!("gateway manager initialized");
 
         Ok(GatewayManagerState {
             settings: args.settings,
             store: args.store,
+            db: args.db,
         })
     }
 
@@ -97,6 +105,12 @@ impl Actor for GatewayManagerActor {
                     tracing::error!("failed to refresh model catalog: {}", error);
                 }
             }
+            GatewayManagerMessage::ResetQuota => {
+                debug!("handling ResetQuota");
+                if let Err(error) = quota::reset_expired_cycles(&state.db).await {
+                    tracing::error!("failed to reset quota cycles: {}", error);
+                }
+            }
         }
 
         Ok(())
@@ -124,6 +138,24 @@ fn spawn_refresh_loop(myself: ActorRef<GatewayManagerMessage>, interval_secs: u6
             "catalog_refresh_loop",
             interval_secs = interval_secs.max(30)
         )),
+    );
+}
+
+fn spawn_quota_reset_loop(myself: ActorRef<GatewayManagerMessage>) {
+    info!("quota reset loop started (hourly)");
+    tokio::spawn(
+        async move {
+            let mut interval =
+                tokio::time::interval(std::time::Duration::from_secs(3600));
+            interval.tick().await;
+            loop {
+                interval.tick().await;
+                if myself.cast(GatewayManagerMessage::ResetQuota).is_err() {
+                    break;
+                }
+            }
+        }
+        .instrument(info_span!("quota_reset_loop")),
     );
 }
 
