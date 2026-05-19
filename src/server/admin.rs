@@ -40,6 +40,7 @@ pub fn all_routes() -> (Router<AppState>, axfetchum::RouteCollection) {
         .build()
 }
 
+#[allow(clippy::result_large_err)]
 fn check_auth(state: &AppState, headers: &HeaderMap) -> Result<(), Response> {
     let Some(expected) = &state.auth_token else {
         return Ok(());

@@ -435,6 +435,7 @@ struct OpenAiChatFunctionCall {
 
 #[derive(Debug, Deserialize)]
 struct ChatCompletionChunk {
+    #[allow(dead_code)]
     id: Option<String>,
     choices: Vec<ChatCompletionChunkChoice>,
 }
@@ -442,11 +443,13 @@ struct ChatCompletionChunk {
 #[derive(Debug, Deserialize)]
 struct ChatCompletionChunkChoice {
     delta: Option<ChatCompletionChunkDelta>,
+    #[allow(dead_code)]
     finish_reason: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 struct ChatCompletionChunkDelta {
+    #[allow(dead_code)]
     role: Option<String>,
     content: Option<String>,
     #[serde(default)]
@@ -458,6 +461,7 @@ struct ChatCompletionChunkDelta {
 struct ChatCompletionChunkToolCall {
     id: String,
     #[serde(rename = "type")]
+    #[allow(dead_code)]
     tool_type: Option<String>,
     function: ChatCompletionChunkFunction,
 }

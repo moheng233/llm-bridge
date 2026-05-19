@@ -217,35 +217,31 @@ fn tool_result_to_content(
 ) -> Vec<AnthropicToolResultContent> {
     contents
         .iter()
-        .filter_map(|content| match content {
-            LanguageModelToolResultContent::Text(text) => Some(AnthropicToolResultContent::Text {
+        .map(|content| match content {
+            LanguageModelToolResultContent::Text(text) => AnthropicToolResultContent::Text {
                 text: text.value.clone(),
-            }),
-            LanguageModelToolResultContent::PromptTsx(tsx) => {
-                Some(AnthropicToolResultContent::Text {
-                    text: tsx.value.to_string(),
-                })
-            }
+            },
+            LanguageModelToolResultContent::PromptTsx(tsx) => AnthropicToolResultContent::Text {
+                text: tsx.value.to_string(),
+            },
             LanguageModelToolResultContent::Data(data) => {
                 if data.mime_type.starts_with("image/") {
                     let encoded = BASE64_STANDARD.encode(&data.data);
-                    Some(AnthropicToolResultContent::Image {
+                    AnthropicToolResultContent::Image {
                         source: AnthropicImageSource::Base64 {
                             media_type: data.mime_type.clone(),
                             data: encoded,
                         },
-                    })
+                    }
                 } else {
-                    Some(AnthropicToolResultContent::Text {
+                    AnthropicToolResultContent::Text {
                         text: json!({ "mimeType": data.mime_type, "data": data.data }).to_string(),
-                    })
+                    }
                 }
             }
-            LanguageModelToolResultContent::Unknown(value) => {
-                Some(AnthropicToolResultContent::Text {
-                    text: value.to_string(),
-                })
-            }
+            LanguageModelToolResultContent::Unknown(value) => AnthropicToolResultContent::Text {
+                text: value.to_string(),
+            },
         })
         .collect()
 }
@@ -602,6 +598,7 @@ struct ContentBlockDeltaEvent {
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
+#[allow(clippy::enum_variant_names)]
 enum ContentBlockDelta {
     TextDelta { text: String },
     InputJsonDelta { partial_json: String },

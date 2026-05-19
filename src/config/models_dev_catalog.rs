@@ -12,7 +12,6 @@ use crate::store::StoreMetadata;
 pub struct ModelsDevCatalogClient {
     client: reqwest::Client,
     base_url: String,
-    timeout: Duration,
 }
 
 impl ModelsDevCatalogClient {
@@ -30,7 +29,6 @@ impl ModelsDevCatalogClient {
         Ok(Self {
             client,
             base_url: config.base_url.trim_end_matches('/').to_string(),
-            timeout: Duration::from_secs(config.request_timeout_secs),
         })
     }
 

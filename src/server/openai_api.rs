@@ -30,6 +30,7 @@ pub struct AppState {
 
 // ── Auth ──
 
+#[allow(clippy::result_large_err)]
 fn check_auth(state: &AppState, headers: &HeaderMap) -> Result<(), Response> {
     let Some(expected) = &state.auth_token else {
         return Ok(());
@@ -49,7 +50,7 @@ fn check_auth(state: &AppState, headers: &HeaderMap) -> Result<(), Response> {
 // ── GET /v1/models ──
 
 #[derive(Debug, Serialize)]
-pub(super) struct OpenAiModelList {
+pub struct OpenAiModelList {
     object: &'static str,
     data: Vec<OpenAiModelEntry>,
 }
@@ -262,27 +263,24 @@ fn stream_to_sse(
         match item {
             Ok(part) => {
                 let mut delta = serde_json::Map::new();
-                let finish_reason;
 
-                match &part {
+                let finish_reason = match &part {
                     LMResponsePart::Text(t) => {
                         delta.insert("content".to_string(), serde_json::Value::String(t.value.clone()));
-                        finish_reason = None;
+                        None
                     }
                     LMResponsePart::Thinking(t) => {
                         // Reasoning/thinking content — exposed as `reasoning_content` per DeepSeek / OpenAI extended format.
                         let text = flatten_thinking_value_for_sse(&t.value);
                         delta.insert("reasoning_content".to_string(), serde_json::Value::String(text));
-                        finish_reason = None;
+                        None
                     }
                     LMResponsePart::ToolCall(_tc) => {
                         delta.insert("tool_calls".to_string(), serde_json::Value::Array(vec![]));
-                        finish_reason = Some("tool_calls");
+                        Some("tool_calls")
                     }
-                    _ => {
-                        finish_reason = None;
-                    }
-                }
+                    _ => None,
+                };
 
                 let chunk = serde_json::json!({
                     "id": "chatcmpl-llm-bridge",
@@ -311,6 +309,7 @@ fn stream_to_sse(
     })
 }
 
+#[allow(clippy::result_large_err)]
 fn convert_messages(messages: &[OpenAiMessage]) -> Result<Vec<LanguageModelChatMessage>, Response> {
     messages
         .iter()

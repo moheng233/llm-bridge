@@ -185,43 +185,50 @@ src/
 
 ---
 
-## 5. 待实现功能（已被 PLAN.md 取代）
+## 5. Phase 1-5 实施进度
 
-> 以下为旧计划的待实现项。新重构计划见 [`PLAN.md`](PLAN.md) 第 6 章 Phase 1-5。
+> 详见 [`PLAN.md`](PLAN.md) 第 6 章。
 
-| 功能 | 优先级 | 状态 |
-|------|--------|------|
-| OIDC 单点登录 + Session 管理 | Phase 1 | ⬜ |
-| toasty + SQLite 数据库 | Phase 1 | ⬜ |
-| 用户 API Token 体系（创建/验证/CRUD） | Phase 2 | ⬜ |
-| 配额管理（请求次数 + Token 消耗 + 周期重置） | Phase 2 | ⬜ |
-| 提供者与模型数据库存储 | Phase 3 | ⬜ |
-| models.dev 导入辅助 | Phase 3 | ⬜ |
-| 增强 `/v1/models`（能力 + 定价 + Token 过滤） | Phase 3 | ⬜ |
-| Admin API（Session + RBAC） | Phase 4 | ⬜ |
-| 前端 OIDC 登录 + Token 管理页面 | Phase 4 | ⬜ |
-| 集成测试 | Phase 5 | ⬜ |
+### Phase 1：基础设施（数据库 + OIDC）
+
+| 任务 | 状态 | 日期 |
+|------|------|------|
+| 1.1 引入 toasty 依赖，配置 SQLite | ✅ | 2026-05-19 |
+| 1.2 定义数据模型（User, Token, UsageRecord, Provider, ProviderModel） | ✅ | 2026-05-19 |
+| 1.3 实现数据库初始化与迁移 | ✅ | 2026-05-19 |
+| 1.4 实现 OIDC Service | ⬜ | — |
+| 1.5 实现 Session 管理 | ⬜ | — |
+| 1.6 实现 Auth API 端点 | ⬜ | — |
+
+### Phase 2-5
+
+| Phase | 内容 | 状态 |
+|-------|------|------|
+| Phase 2 | Token 体系 + 配额管理 | ⬜ |
+| Phase 3 | 提供者与模型存储 + API 改造 | ⬜ |
+| Phase 4 | Admin API + 前端 | ⬜ |
+| Phase 5 | 测试与文档 | ⬜ |
 
 ---
 
 ## 6. 代码质量
 
 **开发规范：**
-- **每次修改后必须运行 `cargo clippy`** — 所有 lint 警告必须在提交前清零
+- **每次修改后必须运行 `cargo clippy`** — 所有 lint 警告必须在提交前清零（✅ 当前 `cargo clippy --lib` — 0 warnings）
 
 **优点：**
-- **类型安全**：核心类型与 TypeScript 自动同步（`ts-rs`），前端 API 客户端自动生成（`axfetchum`）
-- **架构清晰**：Actor 模型 + 适配器模式，职责分离良好
+- **类型安全**：核心类型与 TypeScript 自动同步（`ts-rs`），前端 API 客户端自动生成（`axfetchum`）；数据库枚举字段（`UserRole`、`ProviderCompatibility`）用 `toasty::Embed` 实现 CHECK 约束
+- **架构清晰**：Actor 模型 + 适配器模式，职责分离良好；新增 `db` 模块独立管理 ORM 和模型
 - **可观测性**：完善的 tracing 集成，每个 Actor 消息处理均有 span
 - **流式处理**：SSE 流解析器自实现，正确处理分帧
 - **错误处理**：各层均有 `thiserror` 定义的错误类型，HTTP 层统一转换为 JSON 错误响应
 - **前端现代化**：Svelte 5 runes、TailwindCSS 4、声明式表格组件
+- **数据库层已测试**：`src/db/mod.rs` 中有 2 个集成测试（建表 + CRUD 往返）
 
-**可改进点：**
-- **无自动化测试**：`tests/` 目录仅有 TypeScript 客户端生成测试（且被注释），无业务逻辑测试
+**已知问题：**
+- OpenTelemetry 版本冲突（`opentelemetry 0.31 vs 0.32`），导致 `observability/mod.rs` 编译错误（`cargo check --lib` 可绕过，全量编译受阻），需统一依赖版本
 - **适配器重复代码**：三个适配器中 SSE 解码和流处理逻辑重复较多，可提取公共 SSE 工具模块
-- **`unwrap()` 使用**：Store 中大量 `read().unwrap()` / `write().unwrap()`（RwLock），可考虑使用 `expect` 提供上下文
-- **API Key 存储**：`providers.json` 中明文存储，后续可考虑加密
+- **API Key 存储**：当前 `providers.json` 明文，重构后 SQLite 中也需考虑加密
 
 ---
 
@@ -268,7 +275,7 @@ cd frontend && bun run build
 | 任务 | 状态 | 完成日期 |
 |------|------|---------|
 | 需求分析与计划文档 | ✅ 已完成 | 2026-05-18 |
-| Phase 1：基础设施 | ⬜ 未开始 | — |
+| Phase 1：基础设施 | 🚧 进行中 (1.1-1.3/6) | 2026-05-19 |
 | Phase 2：Token 体系 | ⬜ 未开始 | — |
 | Phase 3：存储与 API | ⬜ 未开始 | — |
 | Phase 4：Admin + 前端 | ⬜ 未开始 | — |
@@ -289,6 +296,15 @@ cd frontend && bun run build
 
 ## 9. 总结
 
-LLM-Bridge 当前处于**早期可用阶段**。核心路径（OpenAI 兼容 API → 模型路由 → 多提供者适配 → 流式响应）已完整实现。系统采用 JSON 文件持久化、自动从 models.dev 同步模型目录、通过加权轮询在多个 API Key 间负载均衡。前端管理界面覆盖模型浏览和提供者配置两大功能。
+LLM-Bridge 当前处于**重构 Phase 1 进行中**。核心路径（OpenAI 兼容 API → 模型路由 → 多提供者适配 → 流式响应）已完整实现。
 
-目前已制定完整的重构计划（[`PLAN.md`](PLAN.md)），后续将按 Phase 1→5 逐步实施，目标是将项目改造为面向团队内部使用的自托管 LLM 网关，支持 OIDC 单点登录、API Token 管理、配额控制等企业级功能。
+**Phase 1 已完成：**
+- 引入 `toasty` ORM + `jiff` 时间库
+- SQLite（默认）+ PostgreSQL（可选 feature）双数据库支持
+- 5 张核心表数据模型定义完毕（`User`, `Token`, `UsageRecord`, `Provider`, `ProviderModel`）
+- 数据库初始化与自动建表（`db::init` / `db::init_sqlite`）
+- `UserRole`、`ProviderCompatibility` 枚举类型安全
+- `created_at` / `updated_at` 使用 `jiff::Timestamp` + `#[auto]` 自动管理
+- 2 个集成测试（建表 + 插入查询往返）
+
+**Phase 1 待完成：** OIDC Service、Session 管理、Auth API 端点（任务 1.4-1.6）
