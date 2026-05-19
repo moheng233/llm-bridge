@@ -1,5 +1,6 @@
 pub mod actors;
 pub mod config;
+pub mod db;
 pub mod models_dev;
 pub mod observability;
 pub mod server;

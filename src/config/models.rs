@@ -72,7 +72,7 @@ impl ModelCatalogConfig {
 }
 
 /// API compatibility protocol that a provider supports.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, TS)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, TS, toasty::Embed)]
 #[ts(export)]
 #[serde(rename_all = "snake_case")]
 pub enum ProviderCompatibility {
