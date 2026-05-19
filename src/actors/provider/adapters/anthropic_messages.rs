@@ -134,12 +134,11 @@ fn build_messages(
 
         // Anthropic requires alternating user/assistant turns. When we see consecutive messages
         // with the same role, merge their content blocks into the previous message.
-        if let Some(last) = anthropic_messages.last_mut() {
-            if last.role == role {
+        if let Some(last) = anthropic_messages.last_mut()
+            && last.role == role {
                 last.content.extend(content);
                 continue;
             }
-        }
 
         anthropic_messages.push(AnthropicMessage {
             role: role.to_string(),
@@ -343,11 +342,10 @@ fn map_event(data: &str, state: &mut AnthropicStreamState) -> Result<Vec<LMRespo
         "message_delta" => {
             let event: MessageDeltaEvent = serde_json::from_value(event.payload)
                 .map_err(|e| format!("invalid message_delta: {e}"))?;
-            if let Some(stop_reason) = &event.delta.stop_reason {
-                if stop_reason == "max_tokens" {
+            if let Some(stop_reason) = &event.delta.stop_reason
+                && stop_reason == "max_tokens" {
                     return Err("anthropic response stopped: max_tokens reached".to_string());
                 }
-            }
             Ok(Vec::new())
         }
         "error" => {
@@ -429,10 +427,10 @@ fn on_content_block_stop(
 ) -> Result<Vec<LMResponsePart>, String> {
     let block_type = state.block_types.remove(&event.index);
 
-    if block_type.as_deref() == Some("tool_use") {
-        if let Some(buf) = state.tool_input_buffers.remove(&event.index) {
+    if block_type.as_deref() == Some("tool_use")
+        && let Some(buf) = state.tool_input_buffers.remove(&event.index) {
             let input = serde_json::from_str(&buf.json_delta)
-                .unwrap_or_else(|_| Value::String(buf.json_delta));
+                .unwrap_or(Value::String(buf.json_delta));
 
             return Ok(vec![LMResponsePart::ToolCall(LanguageModelToolCallPart {
                 call_id: buf.id,
@@ -440,7 +438,6 @@ fn on_content_block_stop(
                 input,
             })]);
         }
-    }
 
     Ok(Vec::new())
 }

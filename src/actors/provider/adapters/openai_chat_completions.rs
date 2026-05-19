@@ -70,7 +70,7 @@ pub async fn stream_chat(
 
         while let Some(frame) = decoder.next_frame() {
             if let Some(data) = extract_sse_data(&frame) {
-                let parts = map_event(&data, &mut stream_state)?;
+                let parts = map_event(data, &mut stream_state)?;
                 for part in parts {
                     if tx.send(Ok(part)).await.is_err() {
                         return Ok(());
@@ -326,13 +326,12 @@ fn map_event(data: &str, state: &mut OpenAiChatStreamState) -> Result<Vec<LMResp
 
     for choice in &event.choices {
         if let Some(delta) = &choice.delta {
-            if let Some(content) = &delta.content {
-                if !content.is_empty() {
+            if let Some(content) = &delta.content
+                && !content.is_empty() {
                     parts.push(LMResponsePart::Text(LanguageModelTextPart {
                         value: content.clone(),
                     }));
                 }
-            }
 
             if !delta.tool_calls.is_empty() {
                 for tc in &delta.tool_calls {
@@ -356,15 +355,14 @@ fn map_event(data: &str, state: &mut OpenAiChatStreamState) -> Result<Vec<LMResp
             }
 
             // Handle reasoning_content if present (OpenAI o1/o3 models)
-            if let Some(reasoning) = &delta.reasoning_content {
-                if !reasoning.is_empty() {
+            if let Some(reasoning) = &delta.reasoning_content
+                && !reasoning.is_empty() {
                     parts.push(LMResponsePart::Thinking(LanguageModelThinkingPart {
                         value: LanguageModelThinkingValue::String(reasoning.clone()),
                         id: None,
                         metadata: None,
                     }));
                 }
-            }
         }
     }
 

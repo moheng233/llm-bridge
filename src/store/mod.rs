@@ -102,7 +102,7 @@ impl Store {
         // Auto-register newly discovered providers.
         {
             let mut providers_map = self.providers.read().unwrap().clone();
-            for (pid, _pdata) in &data {
+            for pid in data.keys() {
                 if !providers_map.contains_key(pid) {
                     providers_map.insert(
                         pid.clone(),
@@ -140,7 +140,7 @@ impl Store {
         let mut seen: HashMap<String, AvailableModel> = HashMap::new();
 
         for (pid, pdata) in catalog.iter() {
-            for (_mid, mdata) in &pdata.models {
+            for mdata in pdata.models.values() {
                 if mdata.status.as_deref() == Some("deprecated") {
                     continue;
                 }
@@ -169,7 +169,7 @@ impl Store {
                 continue;
             }
 
-            for (_mid, mdata) in &pdata.models {
+            for mdata in pdata.models.values() {
                 if mdata.status.as_deref() == Some("deprecated") {
                     continue;
                 }
@@ -266,7 +266,7 @@ impl Store {
         }
 
         let mut usage = self.key_usage.write().unwrap();
-        let counter_key = format!("{provider_id}");
+        let counter_key = provider_id.to_string();
         let counter = usage
             .entry(counter_key.clone())
             .or_insert_with(|| AtomicU64::new(0));
@@ -296,9 +296,7 @@ impl Store {
                 let catalog_info = catalog.get(pid);
                 let derived_compat: HashMap<ProviderCompatibility, ProviderCompatConfig> = catalog_info
                     .map(|ci| {
-                        npm_to_compatibilities(&ci.npm)
-                            .into_iter()
-                            .map(|(k, _v)| (k, ProviderCompatConfig { enabled: true, settings: None }))
+                        npm_to_compatibilities(&ci.npm).into_keys().map(|k| (k, ProviderCompatConfig { enabled: true, settings: None }))
                             .collect()
                     })
                     .unwrap_or_default();
@@ -411,11 +409,10 @@ fn determine_provider_base_url(
     mdata: &ModelsDevModel,
 ) -> Option<String> {
     // Per-model provider override (from extends/wrapper models).
-    if let Some(ref mp) = mdata.provider {
-        if let Some(ref api) = mp.api {
+    if let Some(ref mp) = mdata.provider
+        && let Some(ref api) = mp.api {
             return Some(api.clone());
         }
-    }
     // Provider-level api field.
     pdata.api.clone()
 }
