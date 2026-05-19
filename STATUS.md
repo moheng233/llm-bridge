@@ -156,6 +156,12 @@ src/
 │   ├── session.rs              # Session 数据类型（OidcContext / SessionUser）
 │   ├── token.rs                # 🆕 Token Service（创建/验证/CRUD/模型权限检查）
 │   └── quota.rs                # 🆕 Quota Service（周期计数/配额检查/扣减/重置）
+├── store/                      # 🔄 Phase 3 重写 — 基于 toasty + SQLite
+│   ├── mod.rs                  # Store 核心（db + KeySelector + CRUD）
+│   ├── catalog.rs              # models.dev 磁盘缓存读写（发现用）
+│   ├── compat.rs               # 🆕 npm → 兼容协议推导 + 数据映射
+│   ├── router.rs               # 🆕 路由解析（DB 查询）
+│   └── error.rs                # StoreError
 ├── store/
 │   ├── mod.rs                  # Store — 核心数据层（模型查询、路由解析、轮询选 Key）
 │   ├── catalog.rs              # catalog_cache.json 读写
@@ -173,7 +179,7 @@ src/
 │           └── anthropic_messages.rs
 ├── server/
 │   ├── mod.rs
-│   ├── admin.rs                # Admin REST API（axfetchum 声明式路由）
+│   ├── admin.rs                # 🔄 Admin REST API（Session + Admin 认证）
 │   ├── auth.rs                 # 🆕 Auth API（/auth/login, callback, me, logout）
 │   ├── tokens.rs               # 🆕 Token 管理 API（CRUD）
 │   └── openai_api.rs           # OpenAI 兼容 API + 服务器启动
@@ -227,11 +233,22 @@ src/
 | 2.6 实现 Session 认证中间件 | ✅ | 2026-05-19 |
 | 2.7 管理员自动提升逻辑 | ✅ | 2026-05-19（Phase 1 已实现） |
 
-### Phase 3-5
+### Phase 3：提供者与模型存储 + API 改造
+
+| 任务 | 状态 | 日期 |
+|------|------|------|
+| 3.1 重写 Store 层：用 toasty 操作 providers / provider_models 表 | ✅ | 2026-05-19 |
+| 3.2 实现兼容协议推导（npm → compatibility）和 models.dev 数据映射 | ✅ | 2026-05-19 |
+| 3.3 实现 models.dev 代理与导入端点（浏览 + 搜索 + 导入） | ⬜ 延后 | — |
+| 3.4 重写路由解析：从 provider_models 表读取 | ✅ | 2026-05-19 |
+| 3.5 增强 /v1/models：完整能力+定价 | ✅ | 2026-05-19 |
+| 3.6 改造 /v1/chat/completions 接入 Token 认证和配额 | ✅ | 2026-05-19（已在 Phase 2 完成） |
+| 3.7 移除旧的 Bearer Token Admin 认证 + 清理废弃代码 | ✅ | 2026-05-19 |
+
+### Phase 4-5
 
 | Phase | 内容 | 状态 |
 |-------|------|------|
-| Phase 3 | 提供者与模型存储 + API 改造 | ⬜ |
 | Phase 4 | Admin API + 前端 | ⬜ |
 | Phase 5 | 测试与文档 | ⬜ |
 
@@ -303,7 +320,7 @@ cd frontend && bun run build
 | 需求分析与计划文档 | ✅ 已完成 | 2026-05-18 |
 | Phase 1：基础设施 | ✅ 已完成 (6/6) | 2026-05-19 |
 | Phase 2：Token 体系 | ✅ 已完成 (7/7) | 2026-05-19 |
-| Phase 3：存储与 API | ⬜ 未开始 | — |
+| Phase 3：存储与 API | ✅ 已完成 (6/7) | 2026-05-19 |
 | Phase 4：Admin + 前端 | ⬜ 未开始 | — |
 | Phase 5：测试与文档 | ⬜ 未开始 | — |
 
@@ -323,7 +340,7 @@ cd frontend && bun run build
 
 ## 9. 总结
 
-LLM-Bridge 当前处于**重构 Phase 2 完成、Phase 3 待开始**。核心路径（OpenAI 兼容 API → 模型路由 → 多提供者适配 → 流式响应）已完整实现。
+LLM-Bridge 当前处于**重构 Phase 3 核心完成、Phase 4 待开始**。核心路径已完整实现。
 
 **Phase 1 已完成：**
 - 引入 `toasty` ORM + `jiff` 时间库，新增 `openidconnect` + `tower-sessions` + `bcrypt` + `rand` 依赖
@@ -348,6 +365,17 @@ LLM-Bridge 当前处于**重构 Phase 2 完成、Phase 3 待开始**。核心路
 - 更新 GatewayManagerActor — 新增 `ResetQuota` 消息 + 每小时配额重置后台循环
 - 更新 `openai_api.rs` — `/v1/models` 和 `/v1/chat/completions` 迁移到 TokenAuth，增加配额前置检查
 - `AppState` 新增 `db: db::Db` 字段，auth API 与 token API 共享数据库句柄
-- 38 个测试全部通过，`cargo clippy --lib` — 0 warnings
+- 36 个测试全部通过，`cargo clippy` — 0 warnings
 
-**Phase 3 待开始：** 提供者与模型存储 + API 改造
+**Phase 3 核心已完成（6/7 任务）：**
+- 重写 `src/store/mod.rs` — 废弃 JSON 文件 + RwLock，改用 toasty Db 直接操作 SQLite
+- 删除 `src/store/providers.rs` — JSON 文件读写全部移除
+- 新增 `src/store/router.rs` — 路由解析从 `provider_models` + `providers` 表查询，含加权轮询 KeySelector
+- 新增 `src/store/compat.rs` — npm → ProviderCompatibility 推导 + models.dev 数据映射
+- 重写 `src/server/admin.rs` — 认证从 Bearer Token 改为 Session（SessionAuth / AdminAuth）；提供者列表返回完整 ProviderResponse
+- 更新 `src/server/openai_api.rs` — `list_models` / `resolve_model` → async；返回完整定价+能力
+- 更新 `src/main.rs` — Store 由 `Store::new(db, path)` 创建，移除 JSON 文件依赖
+- 更新 `src/actors/gateway_manager.rs` — 适配新 Store API
+- ⬜ models.dev 代理导入端点 延后至 Phase 4（前端 Admin UI 配套）
+
+**Phase 4 待开始：** Admin API + 前端

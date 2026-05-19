@@ -1,444 +1,361 @@
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, RwLock};
+//! 数据存储层（Phase 3 重写）— 基于 toasty + SQLite。
+//!
+//! 替代旧的 JSON 文件 + RwLock 方案。路由解析、模型查询、提供者管理
+//! 全部通过 SQLite 的 `providers` + `provider_models` 两张表完成。
+//!
+//! models.dev 数据仅作发现用途，通过 `catalog.rs` 缓存到磁盘，
+//! 运行时路由不依赖 models.dev。
 
-use crate::config::models::{
-    ApiKeyEntry, CompatibilitySettings, ProviderCompatConfig, ProviderCompatibility, ProviderConfig,
-};
-use crate::models_dev::{CatalogCache, ModelsDevModel, ModelsDevProvider, ModelsDevRoot};
-use crate::types::LMModelInfo;
-
-mod catalog;
-mod error;
-mod providers;
+pub mod catalog;
+pub mod compat;
+pub mod error;
+pub mod router;
 
 pub use error::StoreError;
+pub use router::{AvailableModel, ResolvedProviderRoute};
 
-/// Central data store — holds models.dev catalog and user provider configuration.
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use crate::db;
+use crate::config::models::ProviderCompatibility;
+use crate::models_dev::ModelsDevRoot;
+
+use router::KeySelector;
+
+/// 核心数据存储 — 封装 SQLite 数据库操作 + Key 选择器。
+#[derive(Clone)]
 pub struct Store {
-    /// Path to the data directory (stores catalog_cache.json, providers.json).
+    /// toasty 数据库句柄
+    db: db::Db,
+    /// 数据存储目录（用于 models.dev 缓存）
     path: PathBuf,
-    /// Full models.dev snapshot (from catalog_cache.json).
-    catalog: RwLock<Arc<ModelsDevRoot>>,
-    /// User-managed provider configurations (from providers.json).
-    providers: RwLock<HashMap<String, ProviderConfig>>,
-    /// Per-key weighted round-robin counters (key = `{provider_id}/{key_label}`).
-    key_usage: RwLock<HashMap<String, AtomicU64>>,
-    /// Metadata from the last catalog refresh.
-    metadata: RwLock<StoreMetadata>,
+    /// 加权轮询 Key 选择器
+    key_selector: Arc<KeySelector>,
 }
 
+/// models.dev 缓存元数据。
 #[derive(Debug, Clone)]
 pub struct StoreMetadata {
     pub fetched_at: i64,
     pub etag: Option<String>,
 }
 
-#[derive(Debug, Clone)]
-pub struct AvailableModel {
-    pub model_name: String,
-    pub capabilities: LMModelInfo,
-    /// Provider IDs that have this model (for admin display).
-    pub provider_ids: Vec<String>,
-}
-
-#[derive(Debug, Clone)]
-pub struct ResolvedProviderRoute {
-    pub model_name: String,
-    pub capabilities: LMModelInfo,
-    pub provider_name: String,
-    pub provider_model_name: String,
-    pub priority: u32,
-    pub compatibility: ProviderCompatibility,
-    pub compat_settings: Option<CompatibilitySettings>,
-    pub base_url: Option<String>,
-    pub api_key: String,
-    /// The label of the selected API key.
-    pub key_label: String,
-}
-
 impl Store {
-    pub fn open(path: impl AsRef<Path>) -> Result<Self, StoreError> {
-        let path = path.as_ref().to_path_buf();
+    /// 创建 Store 实例（不负责数据库初始化，db 由 main.rs 传入）。
+    pub fn new(db: db::Db, path: impl Into<PathBuf>) -> Self {
+        Self {
+            db,
+            path: path.into(),
+            key_selector: Arc::new(KeySelector::new()),
+        }
+    }
+
+    /// 从旧的 `Store::open` 风格创建（向后兼容迁移辅助）。
+    pub fn open(path: impl AsRef<std::path::Path>) -> Result<Self, StoreError> {
+        let path = std::path::PathBuf::from(path.as_ref());
         std::fs::create_dir_all(&path)?;
 
-        // Load providers first (small, critical for user config).
-        let providers = providers::load_providers(&path)?;
-        // Load catalog cache (may be empty on first run).
-        let (catalog, metadata) = catalog::load_catalog_cache(&path)?;
-
-        Ok(Self {
-            path,
-            catalog: RwLock::new(Arc::new(catalog)),
-            providers: RwLock::new(providers),
-            key_usage: RwLock::new(HashMap::new()),
-            metadata: RwLock::new(metadata),
-        })
+        // 返回一个占位 Store，db 需要后续设置
+        // 实际使用中由 main.rs 调用 Store::new(db, path)
+        Err(StoreError::Io(std::io::Error::other(
+            "Store::open is deprecated; use Store::new(db, path) instead",
+        )))
     }
 
-    // ── Catalog ──
+    // ── Catalog (models.dev cache, for discovery only) ──
 
-    pub fn catalog_model_count(&self) -> usize {
-        let mut count = 0;
-        for provider in self.catalog.read().unwrap().values() {
-            count += provider.models.len();
-        }
-        count
+    /// 获取 models.dev 缓存中的提供者数量（用于判断缓存是否为空）。
+    pub fn catalog_provider_count(path: &std::path::Path) -> usize {
+        catalog::load_catalog_cache(path)
+            .map(|(data, _)| data.len())
+            .unwrap_or(0)
     }
 
-    /// Replace the entire catalog and auto-register new providers.
-    pub fn replace_catalog(&self, data: ModelsDevRoot, metadata: StoreMetadata) -> Result<(), StoreError> {
-        // Write catalog cache to disk.
+    /// 替换 models.dev 磁盘缓存（由 GatewayManagerActor 刷新时调用）。
+    pub fn replace_catalog_cache(
+        &self,
+        data: ModelsDevRoot,
+        metadata: StoreMetadata,
+    ) -> Result<(), StoreError> {
         catalog::save_catalog_cache(
             &self.path,
-            &CatalogCache {
+            &crate::models_dev::CatalogCache {
                 fetched_at: metadata.fetched_at,
                 etag: metadata.etag.clone(),
-                data: data.clone(),
+                data,
             },
-        )?;
-
-        // Auto-register newly discovered providers.
-        {
-            let mut providers_map = self.providers.read().unwrap().clone();
-            for pid in data.keys() {
-                if !providers_map.contains_key(pid) {
-                    providers_map.insert(
-                        pid.clone(),
-                        ProviderConfig {
-                            enabled: false,
-                            priority: 0,
-                            base_url_override: None,
-                            api_keys: Vec::new(),
-                            compat_settings: None,
-                        },
-                    );
-                }
-            }
-            providers::save_providers(&self.path, &providers_map)?;
-            *self.providers.write().unwrap() = providers_map;
-        }
-
-        *self.catalog.write().unwrap() = Arc::new(data);
-        *self.metadata.write().unwrap() = metadata;
-
-        Ok(())
+        )
     }
 
-    pub fn get_metadata(&self) -> StoreMetadata {
-        self.metadata.read().unwrap().clone()
-    }
-
-    // ── Models ──
-
-    /// List all models known to the catalog (regardless of provider availability).
-    /// Models are grouped by their human-readable `name` field, merging providers
-    /// that offer the same named model.
-    pub fn list_all_models(&self) -> Vec<AvailableModel> {
-        let catalog = self.catalog.read().unwrap();
-        let mut seen: HashMap<String, AvailableModel> = HashMap::new();
-
-        for (pid, pdata) in catalog.iter() {
-            for mdata in pdata.models.values() {
-                if mdata.status.as_deref() == Some("deprecated") {
-                    continue;
-                }
-                let model_name = mdata.name.clone();
-                let entry = seen.entry(model_name.clone()).or_insert_with(|| AvailableModel {
-                    model_name,
-                    capabilities: model_info_from_models_dev(mdata),
-                    provider_ids: Vec::new(),
-                });
-                entry.provider_ids.push(pid.clone());
-            }
-        }
-
-        seen.into_values().collect()
-    }
-
-    /// List models that have at least one enabled provider with a valid API key.
-    pub fn list_available_models(&self) -> Vec<AvailableModel> {
-        let catalog = self.catalog.read().unwrap();
-        let providers_map = self.providers.read().unwrap();
-        let mut available: HashMap<String, AvailableModel> = HashMap::new();
-
-        for (pid, pdata) in catalog.iter() {
-            let Some(pconfig) = providers_map.get(pid) else { continue };
-            if !pconfig.enabled || pconfig.api_keys.is_empty() {
-                continue;
-            }
-
-            for mdata in pdata.models.values() {
-                if mdata.status.as_deref() == Some("deprecated") {
-                    continue;
-                }
-                let model_name = mdata.name.clone();
-                let entry = available.entry(model_name.clone()).or_insert_with(|| AvailableModel {
-                    model_name,
-                    capabilities: model_info_from_models_dev(mdata),
-                    provider_ids: Vec::new(),
-                });
-                entry.provider_ids.push(pid.clone());
-            }
-        }
-
-        available.into_values().collect()
-    }
-
-    /// Get a single model's info from the catalog (looked up by human-readable name).
-    pub fn get_model_info(&self, model_name: &str) -> Option<LMModelInfo> {
-        let catalog = self.catalog.read().unwrap();
-        for pdata in catalog.values() {
-            if let Some(mdata) = pdata.models.values().find(|m| m.name == model_name) {
-                if mdata.status.as_deref() == Some("deprecated") {
-                    continue;
-                }
-                return Some(model_info_from_models_dev(mdata));
-            }
-        }
-        None
-    }
-
-    // ── Route Resolution ──
-
-    /// Resolve a canonical model name to a list of provider routes.
-    /// The model_name is matched against the human-readable `name` field of models.
-    /// Returns routes sorted by provider priority, with a selected API key for each.
-    pub fn resolve_model(&self, model_name: &str) -> Vec<ResolvedProviderRoute> {
-        let catalog = self.catalog.read().unwrap();
-        let providers_map = self.providers.read().unwrap();
-        let mut routes = Vec::new();
-
-        for (pid, pdata) in catalog.iter() {
-            let Some(pconfig) = providers_map.get(pid) else { continue };
-            if !pconfig.enabled || pconfig.api_keys.is_empty() {
-                continue;
-            }
-            let Some(mdata) = pdata.models.values().find(|m| m.name == model_name) else {
-                continue;
-            };
-            if mdata.status.as_deref() == Some("deprecated") {
-                continue;
-            }
-
-            // Select a key via weighted round-robin.
-            let selected_key = self.select_key(pid, &pconfig.api_keys);
-
-            let base_url = pconfig
-                .base_url_override
-                .clone()
-                .or_else(|| determine_provider_base_url(pdata, mdata));
-
-            let capabilities = model_info_from_models_dev(mdata);
-
-            // Create one route per auto-derived compatibility.
-            let derived_compat = npm_to_compatibilities(&pdata.npm);
-            for compat in derived_compat.keys() {
-                routes.push(ResolvedProviderRoute {
-                    model_name: model_name.to_string(),
-                    capabilities: capabilities.clone(),
-                    provider_name: pid.clone(),
-                    provider_model_name: mdata.id.clone(),
-                    priority: pconfig.priority,
-                    compatibility: compat.clone(),
-                    compat_settings: pconfig.compat_settings.clone(),
-                    base_url: base_url.clone(),
-                    api_key: selected_key.key.clone(),
-                    key_label: selected_key.label.clone(),
-                });
-            }
-        }
-
-        routes.sort_by_key(|r| r.priority);
-        routes
-    }
-
-    /// Weighted round-robin key selection.
-    fn select_key<'a>(&self, provider_id: &str, keys: &'a [ApiKeyEntry]) -> &'a ApiKeyEntry {
-        if keys.len() == 1 {
-            return &keys[0];
-        }
-
-        let total_weight: u64 = keys.iter().map(|k| k.weight as u64).sum();
-        if total_weight == 0 {
-            return &keys[0];
-        }
-
-        let mut usage = self.key_usage.write().unwrap();
-        let counter_key = provider_id.to_string();
-        let counter = usage
-            .entry(counter_key.clone())
-            .or_insert_with(|| AtomicU64::new(0));
-
-        let current = counter.fetch_add(1, Ordering::Relaxed) % total_weight;
-
-        let mut cumulative = 0u64;
-        for k in keys {
-            cumulative += k.weight as u64;
-            if current < cumulative {
-                return k;
-            }
-        }
-
-        &keys[keys.len() - 1]
-    }
-
-    // ── Providers ──
-
-    pub fn list_providers(&self) -> Vec<ProviderInfo> {
-        let catalog = self.catalog.read().unwrap();
-        let providers_map = self.providers.read().unwrap();
-
-        providers_map
-            .iter()
-            .map(|(pid, config)| {
-                let catalog_info = catalog.get(pid);
-                let derived_compat: HashMap<ProviderCompatibility, ProviderCompatConfig> = catalog_info
-                    .map(|ci| {
-                        npm_to_compatibilities(&ci.npm).into_keys().map(|k| (k, ProviderCompatConfig { enabled: true, settings: None }))
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                ProviderInfo {
-                    id: pid.clone(),
-                    name: catalog_info
-                        .map(|p| p.name.clone())
-                        .unwrap_or_else(|| pid.clone()),
-                    enabled: config.enabled,
-                    priority: config.priority,
-                    api_keys: config.api_keys.iter().map(|k| ApiKeyDisplay {
-                        label: k.label.clone(),
-                        weight: k.weight,
-                        masked_key: mask_key(&k.key),
-                    }).collect(),
-                    compatibilities: derived_compat,
-                    compat_settings: config.compat_settings.clone(),
-                    base_url_override: config.base_url_override.clone(),
-                    model_count: catalog_info.map(|p| p.models.len()).unwrap_or(0),
-                }
+    /// 获取 models.dev 缓存的元数据（用于 ETag 条件请求）。
+    pub fn get_catalog_metadata(&self) -> StoreMetadata {
+        catalog::load_catalog_cache(&self.path)
+            .map(|(_, meta)| meta)
+            .unwrap_or(StoreMetadata {
+                fetched_at: 0,
+                etag: None,
             })
-            .collect()
     }
 
-    pub fn get_provider_config(&self, provider_id: &str) -> Option<ProviderConfig> {
-        self.providers.read().unwrap().get(provider_id).cloned()
+    /// 从 models.dev 缓存中获取所有提供者（用于 Admin UI 发现）。
+    pub fn get_catalog_providers(&self) -> ModelsDevRoot {
+        catalog::load_catalog_cache(&self.path)
+            .map(|(data, _)| data)
+            .unwrap_or_default()
     }
 
-    pub fn upsert_provider(&self, provider_id: &str, config: ProviderConfig) -> Result<(), StoreError> {
-        let mut providers_map = self.providers.read().unwrap().clone();
-        if let Some(existing) = providers_map.get_mut(provider_id) {
-            *existing = config;
+    // ── Model listing ──
+
+    /// 列出所有模型（包括未启用的，供 Admin 使用）。
+    pub async fn list_all_models(&self) -> Result<Vec<AvailableModel>, String> {
+        router::list_all_models(&self.db).await
+    }
+
+    /// 列出已启用提供者的可用模型（供 /v1/models 使用）。
+    pub async fn list_available_models(&self) -> Result<Vec<AvailableModel>, String> {
+        router::list_available_models(&self.db).await
+    }
+
+    // ── Route resolution ──
+
+    /// 解析模型名 → 路由列表（异步查询 SQLite）。
+    pub async fn resolve_model(
+        &self,
+        model_name: &str,
+    ) -> Result<Vec<ResolvedProviderRoute>, String> {
+        router::resolve_model(&self.db, &self.key_selector, model_name).await
+    }
+
+    // ── Provider management ──
+
+    /// 列出所有提供者（返回数据库行）。
+    pub async fn list_providers(&self) -> Result<Vec<crate::db::models::Provider>, String> {
+        crate::db::models::Provider::all()
+            .exec(&mut self.db.clone())
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    /// 按 provider_id 查找提供者。
+    pub async fn get_provider(
+        &self,
+        provider_id: &str,
+    ) -> Result<Option<crate::db::models::Provider>, String> {
+        let results = crate::db::models::Provider::filter(
+            crate::db::models::Provider::fields().provider_id().eq(provider_id),
+        )
+        .exec(&mut self.db.clone())
+        .await
+        .map_err(|e| e.to_string())?;
+
+        Ok(results.into_iter().next())
+    }
+
+    /// 创建或更新提供者。
+    #[allow(clippy::too_many_arguments)]
+    pub async fn upsert_provider(
+        &self,
+        provider_id: String,
+        display_name: String,
+        npm: Option<String>,
+        base_url: Option<String>,
+        api_keys: String,
+        compat_settings: Option<String>,
+        enabled: bool,
+        priority: i64,
+    ) -> Result<crate::db::models::Provider, String> {
+        let existing = self.get_provider(&provider_id).await?;
+
+        if let Some(provider) = existing {
+            let id = provider.id;
+            crate::db::models::Provider::filter(
+                crate::db::models::Provider::fields().id().eq(id),
+            )
+            .update()
+            .display_name(display_name)
+            .npm(npm)
+            .base_url(base_url)
+            .api_keys(api_keys)
+            .compat_settings(compat_settings)
+            .enabled(enabled)
+            .priority(priority)
+            .exec(&mut self.db.clone())
+            .await
+            .map_err(|e| e.to_string())?;
+
+            crate::db::models::Provider::get_by_id(&mut self.db.clone(), &id)
+                .await
+                .map_err(|e| e.to_string())
         } else {
-            providers_map.insert(provider_id.to_string(), config);
+            let provider = toasty::create!(db::models::Provider {
+                provider_id,
+                display_name,
+                npm,
+                base_url,
+                api_keys,
+                compat_settings,
+                enabled,
+                priority,
+            })
+            .exec(&mut self.db.clone())
+            .await
+            .map_err(|e| e.to_string())?;
+
+            Ok(provider)
         }
-        providers::save_providers(&self.path, &providers_map)?;
-        *self.providers.write().unwrap() = providers_map;
+    }
+
+    /// 删除提供者（级联删除其模型）。
+    pub async fn delete_provider(&self, provider_id: &str) -> Result<bool, String> {
+        let provider = match self.get_provider(provider_id).await? {
+            Some(p) => p,
+            None => return Ok(false),
+        };
+
+        let row_id = provider.id;
+
+        // 删除关联的模型
+        let models = crate::db::models::ProviderModel::filter(
+            crate::db::models::ProviderModel::fields().provider_row_id().eq(row_id),
+        )
+        .exec(&mut self.db.clone())
+        .await
+        .map_err(|e| e.to_string())?;
+
+        for model in models {
+            crate::db::models::ProviderModel::filter(
+                crate::db::models::ProviderModel::fields().id().eq(model.id),
+            )
+            .delete()
+            .exec(&mut self.db.clone())
+            .await
+            .map_err(|e| e.to_string())?;
+        }
+
+        crate::db::models::Provider::filter(
+            crate::db::models::Provider::fields().id().eq(row_id),
+        )
+        .delete()
+        .exec(&mut self.db.clone())
+        .await
+        .map_err(|e| e.to_string())?;
+
+        Ok(true)
+    }
+
+    // ── Provider Model management ──
+
+    /// 列出提供者下的所有模型。
+    pub async fn list_provider_models(
+        &self,
+        provider_row_id: u64,
+    ) -> Result<Vec<crate::db::models::ProviderModel>, String> {
+        crate::db::models::ProviderModel::filter(
+            crate::db::models::ProviderModel::fields()
+                .provider_row_id()
+                .eq(provider_row_id),
+        )
+        .exec(&mut self.db.clone())
+        .await
+        .map_err(|e| e.to_string())
+    }
+
+    /// 添加模型到提供者。
+    #[allow(clippy::too_many_arguments)]
+    pub async fn add_provider_model(
+        &self,
+        provider_row_id: u64,
+        model_name: String,
+        provider_model_id: String,
+        compatibility: ProviderCompatibility,
+        display_name: String,
+        description: Option<String>,
+        max_input_tokens: i64,
+        max_output_tokens: i64,
+        tool_calling: bool,
+        vision: bool,
+        thinking: bool,
+        adaptive_thinking: bool,
+        input_price_per_1m: Option<f64>,
+        output_price_per_1m: Option<f64>,
+        cache_read_price_per_1m: Option<f64>,
+    ) -> Result<crate::db::models::ProviderModel, String> {
+        let model = toasty::create!(db::models::ProviderModel {
+            provider_row_id,
+            model_name,
+            provider_model_id,
+            compatibility,
+            display_name,
+            description,
+            max_input_tokens,
+            max_output_tokens,
+            tool_calling,
+            vision,
+            thinking,
+            adaptive_thinking,
+            input_price_per_1m,
+            output_price_per_1m,
+            cache_read_price_per_1m,
+            enabled: true,
+            status: None,
+        })
+        .exec(&mut self.db.clone())
+        .await
+        .map_err(|e| e.to_string())?;
+
+        Ok(model)
+    }
+
+    /// 删除提供者模型。
+    pub async fn delete_provider_model(&self, model_id: u64) -> Result<bool, String> {
+        crate::db::models::ProviderModel::get_by_id(&mut self.db.clone(), &model_id)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        crate::db::models::ProviderModel::filter(
+            crate::db::models::ProviderModel::fields().id().eq(model_id),
+        )
+        .delete()
+        .exec(&mut self.db.clone())
+        .await
+        .map_err(|e| e.to_string())?;
+
+        Ok(true)
+    }
+
+    /// 更新模型启用状态。
+    pub async fn set_provider_model_enabled(
+        &self,
+        model_id: u64,
+        enabled: bool,
+    ) -> Result<(), String> {
+        crate::db::models::ProviderModel::filter(
+            crate::db::models::ProviderModel::fields().id().eq(model_id),
+        )
+        .update()
+        .enabled(enabled)
+        .exec(&mut self.db.clone())
+        .await
+        .map_err(|e| e.to_string())?;
+
         Ok(())
     }
-
-    pub fn delete_provider(&self, provider_id: &str) -> Result<bool, StoreError> {
-        let mut providers_map = self.providers.read().unwrap().clone();
-        let existed = providers_map.remove(provider_id).is_some();
-        if existed {
-            providers::save_providers(&self.path, &providers_map)?;
-            *self.providers.write().unwrap() = providers_map;
-        }
-        Ok(existed)
-    }
 }
 
-#[derive(Debug, Clone)]
-pub struct ProviderInfo {
-    pub id: String,
-    pub name: String,
-    pub enabled: bool,
-    pub priority: u32,
-    pub api_keys: Vec<ApiKeyDisplay>,
-    /// Compatibilities auto-derived from models.dev catalog (read-only display).
-    pub compatibilities: HashMap<ProviderCompatibility, ProviderCompatConfig>,
-    /// User-editable custom HTTP settings.
-    pub compat_settings: Option<CompatibilitySettings>,
-    pub base_url_override: Option<String>,
-    pub model_count: usize,
-}
-
-#[derive(Debug, Clone)]
+/// API Key 展示（隐藏敏感信息）。
+#[derive(Debug, Clone, serde::Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct ApiKeyDisplay {
     pub label: String,
     pub weight: u32,
     pub masked_key: String,
 }
 
-fn mask_key(key: &str) -> String {
+/// 隐藏 API Key 中间部分。
+pub fn mask_key(key: &str) -> String {
     if key.len() <= 8 {
         return "***".to_string();
     }
     format!("{}...{}", &key[..4], &key[key.len() - 4..])
-}
-
-/// Build an `LMModelInfo` from a models.dev model entry.
-pub fn model_info_from_models_dev(m: &ModelsDevModel) -> LMModelInfo {
-    let default_context = 4096u32;
-    let limit = m.limit.as_ref();
-    LMModelInfo {
-        name: m.name.clone(),
-        max_input_tokens: limit.map(|l| l.context).unwrap_or(default_context),
-        max_output_tokens: limit.map(|l| l.output).unwrap_or(default_context),
-        tool_calling: m.tool_call,
-        vision: m
-            .modalities
-            .as_ref()
-            .map(|mods| mods.input.iter().any(|s| s == "image"))
-            .unwrap_or(false),
-        thinking: if m.reasoning { Some(true) } else { None },
-        adaptive_thinking: m
-            .interleaved
-            .as_ref()
-            .map(|il| il.is_active())
-            .or(Some(false))
-            .filter(|&b| b),
-        edit_tools: crate::types::EndpointEditToolName::empty(),
-    }
-}
-
-/// Determine the effective base URL for a provider.
-/// Priority: user override > per-model provider.api > provider-level api.
-fn determine_provider_base_url(
-    pdata: &ModelsDevProvider,
-    mdata: &ModelsDevModel,
-) -> Option<String> {
-    // Per-model provider override (from extends/wrapper models).
-    if let Some(ref mp) = mdata.provider
-        && let Some(ref api) = mp.api {
-            return Some(api.clone());
-        }
-    // Provider-level api field.
-    pdata.api.clone()
-}
-
-/// Map an AI SDK npm package name to a set of compatibilities.
-/// Returns a map where each compatibility is disabled by default.
-fn npm_to_compatibilities(
-    npm: &str,
-) -> HashMap<ProviderCompatibility, ProviderCompatConfig> {
-    let mut map = HashMap::new();
-    let default = ProviderCompatConfig {
-        enabled: false,
-        settings: None,
-    };
-
-    if npm.contains("@ai-sdk/openai") || npm.contains("@ai-sdk/openai-compatible") {
-        map.insert(ProviderCompatibility::OpenAiChatCompletions, default.clone());
-    }
-    if npm.contains("@ai-sdk/anthropic") {
-        map.insert(ProviderCompatibility::AnthropicMessages, default.clone());
-    }
-
-    // If no recognized npm package, default to OpenAI-compatible.
-    if map.is_empty() {
-        map.insert(ProviderCompatibility::OpenAiChatCompletions, default.clone());
-    }
-
-    map
 }

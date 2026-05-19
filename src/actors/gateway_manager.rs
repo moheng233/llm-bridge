@@ -7,7 +7,7 @@ use crate::auth::quota;
 use crate::config::models::RuntimeSettings;
 use crate::config::models_dev_catalog::ModelsDevCatalogClient;
 use crate::db;
-use crate::store::{AvailableModel, ResolvedProviderRoute, Store};
+use crate::store::{self, Store};
 
 pub struct GatewayManagerActor;
 
@@ -25,10 +25,10 @@ pub struct GatewayManagerState {
 
 #[derive(Debug)]
 pub enum GatewayManagerMessage {
-    GetAvailableModels(ractor::RpcReplyPort<Result<Vec<AvailableModel>, String>>),
+    GetAvailableModels(ractor::RpcReplyPort<Result<Vec<store::AvailableModel>, String>>),
     ResolveModel(
         String,
-        ractor::RpcReplyPort<Result<Vec<ResolvedProviderRoute>, String>>,
+        ractor::RpcReplyPort<Result<Vec<store::ResolvedProviderRoute>, String>>,
     ),
     RefreshCatalog,
     ResetQuota,
@@ -87,16 +87,17 @@ impl Actor for GatewayManagerActor {
         match message {
             GatewayManagerMessage::GetAvailableModels(reply) => {
                 debug!("handling GetAvailableModels");
-                let models = state.store.list_available_models();
-                let _ = reply.send(Ok(models));
+                match state.store.list_available_models().await {
+                    Ok(models) => { let _ = reply.send(Ok(models)); }
+                    Err(e) => { let _ = reply.send(Err(e)); }
+                }
             }
             GatewayManagerMessage::ResolveModel(model_name, reply) => {
                 debug!(model = %model_name, "handling ResolveModel");
-                let routes = state.store.resolve_model(&model_name);
-                if routes.is_empty() {
-                    let _ = reply.send(Err(format!("model '{}' is not available", model_name)));
-                } else {
-                    let _ = reply.send(Ok(routes));
+                match state.store.resolve_model(&model_name).await {
+                    Ok(routes) if !routes.is_empty() => { let _ = reply.send(Ok(routes)); }
+                    Ok(_) => { let _ = reply.send(Err(format!("model '{}' is not available", model_name))); }
+                    Err(e) => { let _ = reply.send(Err(e)); }
                 }
             }
             GatewayManagerMessage::RefreshCatalog => {
@@ -172,7 +173,7 @@ async fn initialize_catalog(
                 "catalog loaded from local cache"
             );
             store
-                .replace_catalog(data, metadata)
+                .replace_catalog_cache(data, metadata)
                 .map_err(|e| e.to_string())?;
         }
         Ok(None) => {
@@ -196,14 +197,14 @@ async fn do_fetch_and_store(
     match client.fetch(None).await {
         Ok((data, metadata)) => {
             store
-                .replace_catalog(data, metadata)
+                .replace_catalog_cache(data, metadata)
                 .map_err(|e| e.to_string())?;
             Ok(())
         }
         Err(e) if e == "unchanged" => Ok(()),
         Err(e) => {
-            // If strict_bootstrap and store is empty, fail.
-            if settings.model_catalog.strict_bootstrap && store.catalog_model_count() == 0 {
+            let store_path = std::path::Path::new(&settings.store_path);
+            if settings.model_catalog.strict_bootstrap && Store::catalog_provider_count(store_path) == 0 {
                 Err(format!("catalog bootstrap failed and store is empty: {e}"))
             } else {
                 tracing::warn!("catalog refresh failed: {}", e);
@@ -221,8 +222,7 @@ async fn refresh_catalog(
     info!("refreshing model catalog from models.dev");
     let client = ModelsDevCatalogClient::new(&settings.model_catalog)?;
 
-    // Use the stored etag for conditional requests.
-    let metadata = store.get_metadata();
+    let metadata = store.get_catalog_metadata();
     let (_data, _metadata) = match client.fetch(metadata.etag.as_deref()).await {
         Ok(result) => result,
         Err(e) if e == "unchanged" => {
@@ -232,10 +232,8 @@ async fn refresh_catalog(
         Err(e) => return Err(e),
     };
 
-    // After a successful fetch, we need to properly write the cache.
-    // Re-fetch without etag to get the full data for caching.
     let (data, metadata) = client.fetch(None).await?;
     store
-        .replace_catalog(data, metadata)
+        .replace_catalog_cache(data, metadata)
         .map_err(|e| e.to_string())
 }

@@ -15,8 +15,9 @@ use crate::models_dev::ModelsDevModel;
 /// | 其他 / 未知 | 默认 `OpenAiChatCompletions` |
 pub fn npm_to_compatibility(npm: &str) -> ProviderCompatibility {
     if npm.contains("@ai-sdk/anthropic") {
-        ProviderCompatibility::OpenAiChatCompletions // Anthropic 也走 chat completions 兼容
+        ProviderCompatibility::AnthropicMessages
     } else {
+        // openai, openai-compatible, 或未知 → 默认 OpenAI Chat Completions
         ProviderCompatibility::OpenAiChatCompletions
     }
 }
@@ -88,11 +89,10 @@ pub fn deduce_base_url(
     mdata: Option<&ModelsDevModel>,
 ) -> Option<String> {
     // Per-model provider override
-    if let Some(mp) = mdata.and_then(|m| m.provider.as_ref()) {
-        if let Some(ref api) = mp.api {
+    if let Some(mp) = mdata.and_then(|m| m.provider.as_ref())
+        && let Some(ref api) = mp.api {
             return Some(api.clone());
         }
-    }
     // Provider-level api
     pdata.api.clone()
 }

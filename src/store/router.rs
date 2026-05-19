@@ -46,6 +46,12 @@ pub struct KeySelector {
     counters: Mutex<HashMap<String, AtomicU64>>,
 }
 
+impl Default for KeySelector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl KeySelector {
     pub fn new() -> Self {
         Self {
@@ -54,7 +60,7 @@ impl KeySelector {
     }
 
     /// 从 API Key 列表中按加权轮询选出一个。
-    pub fn select_key(&self, provider_id: &str, keys: &[ApiKeyEntry]) -> &ApiKeyEntry {
+    pub fn select_key<'a>(&self, provider_id: &str, keys: &'a [ApiKeyEntry]) -> &'a ApiKeyEntry {
         if keys.len() == 1 {
             return &keys[0];
         }
@@ -124,10 +130,7 @@ pub async fn resolve_model(
 
         let selected_key = key_selector.select_key(&provider.provider_id, &api_keys);
 
-        let compatibility: ProviderCompatibility =
-            serde_json::from_str(&format!("\"{}\"", pm.compatibility)).unwrap_or(
-                ProviderCompatibility::OpenAiChatCompletions,
-            );
+        let compatibility: ProviderCompatibility = pm.compatibility.clone();
 
         let compat_settings: Option<CompatibilitySettings> = provider
             .compat_settings

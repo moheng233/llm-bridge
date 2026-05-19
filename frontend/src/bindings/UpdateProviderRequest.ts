@@ -2,4 +2,4 @@
 import type { ApiKeyEntry } from "./ApiKeyEntry";
 import type { CompatibilitySettings } from "./CompatibilitySettings";
 
-export type UpdateProviderRequest = { enabled: boolean, priority: number, baseUrlOverride: string | null, apiKeys: Array<ApiKeyEntry>, compatSettings: CompatibilitySettings | null, };
+export type UpdateProviderRequest = { displayName: string, npm: string | null, baseUrl: string | null, apiKeys: Array<ApiKeyEntry>, compatSettings: CompatibilitySettings | null, enabled: boolean, priority: number, };

@@ -80,7 +80,19 @@ pub async fn list_models(
     State(state): State<AppState>,
     TokenAuth(token): TokenAuth,
 ) -> Result<Json<OpenAiModelList>, Response> {
-    let all_models = state.store.list_available_models();
+    let all_models = state.store.list_available_models().await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": {
+                        "message": e,
+                        "type": "internal_error",
+                        "code": "internal_error"
+                    }
+                })),
+            ).into_response()
+        })?;
 
     // Filter models based on token's allowed_models
     let allowed: Vec<String> =
@@ -186,7 +198,19 @@ pub async fn chat_completions(
         ).into_response());
     }
 
-    let routes = state.store.resolve_model(&req.model);
+    let routes = state.store.resolve_model(&req.model).await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({
+                    "error": {
+                        "message": e,
+                        "type": "internal_error",
+                        "code": "internal_error"
+                    }
+                })),
+            ).into_response()
+        })?;
     if routes.is_empty() {
         return Err((
             StatusCode::NOT_FOUND,

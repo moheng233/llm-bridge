@@ -40,12 +40,14 @@ async fn main() -> MainResult {
 #[tracing::instrument]
 async fn run_server() -> MainResult {
     let settings = load_runtime_settings()?;
-    let store = open_store(&settings.store_path)?;
 
-    // Phase 1: 初始化 SQLite 数据库
+    // Phase 3: Store 现在由 toasty Db 构建，不再用 JSON 文件
     let db = db::init(db::all_models(), &format!("sqlite:{}/llm-bridge.db", settings.store_path))
         .await
         .map_err(|e| std::io::Error::other(e.to_string()))?;
+
+    let store = Arc::new(Store::new(db.clone(), &settings.store_path));
+    info!(store_path = %settings.store_path, "store initialized");
 
     // Phase 1: OIDC discovery（如果配置了 OIDC）
     let auth_state = if let Some(oidc_config) = &settings.oidc {
@@ -105,10 +107,4 @@ fn load_runtime_settings() -> Result<RuntimeSettings, std::io::Error> {
     );
 
     Ok(settings)
-}
-
-fn open_store(path: &str) -> Result<Arc<Store>, std::io::Error> {
-    let store = Store::open(path).map_err(std::io::Error::other)?;
-    info!(store_path = %path, "store opened");
-    Ok(Arc::new(store))
 }
