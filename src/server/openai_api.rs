@@ -6,7 +6,10 @@ use axum::{
     extract::State,
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response, sse::{Event, Sse}},
+    routing::get,
 };
+use tower_sessions::SessionManagerLayer;
+use tower_sessions::MemoryStore;
 use futures_util::stream::Stream;
 use ractor::Actor;
 use serde::{Deserialize, Serialize};
@@ -19,6 +22,7 @@ use crate::store::Store;
 use crate::types::{LMResponsePart, LanguageModelChatMessage, LanguageModelChatMessageRole, LanguageModelInputPart, LanguageModelTextPart};
 
 use super::admin::all_routes;
+use super::auth::{self, AuthState};
 
 /// Shared application state for HTTP handlers.
 #[derive(Clone)]
@@ -26,6 +30,8 @@ pub struct AppState {
     pub gateway_manager: ractor::ActorRef<GatewayManagerMessage>,
     pub store: Arc<Store>,
     pub auth_token: Option<String>,
+    /// OIDC auth sub-state（仅在配置了 OIDC 时 Some）
+    pub auth: Option<AuthState>,
 }
 
 // ── Auth ──
@@ -392,9 +398,28 @@ pub async fn start_server(state: AppState, host: &str, port: u16) -> Result<(), 
     let (admin_router, _admin_routes) = all_routes();
     let (openai_router, _openai_routes) = openai_routes();
 
-    let app = admin_router
-        .merge(openai_router)
-        .with_state(state);
+    let session_store = MemoryStore::default();
+    let session_layer = SessionManagerLayer::new(session_store).with_secure(false);
+
+    let app = if let Some(auth_state) = state.auth.clone() {
+        let auth_router = Router::new()
+            .route("/auth/login", get(auth::login))
+            .route("/auth/callback", get(auth::callback))
+            .route("/auth/me", get(auth::me))
+            .route("/auth/logout", axum::routing::post(auth::logout))
+            .with_state(auth_state)
+            .layer(session_layer.clone());
+
+        admin_router
+            .merge(openai_router)
+            .merge(auth_router)
+            .with_state(state)
+            .layer(session_layer)
+    } else {
+        admin_router
+            .merge(openai_router)
+            .with_state(state)
+    };
 
     let addr = format!("{}:{}", host, port);
     info!("Starting server on {}", addr);

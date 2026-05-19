@@ -141,8 +141,15 @@ src/
 ├── models_dev.rs               # models.dev API 数据结构
 ├── config/
 │   ├── mod.rs
-│   ├── models.rs               # RuntimeSettings, ProviderConfig, 环境变量解析
+│   ├── models.rs               # RuntimeSettings, OidcConfig, 环境变量解析
 │   └── models_dev_catalog.rs   # models.dev HTTP 客户端（拉取 + 缓存）
+├── db/                         # 🆕 Phase 1 — toasty ORM 数据库层
+│   ├── mod.rs                  # 连接管理、init 函数、all_models()、集成测试
+│   └── models.rs               # User, Token, UsageRecord, Provider, ProviderModel
+├── auth/                       # 🆕 Phase 1 — 认证模块
+│   ├── mod.rs                  # 模块入口
+│   ├── oidc.rs                 # OIDC Service（discover / login_url / callback）
+│   └── session.rs              # Session 数据类型（OidcContext / SessionUser）
 ├── store/
 │   ├── mod.rs                  # Store — 核心数据层（模型查询、路由解析、轮询选 Key）
 │   ├── catalog.rs              # catalog_cache.json 读写
@@ -161,6 +168,7 @@ src/
 ├── server/
 │   ├── mod.rs
 │   ├── admin.rs                # Admin REST API（axfetchum 声明式路由）
+│   ├── auth.rs                 # 🆕 Auth API（/auth/login, callback, me, logout）
 │   └── openai_api.rs           # OpenAI 兼容 API + 服务器启动
 └── observability/
     └── mod.rs                  # OpenTelemetry 初始化
@@ -196,9 +204,9 @@ src/
 | 1.1 引入 toasty 依赖，配置 SQLite | ✅ | 2026-05-19 |
 | 1.2 定义数据模型（User, Token, UsageRecord, Provider, ProviderModel） | ✅ | 2026-05-19 |
 | 1.3 实现数据库初始化与迁移 | ✅ | 2026-05-19 |
-| 1.4 实现 OIDC Service | ⬜ | — |
-| 1.5 实现 Session 管理 | ⬜ | — |
-| 1.6 实现 Auth API 端点 | ⬜ | — |
+| 1.4 实现 OIDC Service | ✅ | 2026-05-19 |
+| 1.5 实现 Session 管理 | ✅ | 2026-05-19 |
+| 1.6 实现 Auth API 端点 | ✅ | 2026-05-19 |
 
 ### Phase 2-5
 
@@ -275,7 +283,7 @@ cd frontend && bun run build
 | 任务 | 状态 | 完成日期 |
 |------|------|---------|
 | 需求分析与计划文档 | ✅ 已完成 | 2026-05-18 |
-| Phase 1：基础设施 | 🚧 进行中 (1.1-1.3/6) | 2026-05-19 |
+| Phase 1：基础设施 | ✅ 已完成 (6/6) | 2026-05-19 |
 | Phase 2：Token 体系 | ⬜ 未开始 | — |
 | Phase 3：存储与 API | ⬜ 未开始 | — |
 | Phase 4：Admin + 前端 | ⬜ 未开始 | — |
@@ -296,15 +304,20 @@ cd frontend && bun run build
 
 ## 9. 总结
 
-LLM-Bridge 当前处于**重构 Phase 1 进行中**。核心路径（OpenAI 兼容 API → 模型路由 → 多提供者适配 → 流式响应）已完整实现。
+LLM-Bridge 当前处于**重构 Phase 1 完成、Phase 2 待开始**。核心路径（OpenAI 兼容 API → 模型路由 → 多提供者适配 → 流式响应）已完整实现。
 
 **Phase 1 已完成：**
-- 引入 `toasty` ORM + `jiff` 时间库
+- 引入 `toasty` ORM + `jiff` 时间库，新增 `openidconnect` + `tower-sessions` + `bcrypt` + `rand` 依赖
 - SQLite（默认）+ PostgreSQL（可选 feature）双数据库支持
 - 5 张核心表数据模型定义完毕（`User`, `Token`, `UsageRecord`, `Provider`, `ProviderModel`）
 - 数据库初始化与自动建表（`db::init` / `db::init_sqlite`）
+- OIDC Service（`OidcService::discover` / `login_url` / `callback`）
+- Session 管理（`tower-sessions` + `MemoryStore`）
+- Auth API 端点（`/auth/login`, `/auth/callback`, `/auth/me`, `/auth/logout`）
+- 管理员首任机制（首个 OIDC 登录用户自动 Admin）
 - `UserRole`、`ProviderCompatibility` 枚举类型安全
 - `created_at` / `updated_at` 使用 `jiff::Timestamp` + `#[auto]` 自动管理
 - 2 个集成测试（建表 + 插入查询往返）
+- `cargo clippy --lib` — 0 warnings
 
-**Phase 1 待完成：** OIDC Service、Session 管理、Auth API 端点（任务 1.4-1.6）
+**Phase 2 待开始：** Token 体系 + 配额管理

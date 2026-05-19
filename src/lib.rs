@@ -1,4 +1,5 @@
 pub mod actors;
+pub mod auth;
 pub mod config;
 pub mod db;
 pub mod models_dev;

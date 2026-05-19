@@ -41,6 +41,10 @@ ts-rs = { version = "12.0.1", features = ["serde_json", "tokio", "uuid"] }
 uuid = { version = "1.23.1", features = ["serde", "v4"] }
 toasty = { version = "0.6.1", features = ["sqlite", "jiff"] }
 jiff = "0.2.24"
+openidconnect = "4.0.1"
+tower-sessions = "0.15.0"
+bcrypt = "0.19.1"
+rand = "0.10.1"
 
 [features]
 postgresql = ["toasty/postgresql"]

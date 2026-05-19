@@ -1,14 +1,18 @@
+use std::path::Path;
 use std::sync::Arc;
 
 use llm_bridge::actors;
+use llm_bridge::auth::oidc::OidcService;
 use llm_bridge::config;
+use llm_bridge::db;
 use llm_bridge::observability;
 use llm_bridge::server;
+use llm_bridge::server::auth::AuthState;
 use llm_bridge::store::Store;
 
 use ractor::Actor;
 use rustls::crypto::ring::default_provider;
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::actors::gateway_manager::{
     GatewayManagerActor, GatewayManagerArgs,
@@ -39,6 +43,27 @@ async fn run_server() -> MainResult {
     let settings = load_runtime_settings()?;
     let store = open_store(&settings.store_path)?;
 
+    // Phase 1: 初始化 SQLite 数据库
+    let db = db::init(db::all_models(), &format!("sqlite:{}/llm-bridge.db", &settings.store_path))
+        .await
+        .map_err(|e| std::io::Error::other(e.to_string()))?;
+
+    // Phase 1: OIDC discovery（如果配置了 OIDC）
+    let auth_state = if let Some(oidc_config) = &settings.oidc {
+        match OidcService::discover(oidc_config).await {
+            Ok(oidc) => {
+                info!("OIDC service initialized");
+                Some(AuthState { oidc, db: db.clone() })
+            }
+            Err(e) => {
+                warn!(error = %e, "OIDC initialization failed — continuing without OIDC");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
     let (gateway_manager, gateway_handle) = Actor::spawn(
         None,
         GatewayManagerActor,
@@ -54,6 +79,7 @@ async fn run_server() -> MainResult {
         gateway_manager,
         store,
         auth_token: settings.server.auth_token.clone(),
+        auth: auth_state,
     };
 
     let server_result = start_server(state, &settings.server.host, settings.server.port).await;
