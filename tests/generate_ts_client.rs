@@ -1,5 +1,5 @@
 use axfetchum::GeneratorConfig;
-use llm_bridge::server::admin::all_routes;
+use llm_bridge::server::openai_api::all_api_routes;
 
 fn config() -> GeneratorConfig {
     GeneratorConfig {
@@ -15,13 +15,13 @@ fn config() -> GeneratorConfig {
 
 #[test]
 fn generate_ts_client() {
-    let (_router, routes) = all_routes();
+    let (_router, routes) = all_api_routes();
     axfetchum::generate_to_file(&routes, &config()).unwrap();
 }
 
 // #[test]
 // fn check_ts_client_up_to_date() {
-//     let (_router, routes) = all_routes();
+//     let (_router, routes) = all_api_routes();
 //     axfetchum::check(&routes, &config())
 //         .expect("Generated TypeScript client is out of date! Run: cargo test generate_ts_client");
 // }

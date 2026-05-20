@@ -239,7 +239,7 @@ src/
 |------|------|------|
 | 3.1 重写 Store 层：用 toasty 操作 providers / provider_models 表 | ✅ | 2026-05-19 |
 | 3.2 实现兼容协议推导（npm → compatibility）和 models.dev 数据映射 | ✅ | 2026-05-19 |
-| 3.3 实现 models.dev 代理与导入端点（浏览 + 搜索 + 导入） | ⬜ 延后 | — |
+| 3.3 实现 models.dev 代理与导入端点（浏览 + 搜索 + 导入） | ✅ | 2026-05-20 |
 | 3.4 重写路由解析：从 provider_models 表读取 | ✅ | 2026-05-19 |
 | 3.5 增强 /v1/models：完整能力+定价 | ✅ | 2026-05-19 |
 | 3.6 改造 /v1/chat/completions 接入 Token 认证和配额 | ✅ | 2026-05-19（已在 Phase 2 完成） |
@@ -249,7 +249,7 @@ src/
 
 | Phase | 内容 | 状态 |
 |-------|------|------|
-| Phase 4 | Admin API + 前端 | ⬜ |
+| Phase 4 | Admin API + 前端 | 🔄 后端完成，前端待开始 |
 | Phase 5 | 测试与文档 | ⬜ |
 
 ---
@@ -267,6 +267,7 @@ src/
 - **错误处理**：各层均有 `thiserror` 定义的错误类型，HTTP 层统一转换为 JSON 错误响应
 - **前端现代化**：Svelte 5 runes、TailwindCSS 4、声明式表格组件
 - **数据库层已测试**：`src/db/mod.rs` 中有 2 个集成测试（建表 + CRUD 往返）
+- **双通道 TS 生成**：`ts-rs` 负责 `.ts` 类型文件（`cargo test export_bindings`），`axfetchum` 负责 API 客户端（`cargo test generate_ts_client`），Token 相关类型（`CreateTokenRequest`、`CreateTokenResponse`、`UpdateTokenRequest`、`TokenListItem`）已全部导出
 
 **已知问题：**
 - OpenTelemetry 版本冲突（`opentelemetry 0.31 vs 0.32`），导致 `observability/mod.rs` 编译错误（`cargo check --lib` 可绕过，全量编译受阻），需统一依赖版本
@@ -284,8 +285,11 @@ cargo build --release
 # 运行
 cargo run
 
-# 生成 TypeScript 客户端类型
-cargo test --test generate_ts_client
+# 生成 ts-rs 类型文件 (.ts 文件)
+cargo test export_bindings
+
+# 生成 axfetchum API 客户端 (client.ts)
+cargo test generate_ts_client
 
 # 前端开发
 cd frontend && bun install && bun run dev

@@ -2,4 +2,4 @@
 import type { ApiKeyDisplay } from "./ApiKeyDisplay";
 import type { CompatibilitySettings } from "./CompatibilitySettings";
 
-export type ProviderResponse = { id: number, provider_id: string, display_name: string, npm: string | null, base_url: string | null, api_keys: Array<ApiKeyDisplay>, compat_settings: CompatibilitySettings | null, enabled: boolean, priority: number, created_at: number, };
+export type ProviderResponse = { id: number, provider_id: string, display_name: string, npm: string | null, base_url: string | null, api_keys: Array<ApiKeyDisplay>, compat_settings: CompatibilitySettings | null, enabled: boolean, priority: number, created_at: number, model_count: number, };

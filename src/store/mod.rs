@@ -341,6 +341,302 @@ impl Store {
 
         Ok(())
     }
+
+    // ── Provider (by row id) ──
+
+    /// 按内部 row id 查找提供者。
+    pub async fn get_provider_by_id(
+        &self,
+        id: u64,
+    ) -> Result<Option<crate::db::models::Provider>, String> {
+        crate::db::models::Provider::get_by_id(&mut self.db.clone(), &id)
+            .await
+            .map(Some)
+            .or_else(|e| {
+                if e.to_string().contains("not found") {
+                    Ok(None)
+                } else {
+                    Err(e.to_string())
+                }
+            })
+    }
+
+    /// 更新提供者（按 row id）。
+    #[allow(clippy::too_many_arguments)]
+    pub async fn update_provider_by_id(
+        &self,
+        id: u64,
+        display_name: String,
+        npm: Option<String>,
+        base_url: Option<String>,
+        api_keys: String,
+        compat_settings: Option<String>,
+        enabled: bool,
+        priority: i64,
+    ) -> Result<crate::db::models::Provider, String> {
+        crate::db::models::Provider::filter(
+            crate::db::models::Provider::fields().id().eq(id),
+        )
+        .update()
+        .display_name(display_name)
+        .npm(npm)
+        .base_url(base_url)
+        .api_keys(api_keys)
+        .compat_settings(compat_settings)
+        .enabled(enabled)
+        .priority(priority)
+        .exec(&mut self.db.clone())
+        .await
+        .map_err(|e| e.to_string())?;
+
+        crate::db::models::Provider::get_by_id(&mut self.db.clone(), &id)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    /// 删除提供者（按 row id，级联删除其模型）。
+    pub async fn delete_provider_by_id(&self, id: u64) -> Result<bool, String> {
+        let provider = match self.get_provider_by_id(id).await? {
+            Some(p) => p,
+            None => return Ok(false),
+        };
+
+        // 删除关联的模型
+        let models = crate::db::models::ProviderModel::filter(
+            crate::db::models::ProviderModel::fields()
+                .provider_row_id()
+                .eq(provider.id),
+        )
+        .exec(&mut self.db.clone())
+        .await
+        .map_err(|e| e.to_string())?;
+
+        for model in models {
+            crate::db::models::ProviderModel::filter(
+                crate::db::models::ProviderModel::fields().id().eq(model.id),
+            )
+            .delete()
+            .exec(&mut self.db.clone())
+            .await
+            .map_err(|e| e.to_string())?;
+        }
+
+        crate::db::models::Provider::filter(
+            crate::db::models::Provider::fields().id().eq(provider.id),
+        )
+        .delete()
+        .exec(&mut self.db.clone())
+        .await
+        .map_err(|e| e.to_string())?;
+
+        Ok(true)
+    }
+
+    // ── Provider Model full update ──
+
+    /// 完整更新提供者模型的所有字段。
+    #[allow(clippy::too_many_arguments)]
+    pub async fn update_provider_model(
+        &self,
+        model_id: u64,
+        provider_model_id: String,
+        compatibility: ProviderCompatibility,
+        display_name: String,
+        description: Option<String>,
+        max_input_tokens: i64,
+        max_output_tokens: i64,
+        tool_calling: bool,
+        vision: bool,
+        thinking: bool,
+        adaptive_thinking: bool,
+        input_price_per_1m: Option<f64>,
+        output_price_per_1m: Option<f64>,
+        cache_read_price_per_1m: Option<f64>,
+        enabled: bool,
+    ) -> Result<crate::db::models::ProviderModel, String> {
+        crate::db::models::ProviderModel::filter(
+            crate::db::models::ProviderModel::fields().id().eq(model_id),
+        )
+        .update()
+        .provider_model_id(provider_model_id)
+        .compatibility(compatibility)
+        .display_name(display_name)
+        .description(description)
+        .max_input_tokens(max_input_tokens)
+        .max_output_tokens(max_output_tokens)
+        .tool_calling(tool_calling)
+        .vision(vision)
+        .thinking(thinking)
+        .adaptive_thinking(adaptive_thinking)
+        .input_price_per_1m(input_price_per_1m)
+        .output_price_per_1m(output_price_per_1m)
+        .cache_read_price_per_1m(cache_read_price_per_1m)
+        .enabled(enabled)
+        .exec(&mut self.db.clone())
+        .await
+        .map_err(|e| e.to_string())?;
+
+        crate::db::models::ProviderModel::get_by_id(&mut self.db.clone(), &model_id)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    // ── User management ──
+
+    /// 列出所有用户。
+    pub async fn list_users(
+        &self,
+    ) -> Result<Vec<crate::db::models::User>, String> {
+        crate::db::models::User::all()
+            .exec(&mut self.db.clone())
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    /// 更新用户角色。
+    pub async fn update_user_role(
+        &self,
+        user_id: u64,
+        role: crate::db::models::UserRole,
+    ) -> Result<(), String> {
+        crate::db::models::User::filter(
+            crate::db::models::User::fields().id().eq(user_id),
+        )
+        .update()
+        .role(role)
+        .exec(&mut self.db.clone())
+        .await
+        .map_err(|e| e.to_string())?;
+
+        Ok(())
+    }
+
+    // ── models.dev discovery (from cache) ──
+
+    /// 在缓存的 models.dev 数据中搜索提供者。
+    pub fn search_catalog_providers(
+        &self,
+        query: &str,
+    ) -> Vec<CatalogProviderSummary> {
+        let catalog = self.get_catalog_providers();
+        let query_lower = query.to_lowercase();
+
+        catalog
+            .into_iter()
+            .filter(|(id, p)| {
+                id.to_lowercase().contains(&query_lower)
+                    || p.name.to_lowercase().contains(&query_lower)
+            })
+            .map(|(id, p)| CatalogProviderSummary {
+                provider_id: id,
+                display_name: p.name,
+                npm: p.npm,
+                model_count: p.models.len() as u32,
+            })
+            .collect()
+    }
+
+    /// 从缓存的 models.dev 数据中导入一个提供者及其模型。
+    pub async fn import_from_models_dev(
+        &self,
+        provider_id: &str,
+    ) -> Result<ImportedProvider, String> {
+        let catalog = self.get_catalog_providers();
+        let pdata = catalog
+            .get(provider_id)
+            .ok_or_else(|| format!("provider '{}' not found in catalog", provider_id))?;
+
+        // Deduce compatibility and base_url
+        let compatibility = compat::npm_to_compatibility(&pdata.npm);
+        let base_url = pdata.api.clone();
+
+        // Upsert provider
+        let provider = self
+            .upsert_provider(
+                provider_id.to_string(),
+                pdata.name.clone(),
+                Some(pdata.npm.clone()),
+                base_url,
+                "[]".to_string(), // api_keys 需要管理员手动填写
+                None,
+                true,
+                100,
+            )
+            .await?;
+
+        let mut imported_models = Vec::new();
+
+        for (model_key, mdata) in &pdata.models {
+            let caps = compat::ModelCapabilitiesFromDev::from_models_dev(mdata);
+            let pricing = compat::ModelPricingFromDev::from_models_dev(mdata);
+
+            let model_name = format!("{}/{}", provider_id, model_key);
+            let compat_for_model = mdata
+                .provider
+                .as_ref()
+                .and_then(|mp| mp.npm.as_deref())
+                .map(compat::npm_to_compatibility)
+                .unwrap_or(compatibility.clone());
+
+            let model = self
+                .add_provider_model(
+                    provider.id,
+                    model_name.clone(),
+                    mdata.id.clone(),
+                    compat_for_model,
+                    mdata.name.clone(),
+                    None,
+                    caps.max_input_tokens,
+                    caps.max_output_tokens,
+                    caps.tool_calling,
+                    caps.vision,
+                    caps.thinking,
+                    caps.adaptive_thinking,
+                    pricing.input_price_per_1m,
+                    pricing.output_price_per_1m,
+                    pricing.cache_read_price_per_1m,
+                )
+                .await?;
+
+            imported_models.push(ImportedModel {
+                id: model.id,
+                model_name,
+            });
+        }
+
+        Ok(ImportedProvider {
+            provider_id: provider.provider_id.clone(),
+            provider_row_id: provider.id,
+            imported_models,
+        })
+    }
+}
+
+/// models.dev 目录中提供者的简要信息（用于搜索展示）。
+#[derive(Debug, Clone, serde::Serialize, ts_rs::TS)]
+#[ts(export)]
+pub struct CatalogProviderSummary {
+    pub provider_id: String,
+    pub display_name: String,
+    pub npm: String,
+    pub model_count: u32,
+}
+
+/// 导入结果。
+#[derive(Debug, Clone, serde::Serialize, ts_rs::TS)]
+#[ts(export)]
+pub struct ImportedProvider {
+    pub provider_id: String,
+    pub provider_row_id: u64,
+    pub imported_models: Vec<ImportedModel>,
+}
+
+/// 导入的单个模型。
+#[derive(Debug, Clone, serde::Serialize, ts_rs::TS)]
+#[ts(export)]
+pub struct ImportedModel {
+    pub id: u64,
+    pub model_name: String,
 }
 
 /// API Key 展示（隐藏敏感信息）。

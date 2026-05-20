@@ -1,30 +1,47 @@
-//! Admin REST API（Phase 3 重写）— Session + Admin 认证。
+//! Admin REST API（Phase 4）— Session + Admin 认证。
 //!
-//! | 端点 | 方法 | 认证 | 说明 |
-//! |------|------|------|------|
-//! | `/api/v1/models` | GET | Session | 浏览全部模型 |
-//! | `/api/v1/models/available` | GET | Session | 仅返回已启用提供者的模型 |
-//! | `/api/v1/providers` | GET | Session + Admin | 列出所有提供者 |
-//! | `/api/v1/providers/{provider_name}` | PUT | Session + Admin | 更新/创建提供者 |
-//! | `/api/v1/providers/{provider_name}` | DELETE | Session + Admin | 删除提供者 |
+//! ## Model browsing (Session auth — any logged-in user)
+//! | 端点 | 方法 | 说明 |
+//! |------|------|------|
+//! | `/api/v1/models` | GET | 浏览全部模型（含未启用） |
+//! | `/api/v1/models/available` | GET | 仅返回已启用提供者的模型 |
+//!
+//! ## Admin API (Session + Admin auth)
+//! | 端点 | 方法 | 说明 |
+//! |------|------|------|
+//! | `/api/v1/admin/providers` | GET | 列出所有提供者 |
+//! | `/api/v1/admin/providers` | POST | 创建提供者 |
+//! | `/api/v1/admin/providers/{id}` | GET | 获取单个提供者 |
+//! | `/api/v1/admin/providers/{id}` | PUT | 更新提供者 |
+//! | `/api/v1/admin/providers/{id}` | DELETE | 删除提供者 |
+//! | `/api/v1/admin/providers/{id}/models` | GET | 列出提供者下的模型 |
+//! | `/api/v1/admin/providers/{id}/models` | POST | 添加模型 |
+//! | `/api/v1/admin/providers/{id}/models/{model_id}` | PUT | 更新模型 |
+//! | `/api/v1/admin/providers/{id}/models/{model_id}` | DELETE | 删除模型 |
+//! | `/api/v1/admin/models-dev/search` | GET | 搜索 models.dev 缓存 |
+//! | `/api/v1/admin/models-dev/import` | POST | 从 models.dev 导入提供者 |
+//! | `/api/v1/admin/users` | GET | 列出所有用户 |
+//! | `/api/v1/admin/users/{id}/role` | PATCH | 修改用户角色 |
 
 use axfetchum::ApiRouter;
 use axum::{
-    Json, Router,
-    extract::{Path, State},
+    Json,
+    extract::{Path, Query, State},
     http::StatusCode,
     response::{IntoResponse, Response},
 };
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::config::models::{ApiKeyEntry, CompatibilitySettings};
+use crate::config::models::{ApiKeyEntry, CompatibilitySettings, ProviderCompatibility};
 use crate::db::models;
 use crate::middleware::session_auth::{AdminAuth, SessionAuth};
 use crate::server::openai_api::AppState;
-use crate::store::{self, ApiKeyDisplay, AvailableModel};
+use crate::store::{self, ApiKeyDisplay, AvailableModel, CatalogProviderSummary, ImportedProvider};
 
-pub fn all_routes() -> (Router<AppState>, axfetchum::RouteCollection) {
+// ── Model browsing routes (axfetchum, for auto-generated TS client) ──
+
+pub fn model_browse_routes() -> ApiRouter<AppState> {
     ApiRouter::<AppState>::new()
         .group("models")
         .get("/api/v1/models", list_all_models)
@@ -35,19 +52,66 @@ pub fn all_routes() -> (Router<AppState>, axfetchum::RouteCollection) {
             .response::<Vec<ModelResponse>>()
             .auth()
             .done()
-        .group("providers")
-        .get("/api/v1/providers", list_providers)
+}
+
+/// Admin CRUD routes (ApiRouter for auto-generated TS client).
+pub fn admin_crud_routes() -> ApiRouter<AppState> {
+    ApiRouter::<AppState>::new()
+        .group("admin")
+        // Providers
+        .get("/api/v1/admin/providers", list_providers)
             .response::<Vec<ProviderResponse>>()
             .auth()
             .done()
-        .put("/api/v1/providers/{provider_name}", update_provider)
+        .post("/api/v1/admin/providers", create_provider)
+            .json::<CreateProviderRequest, ProviderResponse>()
+            .auth()
+            .done()
+        .get("/api/v1/admin/providers/{id}", get_provider)
+            .response::<ProviderResponse>()
+            .auth()
+            .done()
+        .put("/api/v1/admin/providers/{id}", update_provider)
             .json::<UpdateProviderRequest, ProviderResponse>()
             .auth()
             .done()
-        .delete("/api/v1/providers/{provider_name}", delete_provider)
+        .delete("/api/v1/admin/providers/{id}", delete_provider)
             .auth()
             .done()
-        .build()
+        // Provider models
+        .get("/api/v1/admin/providers/{id}/models", list_provider_models)
+            .response::<Vec<ProviderModelResponse>>()
+            .auth()
+            .done()
+        .post("/api/v1/admin/providers/{id}/models", add_provider_model)
+            .json::<AddModelRequest, ProviderModelResponse>()
+            .auth()
+            .done()
+        .put("/api/v1/admin/providers/{id}/models/{model_id}", update_provider_model)
+            .json::<UpdateModelRequest, ProviderModelResponse>()
+            .auth()
+            .done()
+        .delete("/api/v1/admin/providers/{id}/models/{model_id}", delete_provider_model)
+            .auth()
+            .done()
+        // models.dev discovery
+        .get("/api/v1/admin/models-dev/search", search_models_dev)
+            .response::<Vec<CatalogProviderSummary>>()
+            .auth()
+            .done()
+        .post("/api/v1/admin/models-dev/import", import_models_dev)
+            .json::<ImportModelsDevRequest, ImportedProvider>()
+            .auth()
+            .done()
+        // Users
+        .get("/api/v1/admin/users", list_users)
+            .response::<Vec<UserResponse>>()
+            .auth()
+            .done()
+        .patch("/api/v1/admin/users/{id}/role", update_user_role)
+            .json::<UpdateRoleRequest, UserResponse>()
+            .auth()
+            .done()
 }
 
 fn db_err(e: impl std::fmt::Display) -> Response {
@@ -108,7 +172,7 @@ async fn list_available_models(
     Ok(Json(models.into_iter().map(ModelResponse::from).collect()))
 }
 
-// ── Providers ──
+// ── Provider responses ──
 
 #[derive(Serialize, TS)]
 #[ts(export)]
@@ -123,36 +187,109 @@ struct ProviderResponse {
     enabled: bool,
     priority: i64,
     created_at: i64,
+    model_count: usize,
 }
 
-impl From<models::Provider> for ProviderResponse {
-    fn from(p: models::Provider) -> Self {
-        let api_keys: Vec<ApiKeyEntry> = serde_json::from_str(&p.api_keys).unwrap_or_default();
-        let compat_settings: Option<CompatibilitySettings> = p
-            .compat_settings
-            .as_ref()
-            .and_then(|s| serde_json::from_str(s).ok());
+fn provider_to_response(p: &models::Provider, model_count: usize) -> ProviderResponse {
+    let api_keys: Vec<ApiKeyEntry> = serde_json::from_str(&p.api_keys).unwrap_or_default();
+    let compat_settings: Option<CompatibilitySettings> = p
+        .compat_settings
+        .as_ref()
+        .and_then(|s| serde_json::from_str(s).ok());
 
+    ProviderResponse {
+        id: p.id,
+        provider_id: p.provider_id.clone(),
+        display_name: p.display_name.clone(),
+        npm: p.npm.clone(),
+        base_url: p.base_url.clone(),
+        api_keys: api_keys.into_iter().map(|k| ApiKeyDisplay {
+            label: k.label,
+            weight: k.weight,
+            masked_key: store::mask_key(&k.key),
+        }).collect(),
+        compat_settings,
+        enabled: p.enabled,
+        priority: p.priority,
+        created_at: p.created_at.as_millisecond() / 1000,
+        model_count,
+    }
+}
+
+// ── Provider Model response ──
+
+#[derive(Serialize, TS)]
+#[ts(export)]
+struct ProviderModelResponse {
+    id: u64,
+    provider_row_id: u64,
+    model_name: String,
+    provider_model_id: String,
+    compatibility: String,
+    display_name: String,
+    description: Option<String>,
+    max_input_tokens: i64,
+    max_output_tokens: i64,
+    tool_calling: bool,
+    vision: bool,
+    thinking: bool,
+    adaptive_thinking: bool,
+    input_price_per_1m: Option<f64>,
+    output_price_per_1m: Option<f64>,
+    cache_read_price_per_1m: Option<f64>,
+    status: Option<String>,
+    enabled: bool,
+}
+
+impl From<models::ProviderModel> for ProviderModelResponse {
+    fn from(pm: models::ProviderModel) -> Self {
         Self {
-            id: p.id,
-            provider_id: p.provider_id,
-            display_name: p.display_name,
-            npm: p.npm,
-            base_url: p.base_url,
-            api_keys: api_keys.into_iter().map(|k| ApiKeyDisplay {
-                label: k.label,
-                weight: k.weight,
-                masked_key: store::mask_key(&k.key),
-            }).collect(),
-            compat_settings,
-            enabled: p.enabled,
-            priority: p.priority,
-            created_at: p.created_at.as_millisecond() / 1000,
+            id: pm.id,
+            provider_row_id: pm.provider_row_id,
+            model_name: pm.model_name,
+            provider_model_id: pm.provider_model_id,
+            compatibility: format!("{:?}", pm.compatibility),
+            display_name: pm.display_name,
+            description: pm.description,
+            max_input_tokens: pm.max_input_tokens,
+            max_output_tokens: pm.max_output_tokens,
+            tool_calling: pm.tool_calling,
+            vision: pm.vision,
+            thinking: pm.thinking,
+            adaptive_thinking: pm.adaptive_thinking,
+            input_price_per_1m: pm.input_price_per_1m,
+            output_price_per_1m: pm.output_price_per_1m,
+            cache_read_price_per_1m: pm.cache_read_price_per_1m,
+            status: pm.status,
+            enabled: pm.enabled,
         }
     }
 }
 
-#[derive(Deserialize, Serialize, TS)]
+// ── Request types ──
+
+#[derive(Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+struct CreateProviderRequest {
+    provider_id: String,
+    #[serde(default)]
+    display_name: String,
+    npm: Option<String>,
+    base_url: Option<String>,
+    #[serde(default)]
+    api_keys: Vec<ApiKeyEntry>,
+    compat_settings: Option<CompatibilitySettings>,
+    #[serde(default = "default_true")]
+    enabled: bool,
+    #[serde(default = "default_priority")]
+    priority: i64,
+}
+
+fn default_true() -> bool { true }
+fn default_priority() -> i64 { 100 }
+
+#[derive(Deserialize, TS)]
 #[ts(export)]
 #[serde(rename_all = "camelCase")]
 struct UpdateProviderRequest {
@@ -169,53 +306,342 @@ struct UpdateProviderRequest {
     priority: i64,
 }
 
+#[derive(Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+struct AddModelRequest {
+    model_name: String,
+    provider_model_id: String,
+    #[serde(default = "default_compat")]
+    compatibility: String,
+    #[serde(default)]
+    display_name: String,
+    description: Option<String>,
+    #[serde(default = "default_4096")]
+    max_input_tokens: i64,
+    #[serde(default = "default_4096")]
+    max_output_tokens: i64,
+    #[serde(default)]
+    tool_calling: bool,
+    #[serde(default)]
+    vision: bool,
+    #[serde(default)]
+    thinking: bool,
+    #[serde(default)]
+    adaptive_thinking: bool,
+    input_price_per_1m: Option<f64>,
+    output_price_per_1m: Option<f64>,
+    cache_read_price_per_1m: Option<f64>,
+}
+
+fn default_compat() -> String { "OpenAiChatCompletions".into() }
+fn default_4096() -> i64 { 4096 }
+
+#[derive(Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+struct UpdateModelRequest {
+    provider_model_id: String,
+    compatibility: String,
+    #[serde(default)]
+    display_name: String,
+    description: Option<String>,
+    max_input_tokens: i64,
+    max_output_tokens: i64,
+    #[serde(default)]
+    tool_calling: bool,
+    #[serde(default)]
+    vision: bool,
+    #[serde(default)]
+    thinking: bool,
+    #[serde(default)]
+    adaptive_thinking: bool,
+    input_price_per_1m: Option<f64>,
+    output_price_per_1m: Option<f64>,
+    cache_read_price_per_1m: Option<f64>,
+    #[serde(default = "default_true")]
+    enabled: bool,
+}
+
+#[derive(Deserialize, TS)]
+#[ts(export)]
+struct ImportModelsDevRequest {
+    provider_id: String,
+}
+
+#[derive(Deserialize, TS)]
+#[ts(export)]
+struct UpdateRoleRequest {
+    role: String,
+}
+
+#[derive(Deserialize)]
+struct SearchQuery {
+    q: String,
+}
+
+// ── Providers CRUD ──
+
 async fn list_providers(
     State(state): State<AppState>,
     AdminAuth(_user): AdminAuth,
 ) -> Result<Json<Vec<ProviderResponse>>, Response> {
     let providers = state.store.list_providers().await.map_err(db_err)?;
-    Ok(Json(providers.into_iter().map(ProviderResponse::from).collect()))
+    let mut result = Vec::new();
+    for p in &providers {
+        let models = state.store.list_provider_models(p.id).await.unwrap_or_default();
+        result.push(provider_to_response(p, models.len()));
+    }
+    Ok(Json(result))
 }
 
-async fn update_provider(
+async fn get_provider(
     State(state): State<AppState>,
     AdminAuth(_user): AdminAuth,
-    Path(provider_name): Path<String>,
-    Json(req): Json<UpdateProviderRequest>,
+    Path(id): Path<u64>,
 ) -> Result<Json<ProviderResponse>, Response> {
+    let provider = state.store.get_provider_by_id(id).await.map_err(db_err)?
+        .ok_or_else(|| (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "provider not found"}))).into_response())?;
+    let models = state.store.list_provider_models(provider.id).await.unwrap_or_default();
+    Ok(Json(provider_to_response(&provider, models.len())))
+}
+
+async fn create_provider(
+    State(state): State<AppState>,
+    AdminAuth(_user): AdminAuth,
+    Json(req): Json<CreateProviderRequest>,
+) -> Result<(StatusCode, Json<ProviderResponse>), Response> {
     let api_keys_json = serde_json::to_string(&req.api_keys).map_err(db_err)?;
     let compat_settings_json = req.compat_settings.as_ref()
         .map(serde_json::to_string)
         .transpose()
         .map_err(db_err)?;
 
-    let provider = state
-        .store
-        .upsert_provider(
-            provider_name.clone(),
-            if req.display_name.is_empty() { provider_name.clone() } else { req.display_name },
-            req.npm,
-            req.base_url,
-            api_keys_json,
-            compat_settings_json,
-            req.enabled,
-            req.priority,
-        )
-        .await
+    let display_name = if req.display_name.is_empty() { req.provider_id.clone() } else { req.display_name };
+
+    let provider = state.store.upsert_provider(
+        req.provider_id,
+        display_name,
+        req.npm,
+        req.base_url,
+        api_keys_json,
+        compat_settings_json,
+        req.enabled,
+        req.priority,
+    ).await.map_err(db_err)?;
+
+    let models = state.store.list_provider_models(provider.id).await.unwrap_or_default();
+    Ok((StatusCode::CREATED, Json(provider_to_response(&provider, models.len()))))
+}
+
+async fn update_provider(
+    State(state): State<AppState>,
+    AdminAuth(_user): AdminAuth,
+    Path(id): Path<u64>,
+    Json(req): Json<UpdateProviderRequest>,
+) -> Result<Json<ProviderResponse>, Response> {
+    let provider = state.store.get_provider_by_id(id).await.map_err(db_err)?
+        .ok_or_else(|| (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "provider not found"}))).into_response())?;
+
+    let api_keys_json = serde_json::to_string(&req.api_keys).map_err(db_err)?;
+    let compat_settings_json = req.compat_settings.as_ref()
+        .map(serde_json::to_string)
+        .transpose()
         .map_err(db_err)?;
 
-    Ok(Json(ProviderResponse::from(provider)))
+    let display_name = if req.display_name.is_empty() { provider.display_name.clone() } else { req.display_name };
+
+    let updated = state.store.update_provider_by_id(
+        id,
+        display_name,
+        req.npm,
+        req.base_url,
+        api_keys_json,
+        compat_settings_json,
+        req.enabled,
+        req.priority,
+    ).await.map_err(db_err)?;
+
+    let models = state.store.list_provider_models(updated.id).await.unwrap_or_default();
+    Ok(Json(provider_to_response(&updated, models.len())))
 }
 
 async fn delete_provider(
     State(state): State<AppState>,
     AdminAuth(_user): AdminAuth,
-    Path(provider_name): Path<String>,
+    Path(id): Path<u64>,
 ) -> Result<Response, Response> {
-    let existed = state.store.delete_provider(&provider_name).await.map_err(db_err)?;
+    let existed = state.store.delete_provider_by_id(id).await.map_err(db_err)?;
     if existed {
         Ok(StatusCode::NO_CONTENT.into_response())
     } else {
         Ok((StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "provider not found"}))).into_response())
     }
+}
+
+// ── Provider Models CRUD ──
+
+async fn list_provider_models(
+    State(state): State<AppState>,
+    AdminAuth(_user): AdminAuth,
+    Path(id): Path<u64>,
+) -> Result<Json<Vec<ProviderModelResponse>>, Response> {
+    // Verify provider exists
+    state.store.get_provider_by_id(id).await.map_err(db_err)?
+        .ok_or_else(|| (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "provider not found"}))).into_response())?;
+
+    let models = state.store.list_provider_models(id).await.map_err(db_err)?;
+    Ok(Json(models.into_iter().map(ProviderModelResponse::from).collect()))
+}
+
+async fn add_provider_model(
+    State(state): State<AppState>,
+    AdminAuth(_user): AdminAuth,
+    Path(id): Path<u64>,
+    Json(req): Json<AddModelRequest>,
+) -> Result<(StatusCode, Json<ProviderModelResponse>), Response> {
+    // Verify provider exists
+    state.store.get_provider_by_id(id).await.map_err(db_err)?
+        .ok_or_else(|| (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "provider not found"}))).into_response())?;
+
+    let compatibility: ProviderCompatibility = serde_json::from_str(&format!("\"{}\"", req.compatibility))
+        .unwrap_or(ProviderCompatibility::OpenAiChatCompletions);
+
+    let display_name = if req.display_name.is_empty() { req.model_name.clone() } else { req.display_name };
+
+    let model = state.store.add_provider_model(
+        id,
+        req.model_name,
+        req.provider_model_id,
+        compatibility,
+        display_name,
+        req.description,
+        req.max_input_tokens,
+        req.max_output_tokens,
+        req.tool_calling,
+        req.vision,
+        req.thinking,
+        req.adaptive_thinking,
+        req.input_price_per_1m,
+        req.output_price_per_1m,
+        req.cache_read_price_per_1m,
+    ).await.map_err(db_err)?;
+
+    Ok((StatusCode::CREATED, Json(ProviderModelResponse::from(model))))
+}
+
+async fn update_provider_model(
+    State(state): State<AppState>,
+    AdminAuth(_user): AdminAuth,
+    Path((_provider_id, model_id)): Path<(u64, u64)>,
+    Json(req): Json<UpdateModelRequest>,
+) -> Result<Json<ProviderModelResponse>, Response> {
+    let compatibility: ProviderCompatibility = serde_json::from_str(&format!("\"{}\"", req.compatibility))
+        .unwrap_or(ProviderCompatibility::OpenAiChatCompletions);
+
+    let updated = state.store.update_provider_model(
+        model_id,
+        req.provider_model_id,
+        compatibility,
+        if req.display_name.is_empty() { "".into() } else { req.display_name },
+        req.description,
+        req.max_input_tokens,
+        req.max_output_tokens,
+        req.tool_calling,
+        req.vision,
+        req.thinking,
+        req.adaptive_thinking,
+        req.input_price_per_1m,
+        req.output_price_per_1m,
+        req.cache_read_price_per_1m,
+        req.enabled,
+    ).await.map_err(db_err)?;
+
+    Ok(Json(ProviderModelResponse::from(updated)))
+}
+
+async fn delete_provider_model(
+    State(state): State<AppState>,
+    AdminAuth(_user): AdminAuth,
+    Path((_provider_id, model_id)): Path<(u64, u64)>,
+) -> Result<Response, Response> {
+    state.store.delete_provider_model(model_id).await.map_err(db_err)?;
+    Ok(StatusCode::NO_CONTENT.into_response())
+}
+
+// ── models.dev discovery ──
+
+async fn search_models_dev(
+    State(state): State<AppState>,
+    AdminAuth(_user): AdminAuth,
+    Query(query): Query<SearchQuery>,
+) -> Result<Json<Vec<CatalogProviderSummary>>, Response> {
+    Ok(Json(state.store.search_catalog_providers(&query.q)))
+}
+
+async fn import_models_dev(
+    State(state): State<AppState>,
+    AdminAuth(_user): AdminAuth,
+    Json(req): Json<ImportModelsDevRequest>,
+) -> Result<(StatusCode, Json<ImportedProvider>), Response> {
+    let result = state.store.import_from_models_dev(&req.provider_id).await.map_err(db_err)?;
+    Ok((StatusCode::CREATED, Json(result)))
+}
+
+// ── User management ──
+
+#[derive(Serialize, TS)]
+#[ts(export)]
+struct UserResponse {
+    id: u64,
+    oidc_sub: String,
+    name: String,
+    email: Option<String>,
+    role: String,
+    active: bool,
+    created_at: i64,
+}
+
+impl From<models::User> for UserResponse {
+    fn from(u: models::User) -> Self {
+        Self {
+            id: u.id,
+            oidc_sub: u.oidc_sub,
+            name: u.name,
+            email: u.email,
+            role: format!("{:?}", u.role).to_lowercase(),
+            active: u.active,
+            created_at: u.created_at.as_millisecond() / 1000,
+        }
+    }
+}
+
+async fn list_users(
+    State(state): State<AppState>,
+    AdminAuth(_user): AdminAuth,
+) -> Result<Json<Vec<UserResponse>>, Response> {
+    let users = state.store.list_users().await.map_err(db_err)?;
+    Ok(Json(users.into_iter().map(UserResponse::from).collect()))
+}
+
+async fn update_user_role(
+    State(state): State<AppState>,
+    AdminAuth(_user): AdminAuth,
+    Path(id): Path<u64>,
+    Json(req): Json<UpdateRoleRequest>,
+) -> Result<Json<UserResponse>, Response> {
+    let role = match req.role.to_lowercase().as_str() {
+        "admin" => models::UserRole::Admin,
+        "member" => models::UserRole::Member,
+        _ => return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({"error": "invalid role, must be 'admin' or 'member'"}))).into_response()),
+    };
+
+    state.store.update_user_role(id, role.clone()).await.map_err(db_err)?;
+
+    // Re-fetch to return updated user
+    let users = state.store.list_users().await.map_err(db_err)?;
+    let user = users.into_iter().find(|u| u.id == id)
+        .ok_or_else(|| (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "user not found"}))).into_response())?;
+
+    Ok(Json(UserResponse::from(user)))
 }

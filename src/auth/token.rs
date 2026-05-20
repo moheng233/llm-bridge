@@ -21,7 +21,8 @@ const TOKEN_PREFIX: &str = "lb_";
 const TOKEN_RANDOM_BYTES: usize = 32;
 
 /// 创建 Token 的请求体（来自 API）。
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ts_rs::TS)]
+#[ts(export)]
 pub struct CreateTokenRequest {
     pub name: String,
     #[serde(default)]
@@ -39,7 +40,8 @@ fn default_quota_period() -> String {
 }
 
 /// 创建 Token 的响应体（包含明文 Token，仅返回一次）。
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct CreateTokenResponse {
     pub id: u64,
     pub name: String,
@@ -55,7 +57,8 @@ pub struct CreateTokenResponse {
 }
 
 /// 更新 Token 的请求体。
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ts_rs::TS)]
+#[ts(export)]
 pub struct UpdateTokenRequest {
     pub name: Option<String>,
     pub allowed_models: Option<Vec<String>>,

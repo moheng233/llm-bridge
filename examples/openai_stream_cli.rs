@@ -3,55 +3,10 @@ use std::io::{self, Write};
 
 use tokio::sync::mpsc;
 
-#[path = "../src/types.rs"]
-mod types;
-
-mod actors {
-    pub mod provider {
-        use tokio::sync::mpsc;
-
-        use crate::types::{LMResponsePart, LanguageModelChatMessage};
-
-        pub type ProviderStreamItem = Result<LMResponsePart, String>;
-        pub type ProviderResponseSender = mpsc::Sender<ProviderStreamItem>;
-
-        #[derive(Debug, Clone)]
-        pub struct ProviderState {
-            pub provider_id: String,
-            pub compatibility: String,
-            pub api_key: String,
-            pub base_url: Option<String>,
-            pub compat_settings: Option<CompatSettings>,
-            pub client: reqwest::Client,
-        }
-
-        #[derive(Debug, Clone)]
-        pub struct CompatSettings {
-            pub path_suffix: Option<String>,
-            pub custom_headers: std::collections::HashMap<String, String>,
-            pub custom_params: std::collections::HashMap<String, String>,
-        }
-
-        #[derive(Debug, Clone)]
-        pub struct ProviderChatRequest {
-            pub model: String,
-            pub messages: Vec<LanguageModelChatMessage>,
-        }
-
-        pub mod adapters {
-            pub mod openai {
-                include!(concat!(
-                    env!("CARGO_MANIFEST_DIR"),
-                    "/src/actors/provider/adapters/openai_chat_completions.rs"
-                ));
-            }
-        }
-    }
-}
-
-use actors::provider::adapters::openai;
-use actors::provider::{ProviderChatRequest, ProviderState};
-use types::{
+use llm_bridge::actors::provider::adapters::openai_chat_completions as openai;
+use llm_bridge::actors::provider::{ProviderChatRequest, ProviderState};
+use llm_bridge::config::models::ProviderCompatibility;
+use llm_bridge::types::{
     LMResponsePart, LanguageModelChatMessage, LanguageModelInputPart, LanguageModelTextPart,
     LanguageModelThinkingValue,
 };
@@ -85,7 +40,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let state = ProviderState {
         provider_id: "openai-example".to_string(),
-        compatibility: "openai".to_string(),
+        compatibility: ProviderCompatibility::OpenAiChatCompletions,
         api_key,
         base_url: Some(url),
         compat_settings: None,

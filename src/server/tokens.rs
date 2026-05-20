@@ -21,7 +21,8 @@ use crate::middleware::session_auth::SessionAuth;
 use crate::server::openai_api::AppState;
 
 /// Token 列表项（不含 token_hash）。
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct TokenListItem {
     pub id: u64,
     pub name: String,

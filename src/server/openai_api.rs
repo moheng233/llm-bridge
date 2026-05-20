@@ -23,7 +23,7 @@ use crate::middleware::token_auth::TokenAuth;
 use crate::store::Store;
 use crate::types::{LMResponsePart, LanguageModelChatMessage, LanguageModelChatMessageRole, LanguageModelInputPart, LanguageModelTextPart};
 
-use super::admin::all_routes;
+use super::admin::{admin_crud_routes, model_browse_routes};
 use super::auth::{self, AuthState};
 use super::tokens;
 
@@ -61,13 +61,15 @@ fn check_auth(state: &AppState, headers: &HeaderMap) -> Result<(), Response> {
 
 // ── GET /v1/models ──
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ts_rs::TS)]
+#[ts(export)]
 pub struct OpenAiModelList {
     object: &'static str,
     data: Vec<OpenAiModelEntry>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ts_rs::TS)]
+#[ts(export)]
 struct OpenAiModelEntry {
     id: String,
     object: &'static str,
@@ -468,7 +470,7 @@ fn estimate_token_count(messages: &[OpenAiMessage]) -> i64 {
 
 // ── Server Startup ──
 
-fn openai_routes() -> (Router<AppState>, axfetchum::RouteCollection) {
+fn openai_routes() -> ApiRouter<AppState> {
     ApiRouter::<AppState>::new()
         .group("openai")
         .get("/v1/models", list_models)
@@ -477,15 +479,35 @@ fn openai_routes() -> (Router<AppState>, axfetchum::RouteCollection) {
             .done()
         .post("/v1/chat/completions", chat_completions)
             .done()
-        .build()
 }
 
-fn token_routes() -> Router<AppState> {
-    axum::Router::new()
-        .route("/api/v1/tokens", axum::routing::get(tokens::list_tokens))
-        .route("/api/v1/tokens", axum::routing::post(tokens::create_token))
-        .route("/api/v1/tokens/{id}", axum::routing::patch(tokens::update_token))
-        .route("/api/v1/tokens/{id}", axum::routing::delete(tokens::delete_token))
+fn token_routes() -> ApiRouter<AppState> {
+    ApiRouter::<AppState>::new()
+        .group("tokens")
+        .get("/api/v1/tokens", tokens::list_tokens)
+            .response::<Vec<tokens::TokenListItem>>()
+            .auth()
+            .done()
+        .post("/api/v1/tokens", tokens::create_token)
+            .json::<crate::auth::token::CreateTokenRequest, crate::auth::token::CreateTokenResponse>()
+            .auth()
+            .done()
+        .patch("/api/v1/tokens/{id}", tokens::update_token)
+            .json::<crate::auth::token::UpdateTokenRequest, tokens::TokenListItem>()
+            .auth()
+            .done()
+        .delete("/api/v1/tokens/{id}", tokens::delete_token)
+            .auth()
+            .done()
+}
+
+/// Merge all route collections (for TypeScript client generation via axfetchum).
+pub fn all_api_routes() -> (Router<AppState>, axfetchum::RouteCollection) {
+    model_browse_routes()
+        .merge(admin_crud_routes())
+        .merge(openai_routes())
+        .merge(token_routes())
+        .build()
 }
 
 #[instrument(
@@ -498,8 +520,9 @@ fn token_routes() -> Router<AppState> {
     )
 )]
 pub async fn start_server(state: AppState, host: &str, port: u16) -> Result<(), std::io::Error> {
-    let (admin_router, _admin_routes) = all_routes();
-    let (openai_router, _openai_routes) = openai_routes();
+    let (admin_router, _) = model_browse_routes().build();
+    let (admin_ext_router, _) = admin_crud_routes().build();
+    let (openai_router, _) = openai_routes().build();
 
     let session_store = MemoryStore::default();
     let session_layer = SessionManagerLayer::new(session_store).with_secure(false);
@@ -513,7 +536,8 @@ pub async fn start_server(state: AppState, host: &str, port: u16) -> Result<(), 
             .with_state(auth_state)
             .layer(session_layer.clone());
 
-        let tokens_router = token_routes()
+        let (tokens_router, _) = token_routes().build();
+        let tokens_router = tokens_router
             .with_state(state.clone())
             .layer(session_layer.clone());
 
@@ -521,11 +545,13 @@ pub async fn start_server(state: AppState, host: &str, port: u16) -> Result<(), 
             .merge(openai_router)
             .merge(auth_router)
             .merge(tokens_router)
+            .merge(admin_ext_router)
             .with_state(state)
             .layer(session_layer)
     } else {
         admin_router
             .merge(openai_router)
+            .merge(admin_ext_router)
             .with_state(state)
     };
 
