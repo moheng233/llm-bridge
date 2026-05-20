@@ -1,15 +1,6 @@
 <script lang="ts">
-  import { createApiClient } from "$bindings/client";
-  import type {
-    ProviderResponse,
-    UpdateProviderRequest,
-    ApiKeyEntry,
-    ProviderCompatibility,
-    ProviderCompatConfig,
-    CompatibilitySettings,
-  } from "$bindings";
-  import * as Card from "$lib/components/ui/card/index.js";
-  import * as Dialog from "$lib/components/ui/dialog/index.js";
+  import { getApi } from "$lib/api";
+  import { auth } from "$lib/stores/auth.svelte";
   import { Button } from "$lib/components/ui/button/index.js";
   import { Input } from "$lib/components/ui/input/index.js";
   import { Label } from "$lib/components/ui/label/index.js";
@@ -17,41 +8,41 @@
   import { Spinner } from "$lib/components/ui/spinner/index.js";
   import { Alert, AlertDescription } from "$lib/components/ui/alert/index.js";
   import { Checkbox } from "$lib/components/ui/checkbox/index.js";
+  import { Skeleton } from "$lib/components/ui/skeleton/index.js";
+  import {
+    Dialog,
+    DialogContent,
+    DialogHeader,
+    DialogTitle,
+    DialogTrigger,
+  } from "$lib/components/ui/dialog/index.js";
+  import { Plus, Settings, Trash2, ChevronDown, ChevronRight, Globe, Cpu } from "@lucide/svelte";
+  import type { ProviderResponse } from "$bindings/ProviderResponse";
+  import type { ProviderModelResponse } from "$bindings/ProviderModelResponse";
+  import type { ApiKeyEntry } from "$bindings/ApiKeyEntry";
 
-  const api = createApiClient({ baseUrl: "", credentials: "include" });
-
-  const COMPAT_OPTIONS: { value: ProviderCompatibility; label: string; badgeClass: string }[] = [
-    { value: "open_ai_responses", label: "OpenAI Responses", badgeClass: "bg-emerald-100 text-emerald-700 hover:bg-emerald-100" },
-    { value: "open_ai_chat_completions", label: "OpenAI Chat", badgeClass: "bg-teal-100 text-teal-700 hover:bg-teal-100" },
-    { value: "anthropic_messages", label: "Anthropic Messages", badgeClass: "bg-orange-100 text-orange-700 hover:bg-orange-100" },
-  ];
-
-  function defaultCompatibilities(): Record<ProviderCompatibility, ProviderCompatConfig> {
-    return {
-      open_ai_responses: { enabled: false, settings: null },
-      open_ai_chat_completions: { enabled: false, settings: null },
-      anthropic_messages: { enabled: false, settings: null },
-    };
-  }
+  const api = getApi();
 
   let providers = $state<ProviderResponse[]>([]);
   let loading = $state(true);
   let error = $state("");
-  let dialogOpen = $state(false);
-  let editing = $state<string | null>(null);
-  let formError = $state("");
+  let expandedId = $state<number | null>(null);
+  let modelsCache = $state<Map<number, ProviderModelResponse[]>>(new Map());
+  let modelsLoading = $state<Set<number>>(new Set());
 
-  let formEnabled = $state(true);
-  let formPriority = $state(0);
-  let formCompatibilities = $state<Record<ProviderCompatibility, ProviderCompatConfig>>(defaultCompatibilities());
-  let formBaseUrlOverride = $state("");
-  let formApiKeys = $state<ApiKeyEntry[]>([]);
+  // Create dialog
+  let showCreate = $state(false);
+  let newProviderId = $state("");
+  let newDisplayName = $state("");
+  let newBaseUrl = $state("");
+  let newApiKeyLabel = $state("");
+  let newApiKeyValue = $state("");
 
-  async function load() {
+  async function loadProviders() {
     loading = true;
     error = "";
     try {
-      providers = await api.providers.listProviders();
+      providers = await api.admin.listProviders();
     } catch (e: any) {
       error = e.message;
     } finally {
@@ -59,361 +50,212 @@
     }
   }
 
-  $effect(() => { load(); });
-
-  function resetForm() {
-    formEnabled = true;
-    formPriority = 0;
-    formCompatibilities = defaultCompatibilities();
-    formBaseUrlOverride = "";
-    formApiKeys = [];
-    dialogOpen = false;
-    editing = null;
-    formError = "";
-  }
-
-  function startEdit(p: ProviderResponse) {
-    editing = p.provider_name;
-    formEnabled = p.enabled;
-    formPriority = p.priority;
-    formCompatibilities = { ...defaultCompatibilities(), ...p.compatibilities };
-    formBaseUrlOverride = p.base_url_override ?? "";
-    // Convert ApiKeyDisplay to ApiKeyEntry (key is empty since we only have masked_key)
-    formApiKeys = p.api_keys.map((ak) => ({ label: ak.label, key: "", weight: ak.weight }));
-    dialogOpen = true;
-    formError = "";
-  }
-
-  function toggleCompat(compat: ProviderCompatibility) {
-    const current = formCompatibilities[compat];
-    formCompatibilities = {
-      ...formCompatibilities,
-      [compat]: { enabled: !current.enabled, settings: current.settings },
-    };
-  }
-
-  function updateCompatSettings(compat: ProviderCompatibility, settings: CompatibilitySettings) {
-    formCompatibilities = {
-      ...formCompatibilities,
-      [compat]: { ...formCompatibilities[compat], settings },
-    };
-  }
-
-  function addApiKey() {
-    formApiKeys = [...formApiKeys, { label: "", key: "", weight: 1 }];
-  }
-
-  function removeApiKey(index: number) {
-    formApiKeys = formApiKeys.filter((_, i) => i !== index);
-  }
-
-  function updateApiKeyField(index: number, field: keyof ApiKeyEntry, value: string | number) {
-    formApiKeys = formApiKeys.map((ak, i) =>
-      i === index ? { ...ak, [field]: value } : ak,
-    );
-  }
-
-  async function handleSubmit() {
-    if (!editing) return;
-    formError = "";
-    const enabledCompatibilities = Object.keys(formCompatibilities).filter(
-      (k) => formCompatibilities[k as ProviderCompatibility].enabled,
-    );
-    if (enabledCompatibilities.length === 0) {
-      formError = "至少需要启用一种兼容性协议";
+  async function toggleModels(providerId: number) {
+    if (expandedId === providerId) {
+      expandedId = null;
       return;
     }
-    try {
-      const req: UpdateProviderRequest = {
-        enabled: formEnabled,
-        priority: formPriority,
-        base_url_override: formBaseUrlOverride || null,
-        api_keys: formApiKeys.filter((ak) => ak.key.length > 0),
-        compatibilities: formCompatibilities,
-      };
-      await api.providers.updateProvider(editing, req);
-      resetForm();
-      await load();
-    } catch (e: any) {
-      formError = e.message;
+    expandedId = providerId;
+    if (!modelsCache.has(providerId)) {
+      modelsLoading.add(providerId);
+      modelsLoading = new Set(modelsLoading);
+      try {
+        const models = await api.admin.listProviderModels(String(providerId));
+        modelsCache.set(providerId, models);
+        modelsCache = new Map(modelsCache);
+      } catch (e: any) {
+        error = e.message;
+      } finally {
+        modelsLoading.delete(providerId);
+        modelsLoading = new Set(modelsLoading);
+      }
     }
   }
 
-  async function handleDelete(name: string) {
+  async function handleCreate() {
+    error = "";
+    const apiKeys: ApiKeyEntry[] = newApiKeyValue.trim()
+      ? [{ label: newApiKeyLabel || "default", key: newApiKeyValue, weight: 1 }]
+      : [];
     try {
-      await api.providers.deleteProvider(name);
-      await load();
+      await api.admin.createProvider({
+        provider_id: newProviderId,
+        display_name: newDisplayName || newProviderId,
+        npm: undefined,
+        base_url: newBaseUrl || undefined,
+        api_keys: apiKeys,
+        enabled: true,
+        priority: 100,
+      });
+      showCreate = false;
+      newProviderId = "";
+      newDisplayName = "";
+      newBaseUrl = "";
+      newApiKeyLabel = "";
+      newApiKeyValue = "";
+      loadProviders();
     } catch (e: any) {
       error = e.message;
     }
   }
 
-  // Compatibility settings helpers for inline editing
-  function updateCompatSettingField(
-    compat: ProviderCompatibility,
-    field: keyof CompatibilitySettings,
-    value: any,
-  ) {
-    const s = formCompatibilities[compat].settings ?? { pathSuffix: null, customHeaders: {}, customParams: {} };
-    updateCompatSettings(compat, { ...s, [field]: value });
+  async function handleDelete(id: number) {
+    error = "";
+    try {
+      await api.admin.deleteProvider(String(id));
+      loadProviders();
+    } catch (e: any) {
+      error = e.message;
+    }
   }
+
+  async function handleToggle(p: ProviderResponse) {
+    error = "";
+    try {
+      await api.admin.updateProvider(String(p.id), {
+        display_name: p.display_name,
+        enabled: !p.enabled,
+        priority: p.priority,
+        api_keys: p.api_keys.map((k: any) => ({ label: k.label, key: "", weight: k.weight })),
+      });
+      loadProviders();
+    } catch (e: any) {
+      error = e.message;
+    }
+  }
+
+  $effect(() => {
+    if (auth.isAdmin) loadProviders();
+  });
 </script>
 
 <div class="flex h-full min-h-0 flex-col gap-4">
-  <section
-    class="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border bg-background shadow-sm"
-  >
-    <div
-      class="flex shrink-0 flex-col gap-3 border-b px-4 py-3 lg:flex-row lg:items-center lg:justify-between"
-    >
-      <div class="flex items-center gap-3">
-        <h2 class="text-xl font-semibold">提供者管理</h2>
-        <span class="text-sm text-muted-foreground">提供者从 models.dev 自动发现，此处配置密钥和优先级</span>
+  <!-- Header -->
+  <div class="flex items-center justify-between">
+    <div>
+      <h2 class="text-xl font-bold font-mono text-foreground">提供者管理</h2>
+      <p class="text-sm text-muted-foreground mt-1">配置上游 LLM 提供者</p>
+    </div>
+    <Dialog open={showCreate} onOpenChange={(v) => showCreate = v}>
+      <DialogTrigger asChild>
+        <Button class="bg-[#22C55E] hover:bg-[#16A34A] text-black font-medium gap-2 cursor-pointer" onclick={() => showCreate = true}>
+          <Plus class="h-4 w-4" />
+          添加提供者
+        </Button>
+      </DialogTrigger>
+      <DialogContent class="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle class="font-mono">添加提供者</DialogTitle>
+        </DialogHeader>
+        <div class="flex flex-col gap-3">
+          <div class="flex flex-col gap-2">
+            <Label for="pid">提供者 ID</Label>
+            <Input id="pid" placeholder="openai" bind:value={newProviderId} />
+          </div>
+          <div class="flex flex-col gap-2">
+            <Label for="dn">显示名称</Label>
+            <Input id="dn" placeholder="OpenAI" bind:value={newDisplayName} />
+          </div>
+          <div class="flex flex-col gap-2">
+            <Label for="bu">Base URL（可选）</Label>
+            <Input id="bu" placeholder="https://api.openai.com/v1" bind:value={newBaseUrl} />
+          </div>
+          <div class="flex flex-col gap-2">
+            <Label for="kl">API Key 标签</Label>
+            <Input id="kl" placeholder="default" bind:value={newApiKeyLabel} />
+          </div>
+          <div class="flex flex-col gap-2">
+            <Label for="kv">API Key</Label>
+            <Input id="kv" type="password" placeholder="sk-..." bind:value={newApiKeyValue} />
+          </div>
+          <Button class="bg-[#22C55E] hover:bg-[#16A34A] text-black font-medium cursor-pointer" onclick={handleCreate} disabled={!newProviderId.trim()}>
+            创建
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  </div>
+
+  {#if error}
+    <Alert class="border-destructive/30 bg-destructive/10">
+      <AlertDescription class="text-destructive text-sm">{error}</AlertDescription>
+    </Alert>
+  {/if}
+
+  {#if loading}
+    <div class="flex flex-col gap-3">
+      {#each Array(4) as _}
+        <Skeleton class="h-16 w-full rounded-lg" />
+      {/each}
+    </div>
+  {:else if providers.length === 0}
+    <div class="flex flex-1 items-center justify-center text-muted-foreground">
+      <div class="flex flex-col items-center gap-2">
+        <Globe class="h-8 w-8 opacity-30" />
+        <p class="text-sm">暂无提供者，点击上方按钮添加</p>
       </div>
     </div>
-
-    <Dialog.Root bind:open={dialogOpen}>
-      <Dialog.Content class="sm:max-w-xl">
-        <Dialog.Header>
-          <Dialog.Title>编辑提供者</Dialog.Title>
-          <Dialog.Description>
-            {editing ? `配置 "${editing}" 的密钥、优先级和兼容性` : ""}
-          </Dialog.Description>
-        </Dialog.Header>
-        {#if formError}
-          <Alert variant="destructive">
-            <AlertDescription>{formError}</AlertDescription>
-          </Alert>
-        {/if}
-        <form onsubmit={(e) => { e.preventDefault(); handleSubmit(); }} class="space-y-4">
-          <div class="flex items-center gap-4">
-            <div class="flex items-center gap-2">
-              <Checkbox checked={formEnabled} onCheckedChange={() => (formEnabled = !formEnabled)} />
-              <Label>启用</Label>
-            </div>
-            <div class="flex items-center gap-2">
-              <Label for="priority">优先级</Label>
-              <Input id="priority" type="number" bind:value={formPriority} class="w-20" />
-            </div>
-          </div>
-
-          <div class="space-y-2">
-            <Label for="base-url-override">自定义 Base URL（可选）</Label>
-            <Input id="base-url-override" bind:value={formBaseUrlOverride} placeholder="留空使用默认地址" />
-          </div>
-
-          <div class="space-y-2">
-            <div class="flex items-center justify-between">
-              <Label>API Keys</Label>
-              <Button type="button" variant="outline" size="sm" onclick={addApiKey}>+ 添加</Button>
-            </div>
-            {#if formApiKeys.length === 0}
-              <p class="text-xs text-muted-foreground">尚未配置任何 API Key</p>
+  {:else}
+    <div class="flex flex-col gap-2 overflow-auto">
+      {#each providers as p}
+        <div class="rounded-lg border border-border bg-card">
+          <button class="flex w-full items-center gap-3 px-4 py-3 text-left cursor-pointer hover:bg-accent/50 transition-colors" onclick={() => toggleModels(p.id)} onkeydown={(e) => e.key === 'Enter' && toggleModels(p.id)}>
+            {#if expandedId === p.id}
+              <ChevronDown class="h-4 w-4 text-muted-foreground shrink-0" />
             {:else}
-              <div class="space-y-2">
-                {#each formApiKeys as ak, i}
-                  <div class="flex items-end gap-2 rounded-md border p-2">
-                    <div class="flex-1 space-y-1">
-                      <Input
-                        placeholder="标签"
-                        value={ak.label}
-                        oninput={(e) => updateApiKeyField(i, "label", (e.target as HTMLInputElement).value)}
-                        class="h-8 text-xs"
-                      />
-                      <Input
-                        type="password"
-                        placeholder="密钥"
-                        value={ak.key}
-                        oninput={(e) => updateApiKeyField(i, "key", (e.target as HTMLInputElement).value)}
-                        class="h-8 text-xs"
-                      />
-                      <div class="flex items-center gap-2">
-                        <Label class="text-xs">权重</Label>
-                        <Input
-                          type="number"
-                          value={ak.weight}
-                          oninput={(e) => updateApiKeyField(i, "weight", Number((e.target as HTMLInputElement).value))}
-                          class="h-7 w-16 text-xs"
-                          min="1"
-                        />
-                      </div>
-                    </div>
-                    <Button type="button" variant="ghost" size="sm" onclick={() => removeApiKey(i)}>✕</Button>
-                  </div>
-                {/each}
-              </div>
+              <ChevronRight class="h-4 w-4 text-muted-foreground shrink-0" />
             {/if}
-          </div>
-
-          <div class="space-y-2">
-            <Label>兼容性协议</Label>
-            <div class="space-y-3 rounded-md border p-3">
-              {#each COMPAT_OPTIONS as opt}
-                <div class="flex items-center justify-between">
-                  <div class="flex items-center gap-2">
-                    <Checkbox
-                      checked={formCompatibilities[opt.value]?.enabled ?? false}
-                      onCheckedChange={() => toggleCompat(opt.value)}
-                    />
-                    <span class="text-sm">{opt.label}</span>
-                  </div>
-                  {#if formCompatibilities[opt.value]?.enabled}
-                    <Badge class={opt.badgeClass}>已启用</Badge>
-                  {/if}
-                </div>
-                {#if formCompatibilities[opt.value]?.enabled}
-                  {@const settings = formCompatibilities[opt.value]?.settings ?? { pathSuffix: null, customHeaders: {}, customParams: {} }}
-                  <div class="mt-2 space-y-2 rounded border p-2 text-xs">
-                    <div class="space-y-1">
-                      <Label class="text-xs">Path Suffix</Label>
-                      <Input
-                        value={settings.pathSuffix ?? ""}
-                        placeholder="例如 /v1"
-                        class="h-7 text-xs"
-                        oninput={(e) => updateCompatSettingField(opt.value, "pathSuffix", (e.target as HTMLInputElement).value || null)}
-                      />
-                    </div>
-                    <div class="space-y-1">
-                      <Label class="text-xs">自定义 HTTP Headers（每行一个，格式：Key: Value）</Label>
-                      <textarea
-                        value={Object.entries(settings.customHeaders ?? {}).map(([k, v]) => `${k}: ${v}`).join("\n")}
-                        class="w-full rounded-md border bg-background px-2 py-1 font-mono text-xs"
-                        rows={2}
-                        oninput={(e) => {
-                          const headers: Record<string, string> = {};
-                          for (const line of (e.target as HTMLTextAreaElement).value.split("\n").filter((l) => l.trim())) {
-                            const idx = line.indexOf(":");
-                            if (idx > 0) headers[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
-                          }
-                          updateCompatSettingField(opt.value, "customHeaders", headers);
-                        }}
-                      ></textarea>
-                    </div>
-                    <div class="space-y-1">
-                      <Label class="text-xs">自定义 HTTP Params（每行一个，格式：key=value）</Label>
-                      <textarea
-                        value={Object.entries(settings.customParams ?? {}).map(([k, v]) => `${k}=${v}`).join("\n")}
-                        class="w-full rounded-md border bg-background px-2 py-1 font-mono text-xs"
-                        rows={2}
-                        oninput={(e) => {
-                          const params: Record<string, string> = {};
-                          for (const line of (e.target as HTMLTextAreaElement).value.split("\n").filter((l) => l.trim())) {
-                            const idx = line.indexOf("=");
-                            if (idx > 0) params[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
-                          }
-                          updateCompatSettingField(opt.value, "customParams", params);
-                        }}
-                      ></textarea>
-                    </div>
-                  </div>
-                {/if}
-              {/each}
+            <div class="flex-1 min-w-0">
+              <div class="flex items-center gap-2">
+                <span class="font-mono font-medium text-foreground">{p.provider_id}</span>
+                <Badge variant={p.enabled ? "default" : "secondary"} class="text-xs">
+                  {p.enabled ? "启用" : "禁用"}
+                </Badge>
+              </div>
+              <div class="flex gap-3 text-xs text-muted-foreground mt-0.5">
+                <span>{p.display_name}</span>
+                <span>{p.model_count} 个模型</span>
+                <span>优先级: {p.priority}</span>
+              </div>
             </div>
-          </div>
-
-          <Dialog.Footer>
-            <Button type="button" variant="outline" onclick={resetForm}>取消</Button>
-            <Button type="submit">保存修改</Button>
-          </Dialog.Footer>
-        </form>
-      </Dialog.Content>
-    </Dialog.Root>
-
-    <div class="min-h-0 flex-1 overflow-auto [scrollbar-gutter:stable]">
-      {#if loading}
-        <div class="flex items-center justify-center py-16">
-          <Spinner class="size-8" />
-        </div>
-      {:else if error}
-        <Alert variant="destructive">
-          <AlertDescription>{error}</AlertDescription>
-        </Alert>
-      {:else if providers.length === 0}
-        <div class="rounded-lg border border-dashed py-12 text-center text-sm text-muted-foreground">
-          暂无提供者，请等待 models.dev 数据同步后自动出现
-        </div>
-      {:else}
-        <div class="grid grid-cols-1 gap-4 p-4 md:grid-cols-2">
-          {#each providers as p, rowIndex}
-            <Card.Root style="animation: row-enter 220ms ease both; animation-delay: {Math.min(rowIndex * 20, 480)}ms;">
-              <Card.Header>
-                <div class="flex items-start justify-between">
-                  <div>
-                    <div class="flex items-center gap-2">
-                      <Card.Title class="text-base">{p.provider_name}</Card.Title>
-                      {#if p.enabled}
-                        <Badge class="bg-green-100 text-green-700 hover:bg-green-100">启用</Badge>
-                      {:else}
-                        <Badge variant="secondary">禁用</Badge>
-                      {/if}
-                    </div>
-                    <div class="mt-1 flex flex-wrap gap-1">
-                      {#each COMPAT_OPTIONS as opt}
-                        {#if p.compatibilities[opt.value]?.enabled}
-                          <Badge class={opt.badgeClass}>{opt.label}</Badge>
-                        {/if}
-                      {/each}
-                    </div>
-                  </div>
-                  <div class="flex gap-1">
-                    <Button variant="ghost" size="sm" onclick={() => startEdit(p)}>✏️</Button>
-                  </div>
+            <div class="flex items-center gap-1" role="toolbar">
+              <Checkbox checked={p.enabled} class="pointer-events-none" aria-label={p.enabled ? '已启用' : '已禁用'} />
+              <Button size="icon" variant="ghost" class="h-8 w-8 text-muted-foreground hover:text-destructive cursor-pointer">
+                <Trash2 class="h-4 w-4" onclick={() => handleDelete(p.id)} />
+              </Button>
+            </div>
+          </button>
+          {#if expandedId === p.id}
+            <div class="border-t border-border px-4 py-3">
+              {#if modelsLoading.has(p.id)}
+                <div class="flex items-center gap-2 text-sm text-muted-foreground py-2">
+                  <Spinner class="h-4 w-4" />
+                  加载模型...
                 </div>
-              </Card.Header>
-              <Card.Content>
-                <dl class="space-y-1.5 text-xs text-muted-foreground">
-                  {#if p.base_url_override}
-                    <div class="flex gap-2">
-                      <dt class="shrink-0 font-medium">URL</dt>
-                      <dd class="truncate font-mono">{p.base_url_override}</dd>
+              {:else if (modelsCache.get(p.id) || []).length === 0}
+                <div class="flex items-center gap-2 text-sm text-muted-foreground py-2">
+                  <Cpu class="h-4 w-4" />
+                  暂无模型
+                </div>
+              {:else}
+                <div class="flex flex-col gap-1">
+                  {#each modelsCache.get(p.id) || [] as m}
+                    <div class="flex items-center justify-between py-1.5 text-sm">
+                      <div class="flex items-center gap-2 min-w-0">
+                        <Badge variant="outline" class="text-xs font-mono shrink-0">{m.compatibility}</Badge>
+                        <span class="font-mono text-foreground truncate">{m.model_name}</span>
+                        <span class="text-muted-foreground text-xs shrink-0">→ {m.provider_model_id}</span>
+                      </div>
+                      <Badge variant={m.enabled ? "default" : "secondary"} class="text-xs shrink-0">{m.enabled ? "启用" : "禁用"}</Badge>
                     </div>
-                  {/if}
-                  <div class="flex gap-2">
-                    <dt class="shrink-0 font-medium">优先级</dt>
-                    <dd class="font-mono">{p.priority}</dd>
-                  </div>
-                  <div class="flex gap-2">
-                    <dt class="shrink-0 font-medium">模型数</dt>
-                    <dd class="font-mono">{p.model_count}</dd>
-                  </div>
-                  <div class="flex gap-2">
-                    <dt class="shrink-0 font-medium">密钥</dt>
-                    <dd class="font-mono">
-                      {#if p.api_keys.length > 0}
-                        {p.api_keys.length} 个已配置
-                      {:else}
-                        <span class="text-orange-500">未配置</span>
-                      {/if}
-                    </dd>
-                  </div>
-                  {#if p.api_keys.length > 0}
-                    <div class="flex flex-col gap-1 pt-1">
-                      {#each p.api_keys as ak}
-                        <span class="font-mono text-xs">
-                          {ak.label || "(无标签)"} · {ak.masked_key} · 权重 {ak.weight}
-                        </span>
-                      {/each}
-                    </div>
-                  {/if}
-                </dl>
-              </Card.Content>
-            </Card.Root>
-          {/each}
+                  {/each}
+                </div>
+              {/if}
+            </div>
+          {/if}
         </div>
-      {/if}
+      {/each}
     </div>
-  </section>
+  {/if}
 </div>
 
-<style>
-  @keyframes row-enter {
-    from {
-      opacity: 0;
-      transform: translateY(6px);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
-  }
-</style>

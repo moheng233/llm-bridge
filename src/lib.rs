@@ -2,6 +2,8 @@ pub mod actors;
 pub mod auth;
 pub mod config;
 pub mod db;
+#[cfg(feature = "embed-frontend")]
+pub mod embed;
 pub mod middleware;
 pub mod models_dev;
 pub mod observability;

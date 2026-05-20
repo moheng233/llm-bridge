@@ -528,6 +528,7 @@ pub async fn start_server(state: AppState, host: &str, port: u16) -> Result<(), 
     let session_layer = SessionManagerLayer::new(session_store).with_secure(false);
 
     let app = if let Some(auth_state) = state.auth.clone() {
+        // ── OIDC 已配置：完整认证模式 ──
         let auth_router = Router::new()
             .route("/auth/login", get(auth::login))
             .route("/auth/callback", get(auth::callback))
@@ -549,14 +550,39 @@ pub async fn start_server(state: AppState, host: &str, port: u16) -> Result<(), 
             .with_state(state)
             .layer(session_layer)
     } else {
+        // ── 无授权模式：自动注入默认管理员，无需登录 ──
+        info!("OIDC not configured — entering no-auth mode (default admin)");
+
+        let no_auth_router = Router::new()
+            .route("/auth/login", get(auth::no_auth_login))
+            .route("/auth/me", get(auth::me))
+            .route("/auth/logout", axum::routing::post(auth::logout));
+
+        let (tokens_router, _) = token_routes().build();
+
         admin_router
             .merge(openai_router)
+            .merge(no_auth_router)
+            .merge(tokens_router)
             .merge(admin_ext_router)
             .with_state(state)
+            // no_auth_middleware 先于 session_layer 注入，确保 session 可用后再自动填充用户
+            .layer(axum::middleware::from_fn(auth::no_auth_middleware))
+            .layer(session_layer)
     };
 
     let addr = format!("{}:{}", host, port);
     info!("Starting server on {}", addr);
+
+    // ── 嵌入前端静态文件（可选 feature） ──
+    #[cfg(feature = "embed-frontend")]
+    let app = {
+        use axum::routing::get;
+        app.fallback(get(|req: axum::http::Request<axum::body::Body>| async move {
+            crate::embed::serve(req.uri().path()).await
+        }))
+    };
+
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     axum::serve(listener, app).await
 }

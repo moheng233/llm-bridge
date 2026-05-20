@@ -6,6 +6,14 @@
 //! | `/auth/callback` | GET | OIDC 回调，验证后签发 Session |
 //! | `/auth/me` | GET | 返回当前登录用户信息 |
 //! | `/auth/logout` | POST | 销毁 Session |
+//!
+//! ## 无授权模式
+//!
+//! 当 OIDC 未配置（`RuntimeSettings.oidc` 为 `None`）时，系统自动进入无授权模式：
+//! - 所有请求自动注入默认管理员 Session（user_id=0, name="admin", role="admin"）
+//! - `/auth/login` 直接跳转到 `/`
+//! - `/auth/me` 返回默认管理员信息
+//! - 无需登录即可访问管理后台
 
 use axum::{
     Json,
@@ -26,6 +34,39 @@ use crate::db::models::{User, UserRole};
 pub struct AuthState {
     pub oidc: crate::auth::oidc::OidcService,
     pub db: db::Db,
+}
+
+/// 无授权模式下的默认管理员 Session 用户。
+fn no_auth_user() -> SessionUser {
+    SessionUser {
+        user_id: 0,
+        name: "admin".to_string(),
+        role: "admin".to_string(),
+    }
+}
+
+// ── 无授权模式：自动注入管理员 Session ──
+
+/// Axum 中间件：无 OIDC 配置时，自动为每个请求注入默认管理员 Session。
+///
+/// 仅当 Session 中尚无用户时注入；如果用户主动登出（Session flush），
+/// 下次请求会重新注入。
+pub async fn no_auth_middleware(
+    session: Session,
+    request: axum::http::Request<axum::body::Body>,
+    next: axum::middleware::Next,
+) -> Response {
+    let has_user: Option<SessionUser> = session.get("user").await.ok().flatten();
+    if has_user.is_none() {
+        let _ = session.insert("user", no_auth_user()).await;
+    }
+    next.run(request).await
+}
+
+/// 无授权模式下的 `/auth/login`：直接跳转到 `/`。
+#[instrument(level = "debug")]
+pub async fn no_auth_login() -> Redirect {
+    Redirect::temporary("/")
 }
 
 // ── GET /auth/login ──

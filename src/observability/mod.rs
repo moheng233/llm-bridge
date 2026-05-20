@@ -1,73 +1,111 @@
-use opentelemetry::trace::TracerProvider;
-use opentelemetry_sdk::Resource;
-use opentelemetry_sdk::logs::SdkLoggerProvider;
-use opentelemetry_sdk::trace::SdkTracerProvider;
 use tracing_subscriber::EnvFilter;
+
+#[cfg(feature = "otel")]
 use tracing_subscriber::prelude::*;
 
+/// Holds observability resources for graceful shutdown.
+///
+/// Without the `otel` feature, this is a unit struct — `shutdown()` is a no-op.
+#[cfg(feature = "otel")]
 pub struct ObservabilityGuard {
-    logger_provider: SdkLoggerProvider,
-    tracer_provider: SdkTracerProvider,
+    logger_provider: opentelemetry_sdk::logs::SdkLoggerProvider,
+    tracer_provider: opentelemetry_sdk::trace::SdkTracerProvider,
 }
 
-pub fn init(service_name: &str) -> Result<ObservabilityGuard, Box<dyn std::error::Error>> {
-    let service_name = service_name.to_owned();
-    let resource = Resource::builder()
-        .with_service_name(service_name.clone())
-        .build();
+/// Holds observability resources for graceful shutdown.
+///
+/// Without the `otel` feature, this is a unit struct — `shutdown()` is a no-op.
+#[cfg(not(feature = "otel"))]
+pub struct ObservabilityGuard;
 
-    let logger_provider = SdkLoggerProvider::builder()
-        .with_resource(resource.clone())
-        .with_batch_exporter(
-            opentelemetry_otlp::LogExporter::builder()
-                .with_http()
-                .build()?,
-        )
-        .build();
+/// Initialise tracing and optional OpenTelemetry OTLP export.
+///
+/// - **Without `otel`**: only stdout/err formatted logging via `tracing-subscriber`.
+/// - **With `otel`**: adds OTLP HTTP exporters for logs and spans (sends to
+///   the collector configured via standard `OTEL_EXPORTER_OTLP_*` env vars).
+pub fn init(_service_name: &str) -> Result<ObservabilityGuard, Box<dyn std::error::Error>> {
+    #[cfg(feature = "otel")]
+    {
+        use opentelemetry::trace::TracerProvider;
+        use opentelemetry_sdk::Resource;
 
-    let tracer_provider = SdkTracerProvider::builder()
-        .with_resource(resource)
-        .with_batch_exporter(
-            opentelemetry_otlp::SpanExporter::builder()
-                .with_http()
-                .build()?,
-        )
-        .build();
+        let service_name = _service_name.to_owned();
+        let resource = Resource::builder()
+            .with_service_name(service_name.clone())
+            .build();
 
-    let subscriber = tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
-        )
-        .with_target(true)
-        .with_timer(tracing_subscriber::fmt::time::uptime())
-        .with_level(true)
-        .finish()
-        .with(
-            tracing_opentelemetry::layer()
-                .with_tracer(tracer_provider.tracer(service_name.to_owned())),
-        )
-        .with(
-            opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge::new(
-                &logger_provider,
-            ),
-        );
+        let logger_provider = opentelemetry_sdk::logs::SdkLoggerProvider::builder()
+            .with_resource(resource.clone())
+            .with_batch_exporter(
+                opentelemetry_otlp::LogExporter::builder()
+                    .with_http()
+                    .build()?,
+            )
+            .build();
 
-    tracing::subscriber::set_global_default(subscriber)?;
+        let tracer_provider = opentelemetry_sdk::trace::SdkTracerProvider::builder()
+            .with_resource(resource)
+            .with_batch_exporter(
+                opentelemetry_otlp::SpanExporter::builder()
+                    .with_http()
+                    .build()?,
+            )
+            .build();
 
-    Ok(ObservabilityGuard {
-        logger_provider,
-        tracer_provider,
-    })
+        let subscriber = tracing_subscriber::fmt()
+            .with_env_filter(
+                EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+            )
+            .with_target(true)
+            .with_timer(tracing_subscriber::fmt::time::uptime())
+            .with_level(true)
+            .finish()
+            .with(
+                tracing_opentelemetry::layer()
+                    .with_tracer(tracer_provider.tracer(service_name.to_owned())),
+            )
+            .with(
+                opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge::new(
+                    &logger_provider,
+                ),
+            );
+
+        tracing::subscriber::set_global_default(subscriber)?;
+
+        return Ok(ObservabilityGuard {
+            logger_provider,
+            tracer_provider,
+        });
+    }
+
+    #[cfg(not(feature = "otel"))]
+    {
+        let subscriber = tracing_subscriber::fmt()
+            .with_env_filter(
+                EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+            )
+            .with_target(true)
+            .with_timer(tracing_subscriber::fmt::time::uptime())
+            .with_level(true)
+            .finish();
+
+        tracing::subscriber::set_global_default(subscriber)?;
+
+        return Ok(ObservabilityGuard);
+    }
 }
 
 impl ObservabilityGuard {
     pub fn shutdown(self) {
-        if let Err(error) = self.tracer_provider.shutdown() {
-            tracing::warn!(error = %error, "failed to shut down tracer provider");
-        }
+        #[cfg(feature = "otel")]
+        {
+            if let Err(error) = self.tracer_provider.shutdown() {
+                tracing::warn!(error = %error, "failed to shut down tracer provider");
+            }
 
-        if let Err(error) = self.logger_provider.shutdown() {
-            tracing::warn!(error = %error, "failed to shut down logger provider");
+            if let Err(error) = self.logger_provider.shutdown() {
+                tracing::warn!(error = %error, "failed to shut down logger provider");
+            }
         }
     }
 }
