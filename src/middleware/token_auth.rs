@@ -13,7 +13,7 @@ use axum::{
 use tracing::warn;
 
 use crate::db::models::Token;
-use crate::server::openai_api::AppState;
+use crate::server::AppState;
 
 /// Bearer Token 认证提取器。
 ///

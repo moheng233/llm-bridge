@@ -17,8 +17,8 @@ use crate::actors::gateway_manager::{
     GatewayManagerActor, GatewayManagerArgs,
 };
 use crate::config::models::RuntimeSettings;
-use crate::server::openai_api::AppState;
-use crate::server::openai_api::start_server;
+use crate::server::AppState;
+use crate::server::start_server;
 
 type MainResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 

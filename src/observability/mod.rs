@@ -91,7 +91,7 @@ pub fn init(_service_name: &str) -> Result<ObservabilityGuard, Box<dyn std::erro
 
         tracing::subscriber::set_global_default(subscriber)?;
 
-        return Ok(ObservabilityGuard);
+        Ok(ObservabilityGuard)
     }
 }
 

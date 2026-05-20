@@ -1,7 +1,7 @@
 //! 兼容协议推导 + models.dev 数据映射（Phase 3.2）。
 //!
 //! - `npm_to_compatibility`: AI SDK npm 包名 → 兼容协议
-//! - `models_dev_to_provider_model`: models.dev 模型数据 → ProviderModel 字段映射
+//! - `models_dev_to_model_data`: models.dev 模型数据 → Model 标称值 + ModelProvider 定价
 
 use crate::config::models::ProviderCompatibility;
 use crate::models_dev::ModelsDevModel;

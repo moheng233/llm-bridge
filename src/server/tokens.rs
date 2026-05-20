@@ -18,7 +18,7 @@ use tracing::instrument;
 
 use crate::auth::token::{self, CreateTokenRequest, CreateTokenResponse, UpdateTokenRequest};
 use crate::middleware::session_auth::SessionAuth;
-use crate::server::openai_api::AppState;
+use crate::server::AppState;
 
 /// Token 列表项（不含 token_hash）。
 #[derive(Debug, Serialize, ts_rs::TS)]

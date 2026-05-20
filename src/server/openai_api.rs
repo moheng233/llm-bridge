@@ -1,45 +1,22 @@
-use std::sync::Arc;
-
-use axfetchum::ApiRouter;
 use axum::{
-    Json, Router,
+    Json,
     extract::State,
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response, sse::{Event, Sse}},
-    routing::get,
 };
-use tower_sessions::SessionManagerLayer;
-use tower_sessions::MemoryStore;
 use futures_util::stream::Stream;
 use ractor::Actor;
 use serde::{Deserialize, Serialize};
 use tokio_stream::StreamExt;
-use tracing::{info, instrument};
+use tracing::instrument;
 
-use crate::actors::{gateway_manager::GatewayManagerMessage, provider::adapters::openai_chat_completions::flatten_thinking_value_for_sse};
+use crate::actors::provider::adapters::openai_chat_completions::flatten_thinking_value_for_sse;
 use crate::actors::provider::{ProviderActor, ProviderChatRequest, ProviderMessage, ProviderRuntimeConfig};
-use crate::db;
 use crate::middleware::token_auth::TokenAuth;
-use crate::store::Store;
+use crate::server::AppState;
 use crate::types::{LMResponsePart, LanguageModelChatMessage, LanguageModelChatMessageRole, LanguageModelInputPart, LanguageModelTextPart};
 
-use super::admin::{admin_crud_routes, model_browse_routes};
-use super::auth::{self, AuthState};
-use super::tokens;
-
-/// Shared application state for HTTP handlers.
-#[derive(Clone)]
-pub struct AppState {
-    pub gateway_manager: ractor::ActorRef<GatewayManagerMessage>,
-    pub store: Arc<Store>,
-    pub auth_token: Option<String>,
-    /// OIDC auth sub-state（仅在配置了 OIDC 时 Some）
-    pub auth: Option<AuthState>,
-    /// SQLite 数据库句柄（始终可用）
-    pub db: db::Db,
-}
-
-// ── Auth ──
+// ── Auth ── (legacy — used by check_auth only)
 
 #[allow(dead_code)]
 #[allow(clippy::result_large_err)]
@@ -68,13 +45,50 @@ pub struct OpenAiModelList {
     data: Vec<OpenAiModelEntry>,
 }
 
+/// 单个模型的 API 条目（增强版，包含提供者列表和各自的定价/能力）。
 #[derive(Debug, Serialize, ts_rs::TS)]
 #[ts(export)]
 struct OpenAiModelEntry {
     id: String,
     object: &'static str,
     created: i64,
+    /// 主要提供者（第一个可用提供者）
     owned_by: String,
+    /// 模型的标称能力
+    capabilities: OpenAiModelCapabilities,
+    /// 各提供者的定价和能力覆盖
+    providers: Vec<OpenAiModelProviderInfo>,
+}
+
+#[derive(Debug, Serialize, ts_rs::TS)]
+#[ts(export)]
+struct OpenAiModelCapabilities {
+    max_input_tokens: u32,
+    max_output_tokens: u32,
+    tool_calling: bool,
+    vision: bool,
+    thinking: Option<bool>,
+    adaptive_thinking: Option<bool>,
+}
+
+#[derive(Debug, Serialize, ts_rs::TS)]
+#[ts(export)]
+struct OpenAiModelProviderInfo {
+    provider_id: String,
+    provider_display_name: String,
+    /// 提供者覆盖的能力（nullable = 使用模型标称值）
+    max_input_tokens: Option<i64>,
+    max_output_tokens: Option<i64>,
+    tool_calling: Option<bool>,
+    vision: Option<bool>,
+    thinking: Option<bool>,
+    adaptive_thinking: Option<bool>,
+    /// 提供者特定定价（每 1M tokens，美元）
+    input_price_per_1m: Option<f64>,
+    output_price_per_1m: Option<f64>,
+    cache_read_price_per_1m: Option<f64>,
+    enabled: bool,
+    priority: i64,
 }
 
 #[instrument(level = "debug", skip(state))]
@@ -109,11 +123,43 @@ pub async fn list_models(
                 allowed.iter().any(|a| a == &m.model_name)
             }
         })
-        .map(|m| OpenAiModelEntry {
-            id: m.model_name,
-            object: "model",
-            created: 0,
-            owned_by: m.provider_ids.into_iter().next().unwrap_or_default(),
+        .map(|m| {
+            let owned_by = m.providers
+                .first()
+                .map(|p| p.provider_id.clone())
+                .unwrap_or_default();
+
+            let providers = m.providers.into_iter().map(|p| OpenAiModelProviderInfo {
+                provider_id: p.provider_id,
+                provider_display_name: p.provider_display_name,
+                max_input_tokens: p.max_input_tokens,
+                max_output_tokens: p.max_output_tokens,
+                tool_calling: p.tool_calling,
+                vision: p.vision,
+                thinking: p.thinking,
+                adaptive_thinking: p.adaptive_thinking,
+                input_price_per_1m: p.input_price_per_1m,
+                output_price_per_1m: p.output_price_per_1m,
+                cache_read_price_per_1m: p.cache_read_price_per_1m,
+                enabled: p.enabled,
+                priority: p.priority,
+            }).collect();
+
+            OpenAiModelEntry {
+                id: m.model_name,
+                object: "model",
+                created: 0,
+                owned_by,
+                capabilities: OpenAiModelCapabilities {
+                    max_input_tokens: m.nominal_capabilities.max_input_tokens,
+                    max_output_tokens: m.nominal_capabilities.max_output_tokens,
+                    tool_calling: m.nominal_capabilities.tool_calling,
+                    vision: m.nominal_capabilities.vision,
+                    thinking: m.nominal_capabilities.thinking,
+                    adaptive_thinking: m.nominal_capabilities.adaptive_thinking,
+                },
+                providers,
+            }
         })
         .collect();
 
@@ -468,121 +514,4 @@ fn estimate_token_count(messages: &[OpenAiMessage]) -> i64 {
     (total_chars / 4) as i64
 }
 
-// ── Server Startup ──
 
-fn openai_routes() -> ApiRouter<AppState> {
-    ApiRouter::<AppState>::new()
-        .group("openai")
-        .get("/v1/models", list_models)
-            .response::<OpenAiModelList>()
-            .auth()
-            .done()
-        .post("/v1/chat/completions", chat_completions)
-            .done()
-}
-
-fn token_routes() -> ApiRouter<AppState> {
-    ApiRouter::<AppState>::new()
-        .group("tokens")
-        .get("/api/v1/tokens", tokens::list_tokens)
-            .response::<Vec<tokens::TokenListItem>>()
-            .auth()
-            .done()
-        .post("/api/v1/tokens", tokens::create_token)
-            .json::<crate::auth::token::CreateTokenRequest, crate::auth::token::CreateTokenResponse>()
-            .auth()
-            .done()
-        .patch("/api/v1/tokens/{id}", tokens::update_token)
-            .json::<crate::auth::token::UpdateTokenRequest, tokens::TokenListItem>()
-            .auth()
-            .done()
-        .delete("/api/v1/tokens/{id}", tokens::delete_token)
-            .auth()
-            .done()
-}
-
-/// Merge all route collections (for TypeScript client generation via axfetchum).
-pub fn all_api_routes() -> (Router<AppState>, axfetchum::RouteCollection) {
-    model_browse_routes()
-        .merge(admin_crud_routes())
-        .merge(openai_routes())
-        .merge(token_routes())
-        .build()
-}
-
-#[instrument(
-    level = "info",
-    skip(state),
-    fields(
-        host = %host,
-        port,
-        auth_required = state.auth_token.is_some()
-    )
-)]
-pub async fn start_server(state: AppState, host: &str, port: u16) -> Result<(), std::io::Error> {
-    let (admin_router, _) = model_browse_routes().build();
-    let (admin_ext_router, _) = admin_crud_routes().build();
-    let (openai_router, _) = openai_routes().build();
-
-    let session_store = MemoryStore::default();
-    let session_layer = SessionManagerLayer::new(session_store).with_secure(false);
-
-    let app = if let Some(auth_state) = state.auth.clone() {
-        // ── OIDC 已配置：完整认证模式 ──
-        let auth_router = Router::new()
-            .route("/auth/login", get(auth::login))
-            .route("/auth/callback", get(auth::callback))
-            .route("/auth/me", get(auth::me))
-            .route("/auth/logout", axum::routing::post(auth::logout))
-            .with_state(auth_state)
-            .layer(session_layer.clone());
-
-        let (tokens_router, _) = token_routes().build();
-        let tokens_router = tokens_router
-            .with_state(state.clone())
-            .layer(session_layer.clone());
-
-        admin_router
-            .merge(openai_router)
-            .merge(auth_router)
-            .merge(tokens_router)
-            .merge(admin_ext_router)
-            .with_state(state)
-            .layer(session_layer)
-    } else {
-        // ── 无授权模式：自动注入默认管理员，无需登录 ──
-        info!("OIDC not configured — entering no-auth mode (default admin)");
-
-        let no_auth_router = Router::new()
-            .route("/auth/login", get(auth::no_auth_login))
-            .route("/auth/me", get(auth::me))
-            .route("/auth/logout", axum::routing::post(auth::logout));
-
-        let (tokens_router, _) = token_routes().build();
-
-        admin_router
-            .merge(openai_router)
-            .merge(no_auth_router)
-            .merge(tokens_router)
-            .merge(admin_ext_router)
-            .with_state(state)
-            // no_auth_middleware 先于 session_layer 注入，确保 session 可用后再自动填充用户
-            .layer(axum::middleware::from_fn(auth::no_auth_middleware))
-            .layer(session_layer)
-    };
-
-    let addr = format!("{}:{}", host, port);
-    info!("Starting server on {}", addr);
-
-    // ── 嵌入前端静态文件（可选 feature） ──
-    #[cfg(feature = "embed-frontend")]
-    let app = {
-        use axum::routing::get;
-        app.fallback(get(|req: axum::http::Request<axum::body::Body>| async move {
-            crate::embed::serve(req.uri().path()).await
-        }))
-    };
-
-    let listener = tokio::net::TcpListener::bind(&addr).await?;
-    axum::serve(listener, app).await
-}

@@ -216,6 +216,7 @@ src/
 |------|------|------|
 | 1.1 引入 toasty 依赖，配置 SQLite | ✅ | 2026-05-19 |
 | 1.2 定义数据模型（User, Token, UsageRecord, Provider, ProviderModel） | ✅ | 2026-05-19 |
+| — | 🔄 重构为 Model + ModelProvider（OpenRouter 风格） | ✅ | 2026-05-20 |
 | 1.3 实现数据库初始化与迁移 | ✅ | 2026-05-19 |
 | 1.4 实现 OIDC Service | ✅ | 2026-05-19 |
 | 1.5 实现 Session 管理 | ✅ | 2026-05-19 |
@@ -250,6 +251,7 @@ src/
 | Phase | 内容 | 状态 |
 |-------|------|------|
 | Phase 4 | Admin API + 前端 | 🔄 前端重写中 |
+| Phase 4a | 数据结构重构（LLMModel + ModelProvider） | ✅ 2026-05-20 |
 | Phase 5 | 测试与文档 | ⬜ |
 
 ---
@@ -273,6 +275,49 @@ src/
 - OpenTelemetry 版本冲突（`opentelemetry 0.31 vs 0.32`），导致 `observability/mod.rs` 编译错误（`cargo check --lib` 可绕过，全量编译受阻），需统一依赖版本
 - **适配器重复代码**：三个适配器中 SSE 解码和流处理逻辑重复较多，可提取公共 SSE 工具模块
 - **API Key 存储**：当前 `providers.json` 明文，重构后 SQLite 中也需考虑加密
+
+---
+
+## 10. Phase 4a 数据结构重构（2026-05-20）
+
+将数据模型重构为 OpenRouter 风格：**模型（Model）作为主要索引**。
+
+### 变更内容
+
+| 原结构 | 新结构 |
+|--------|--------|
+| `provider_models` 表（模型名+能力+定价耦合在一条记录中） | `models` 表（规范模型定义+标称能力）+ `model_providers` 关联表（提供者特定定价+能力覆盖） |
+| 一个模型只能关联一个提供者 | 一个模型可关联多个提供者，按 priority fallback |
+| `/v1/models` 返回扁平列表 | `/v1/models` 返回模型列表 + 每个模型下各提供者的能力覆盖和定价 |
+
+### 新数据模型
+
+```
+Model ──< ModelProvider >── Provider
+```
+
+- **Model**: `model_name`（如 `"openai/gpt-4o"`）是唯一标识，存储标称能力
+- **ModelProvider**: 多对多关联，存储提供者侧的实际能力（可覆盖标称值）和独立定价，按 priority 排序
+- **Provider**: 上游 LLM 提供者配置（API Keys、base URL 等），不变
+
+### 受影响的文件
+
+| 文件 | 变更 |
+|------|------|
+| `src/db/models.rs` | 新增 `Model` 表，`ProviderModel` → `ModelProvider`，字段 restructure |
+| `src/db/mod.rs` | `all_models()` 注册 6 张表 |
+| `src/store/router.rs` | 完全重写，基于 models + model_providers + providers JOIN |
+| `src/store/mod.rs` | CRUD 适配新结构，新增 `ensure_model()` 自动创建 Model |
+| `src/server/openai_api.rs` | `/v1/models` 返回增强格式（capabilities + providers[]） |
+| `src/server/admin.rs` | 响应类型适配新结构 |
+| `src/store/compat.rs` | 注释更新 |
+
+### 验证状态
+
+- ✅ `cargo check --lib` — 编译通过
+- ✅ `cargo clippy --lib` — 0 warnings
+- ✅ 55 个测试全部通过
+- ✅ TypeScript 前端绑定自动生成成功
 
 ---
 

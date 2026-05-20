@@ -36,7 +36,7 @@ use ts_rs::TS;
 use crate::config::models::{ApiKeyEntry, CompatibilitySettings, ProviderCompatibility};
 use crate::db::models;
 use crate::middleware::session_auth::{AdminAuth, SessionAuth};
-use crate::server::openai_api::AppState;
+use crate::server::AppState;
 use crate::store::{self, ApiKeyDisplay, AvailableModel, CatalogProviderSummary, ImportedProvider};
 
 // ── Model browsing routes (axfetchum, for auto-generated TS client) ──
@@ -124,34 +124,70 @@ fn db_err(e: impl std::fmt::Display) -> Response {
 #[ts(export)]
 struct ModelResponse {
     model_name: String,
+    display_name: String,
     description: Option<String>,
+    /// 标称能力
     max_input_tokens: u32,
     max_output_tokens: u32,
     tool_calling: bool,
     vision: bool,
     thinking: Option<bool>,
     adaptive_thinking: Option<bool>,
+    /// 提供者列表（含各自的定价和能力覆盖）
+    providers: Vec<ModelProviderSummary>,
+}
+
+#[derive(Serialize, TS)]
+#[ts(export)]
+struct ModelProviderSummary {
+    provider_id: String,
+    provider_display_name: String,
+    provider_model_id: String,
+    compatibility: String,
+    max_input_tokens: Option<i64>,
+    max_output_tokens: Option<i64>,
+    tool_calling: Option<bool>,
+    vision: Option<bool>,
+    thinking: Option<bool>,
+    adaptive_thinking: Option<bool>,
     input_price_per_1m: Option<f64>,
     output_price_per_1m: Option<f64>,
     cache_read_price_per_1m: Option<f64>,
-    provider_ids: Vec<String>,
+    enabled: bool,
+    priority: i64,
 }
 
 impl From<AvailableModel> for ModelResponse {
     fn from(m: AvailableModel) -> Self {
+        let providers = m.providers.into_iter().map(|p| ModelProviderSummary {
+            provider_id: p.provider_id,
+            provider_display_name: p.provider_display_name,
+            provider_model_id: p.provider_model_id,
+            compatibility: format!("{:?}", p.compatibility),
+            max_input_tokens: p.max_input_tokens,
+            max_output_tokens: p.max_output_tokens,
+            tool_calling: p.tool_calling,
+            vision: p.vision,
+            thinking: p.thinking,
+            adaptive_thinking: p.adaptive_thinking,
+            input_price_per_1m: p.input_price_per_1m,
+            output_price_per_1m: p.output_price_per_1m,
+            cache_read_price_per_1m: p.cache_read_price_per_1m,
+            enabled: p.enabled,
+            priority: p.priority,
+        }).collect();
+
         Self {
             model_name: m.model_name,
+            display_name: m.display_name,
             description: m.description,
-            max_input_tokens: m.capabilities.max_input_tokens,
-            max_output_tokens: m.capabilities.max_output_tokens,
-            tool_calling: m.capabilities.tool_calling,
-            vision: m.capabilities.vision,
-            thinking: m.capabilities.thinking,
-            adaptive_thinking: m.capabilities.adaptive_thinking,
-            input_price_per_1m: m.input_price_per_1m,
-            output_price_per_1m: m.output_price_per_1m,
-            cache_read_price_per_1m: m.cache_read_price_per_1m,
-            provider_ids: m.provider_ids,
+            max_input_tokens: m.nominal_capabilities.max_input_tokens,
+            max_output_tokens: m.nominal_capabilities.max_output_tokens,
+            tool_calling: m.nominal_capabilities.tool_calling,
+            vision: m.nominal_capabilities.vision,
+            thinking: m.nominal_capabilities.thinking,
+            adaptive_thinking: m.nominal_capabilities.adaptive_thinking,
+            providers,
         }
     }
 }
@@ -216,53 +252,53 @@ fn provider_to_response(p: &models::Provider, model_count: usize) -> ProviderRes
     }
 }
 
-// ── Provider Model response ──
+// ── Provider Model response (ModelProvider) ──
 
 #[derive(Serialize, TS)]
 #[ts(export)]
 struct ProviderModelResponse {
     id: u64,
-    provider_row_id: u64,
+    model_id: u64,
+    provider_id: u64,
+    /// 关联的规范模型名（需要 JOIN 获取）
     model_name: String,
     provider_model_id: String,
     compatibility: String,
     display_name: String,
-    description: Option<String>,
-    max_input_tokens: i64,
-    max_output_tokens: i64,
-    tool_calling: bool,
-    vision: bool,
-    thinking: bool,
-    adaptive_thinking: bool,
+    max_input_tokens: Option<i64>,
+    max_output_tokens: Option<i64>,
+    tool_calling: Option<bool>,
+    vision: Option<bool>,
+    thinking: Option<bool>,
+    adaptive_thinking: Option<bool>,
     input_price_per_1m: Option<f64>,
     output_price_per_1m: Option<f64>,
     cache_read_price_per_1m: Option<f64>,
-    status: Option<String>,
     enabled: bool,
+    priority: i64,
 }
 
-impl From<models::ProviderModel> for ProviderModelResponse {
-    fn from(pm: models::ProviderModel) -> Self {
-        Self {
-            id: pm.id,
-            provider_row_id: pm.provider_row_id,
-            model_name: pm.model_name,
-            provider_model_id: pm.provider_model_id,
-            compatibility: format!("{:?}", pm.compatibility),
-            display_name: pm.display_name,
-            description: pm.description,
-            max_input_tokens: pm.max_input_tokens,
-            max_output_tokens: pm.max_output_tokens,
-            tool_calling: pm.tool_calling,
-            vision: pm.vision,
-            thinking: pm.thinking,
-            adaptive_thinking: pm.adaptive_thinking,
-            input_price_per_1m: pm.input_price_per_1m,
-            output_price_per_1m: pm.output_price_per_1m,
-            cache_read_price_per_1m: pm.cache_read_price_per_1m,
-            status: pm.status,
-            enabled: pm.enabled,
-        }
+/// 将 ModelProvider 转为响应，需要传入 model_name（从 Model 表获取）。
+fn model_provider_to_response(mp: &models::ModelProvider, model_name: String) -> ProviderModelResponse {
+    ProviderModelResponse {
+        id: mp.id,
+        model_id: mp.model_id,
+        provider_id: mp.provider_id,
+        model_name,
+        provider_model_id: mp.provider_model_id.clone(),
+        compatibility: format!("{:?}", mp.compatibility),
+        display_name: mp.display_name.clone(),
+        max_input_tokens: mp.max_input_tokens,
+        max_output_tokens: mp.max_output_tokens,
+        tool_calling: mp.tool_calling,
+        vision: mp.vision,
+        thinking: mp.thinking,
+        adaptive_thinking: mp.adaptive_thinking,
+        input_price_per_1m: mp.input_price_per_1m,
+        output_price_per_1m: mp.output_price_per_1m,
+        cache_read_price_per_1m: mp.cache_read_price_per_1m,
+        enabled: mp.enabled,
+        priority: mp.priority,
     }
 }
 
@@ -310,13 +346,14 @@ struct UpdateProviderRequest {
 #[ts(export)]
 #[serde(rename_all = "camelCase")]
 struct AddModelRequest {
+    /// 规范模型名（如 "openai/gpt-4o"）
     model_name: String,
+    /// 提供者侧的模型 ID
     provider_model_id: String,
     #[serde(default = "default_compat")]
     compatibility: String,
     #[serde(default)]
     display_name: String,
-    description: Option<String>,
     #[serde(default = "default_4096")]
     max_input_tokens: i64,
     #[serde(default = "default_4096")]
@@ -329,7 +366,9 @@ struct AddModelRequest {
     thinking: bool,
     #[serde(default)]
     adaptive_thinking: bool,
+    /// 提供者特定输入价格
     input_price_per_1m: Option<f64>,
+    /// 提供者特定输出价格
     output_price_per_1m: Option<f64>,
     cache_read_price_per_1m: Option<f64>,
 }
@@ -345,7 +384,6 @@ struct UpdateModelRequest {
     compatibility: String,
     #[serde(default)]
     display_name: String,
-    description: Option<String>,
     max_input_tokens: i64,
     max_output_tokens: i64,
     #[serde(default)]
@@ -365,8 +403,12 @@ struct UpdateModelRequest {
 
 #[derive(Deserialize, TS)]
 #[ts(export)]
+#[serde(rename_all = "camelCase")]
 struct ImportModelsDevRequest {
     provider_id: String,
+    /// 可选：导入时设置 API Key（label + key）
+    #[serde(default)]
+    api_keys: Vec<ApiKeyEntry>,
 }
 
 #[derive(Deserialize, TS)]
@@ -490,8 +532,16 @@ async fn list_provider_models(
     state.store.get_provider_by_id(id).await.map_err(db_err)?
         .ok_or_else(|| (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "provider not found"}))).into_response())?;
 
-    let models = state.store.list_provider_models(id).await.map_err(db_err)?;
-    Ok(Json(models.into_iter().map(ProviderModelResponse::from).collect()))
+    let mps = state.store.list_provider_models(id).await.map_err(db_err)?;
+    let mut result = Vec::new();
+    for mp in &mps {
+        let model_name = crate::db::models::LLMModel::get_by_id(&mut state.db.clone(), &mp.model_id)
+            .await
+            .map(|m| m.model_name)
+            .unwrap_or_default();
+        result.push(model_provider_to_response(mp, model_name));
+    }
+    Ok(Json(result))
 }
 
 async fn add_provider_model(
@@ -509,13 +559,13 @@ async fn add_provider_model(
 
     let display_name = if req.display_name.is_empty() { req.model_name.clone() } else { req.display_name };
 
-    let model = state.store.add_provider_model(
+    let mp = state.store.add_provider_model(
         id,
-        req.model_name,
+        req.model_name.clone(),
         req.provider_model_id,
         compatibility,
         display_name,
-        req.description,
+        None, // 描述属于 Model，通过 ensure_model 自动管理
         req.max_input_tokens,
         req.max_output_tokens,
         req.tool_calling,
@@ -527,7 +577,7 @@ async fn add_provider_model(
         req.cache_read_price_per_1m,
     ).await.map_err(db_err)?;
 
-    Ok((StatusCode::CREATED, Json(ProviderModelResponse::from(model))))
+    Ok((StatusCode::CREATED, Json(model_provider_to_response(&mp, req.model_name))))
 }
 
 async fn update_provider_model(
@@ -544,7 +594,7 @@ async fn update_provider_model(
         req.provider_model_id,
         compatibility,
         if req.display_name.is_empty() { "".into() } else { req.display_name },
-        req.description,
+        None, // description 属于 Model，不在此更新
         req.max_input_tokens,
         req.max_output_tokens,
         req.tool_calling,
@@ -557,7 +607,11 @@ async fn update_provider_model(
         req.enabled,
     ).await.map_err(db_err)?;
 
-    Ok(Json(ProviderModelResponse::from(updated)))
+    let model_name = crate::db::models::LLMModel::get_by_id(&mut state.db.clone(), &updated.model_id)
+        .await
+        .map(|m| m.model_name)
+        .unwrap_or_default();
+    Ok(Json(model_provider_to_response(&updated, model_name)))
 }
 
 async fn delete_provider_model(
@@ -584,7 +638,7 @@ async fn import_models_dev(
     AdminAuth(_user): AdminAuth,
     Json(req): Json<ImportModelsDevRequest>,
 ) -> Result<(StatusCode, Json<ImportedProvider>), Response> {
-    let result = state.store.import_from_models_dev(&req.provider_id).await.map_err(db_err)?;
+    let result = state.store.import_from_models_dev(&req.provider_id, req.api_keys).await.map_err(db_err)?;
     Ok((StatusCode::CREATED, Json(result)))
 }
 

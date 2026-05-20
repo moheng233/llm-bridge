@@ -7,21 +7,21 @@
 pub mod models;
 
 use std::path::Path;
-use tracing::info;
+use tracing::{info, warn};
 
 /// toasty 数据库句柄类型别名。
 pub type Db = toasty::Db;
 
-/// 返回包含所有 5 张核心表的 [`toasty::ModelSet`]。
+/// 返回包含所有 6 张核心表的 [`toasty::ModelSet`]。
 ///
-/// 注册：`User`, `Token`, `UsageRecord`, `Provider`, `ProviderModel`。
+/// 注册：`User`, `Token`, `UsageRecord`, `LLMModel`, `Provider`, `ModelProvider`。
 /// 配合 [`init`] / [`init_sqlite`] 使用：
 ///
 /// ```ignore
 /// let db = db::init(db::all_models(), "sqlite::memory:").await?;
 /// ```
 pub fn all_models() -> toasty::ModelSet {
-    toasty::models!(models::User, models::Token, models::UsageRecord, models::Provider, models::ProviderModel)
+    toasty::models!(models::User, models::Token, models::UsageRecord, models::LLMModel, models::Provider, models::ModelProvider)
 }
 
 /// 通过连接 URL 初始化数据库并自动建表。
@@ -56,9 +56,17 @@ pub async fn init(models: toasty::ModelSet, url: &str) -> toasty::Result<Db> {
         .await?;
 
     info!("applying schema...");
-    // push_schema 对已存在的表只会打印警告，不会返回错误。
-    // 若确实发生致命错误（如类型不兼容），会返回 Err。
-    db.push_schema().await?;
+    // toasty 的 push_schema 使用 CREATE TABLE（非 IF NOT EXISTS），
+    // 在已存在的数据库上重复调用会报错。
+    // 此处捕获 "already exists" 错误，作为非致命警告处理。
+    if let Err(e) = db.push_schema().await {
+        let err_msg = e.to_string();
+        if err_msg.contains("already exists") {
+            warn!("schema push skipped — tables already exist ({err_msg})");
+        } else {
+            return Err(e);
+        }
+    }
     info!("database initialized successfully");
 
     Ok(db)

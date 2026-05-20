@@ -2,18 +2,17 @@
 //!
 //! | 端点 | 方法 | 说明 |
 //! |------|------|------|
-//! | `/auth/login` | GET | 发起 OIDC 登录，302 重定向到 IdP |
+//! | `/auth/login` | GET | OIDC 已配置 → 302 重定向到 IdP；未配置 → 直接跳转 `/` |
 //! | `/auth/callback` | GET | OIDC 回调，验证后签发 Session |
 //! | `/auth/me` | GET | 返回当前登录用户信息 |
 //! | `/auth/logout` | POST | 销毁 Session |
 //!
-//! ## 无授权模式
+//! ## 设计原则
 //!
-//! 当 OIDC 未配置（`RuntimeSettings.oidc` 为 `None`）时，系统自动进入无授权模式：
-//! - 所有请求自动注入默认管理员 Session（user_id=0, name="admin", role="admin"）
-//! - `/auth/login` 直接跳转到 `/`
-//! - `/auth/me` 返回默认管理员信息
-//! - 无需登录即可访问管理后台
+//! 无论 OIDC 是否配置，对外接口完全一致。handler 内部根据
+//! `AppState.auth` 是否为 `Some` 决定具体行为：
+//! - OIDC 已配置：标准 OIDC 流程
+//! - OIDC 未配置：跳过认证步骤（`login` 直接跳转，`no_auth_middleware` 自动注入管理员 Session）
 
 use axum::{
     Json,
@@ -28,8 +27,9 @@ use tracing::{info, instrument, warn};
 use crate::auth::session::{OidcContext, SessionUser};
 use crate::db;
 use crate::db::models::{User, UserRole};
+use crate::server::AppState;
 
-/// 传递给 Auth 路由的共享状态。
+/// OIDC 子状态（仅在配置了 OIDC 时存在）。
 #[derive(Clone)]
 pub struct AuthState {
     pub oidc: crate::auth::oidc::OidcService,
@@ -63,27 +63,25 @@ pub async fn no_auth_middleware(
     next.run(request).await
 }
 
-/// 无授权模式下的 `/auth/login`：直接跳转到 `/`。
-#[instrument(level = "debug")]
-pub async fn no_auth_login() -> Redirect {
-    Redirect::temporary("/")
-}
-
 // ── GET /auth/login ──
 
 #[derive(Debug, Deserialize)]
 pub struct LoginQuery {
-    /// 登录成功后跳转回的目标页面（可选）
     pub next: Option<String>,
 }
 
-#[instrument(level = "info", skip(state, session, _query))]
+#[instrument(level = "info", skip(state, session))]
 pub async fn login(
-    State(state): State<AuthState>,
+    State(state): State<AppState>,
     session: Session,
-    Query(_query): Query<LoginQuery>,
+    Query(query): Query<LoginQuery>,
 ) -> Result<Redirect, Response> {
-    let (auth_url, csrf_token, nonce) = state.oidc.login_url();
+    let Some(auth) = &state.auth else {
+        // 无授权模式：直接跳转到首页
+        return Ok(Redirect::temporary("/"));
+    };
+
+    let (auth_url, csrf_token, nonce) = auth.oidc.login_url();
 
     let context = OidcContext {
         csrf_token: csrf_token.clone(),
@@ -95,8 +93,7 @@ pub async fn login(
         .await
         .map_err(|e| internal_error(&e.to_string()))?;
 
-    // 如果有 next 参数，存入 session 以便回调后跳转
-    if let Some(next) = _query.next {
+    if let Some(next) = query.next {
         session
             .insert("login_next", next)
             .await
@@ -116,10 +113,14 @@ pub struct CallbackQuery {
 
 #[instrument(level = "info", skip(state, session))]
 pub async fn callback(
-    State(state): State<AuthState>,
+    State(state): State<AppState>,
     session: Session,
     Query(query): Query<CallbackQuery>,
 ) -> Result<Response, Response> {
+    let auth = state.auth.as_ref().ok_or_else(|| {
+        (StatusCode::NOT_FOUND, "OIDC not configured").into_response()
+    })?;
+
     // 验证 CSRF state
     let context: OidcContext = session
         .get("oidc_context")
@@ -142,7 +143,7 @@ pub async fn callback(
     }
 
     // OIDC 验证
-    let oidc_user = state
+    let oidc_user = auth
         .oidc
         .callback(&query.code, &context.nonce)
         .await
@@ -158,7 +159,7 @@ pub async fn callback(
         .ok();
 
     // 查找或创建用户
-    let user = upsert_user_from_oidc(&state.db, &oidc_user).await.map_err(|e| {
+    let user = upsert_user_from_oidc(&auth.db, &oidc_user).await.map_err(|e| {
         warn!(error = %e, "failed to upsert user");
         internal_error("failed to create or update user")
     })?;
@@ -181,7 +182,6 @@ pub async fn callback(
         "user authenticated via OIDC"
     );
 
-    // 跳转到目标页面或前端首页
     let next: Option<String> = session.get("login_next").await.ok().flatten();
     session.remove::<String>("login_next").await.ok();
 
