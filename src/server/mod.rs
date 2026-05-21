@@ -114,12 +114,17 @@ pub async fn start_server(state: AppState, host: &str, port: u16) -> Result<(), 
     let oidc_configured = state.auth.is_some();
 
     let (router, _routes) = all_api_routes().build();
-    let app = router.with_state(state).layer(session_layer);
+    let app = router.with_state(state);
     let mut app: axum::Router = app;
 
-    if !oidc_configured {
+    if oidc_configured {
+        app = app.layer(session_layer);
+    } else {
         info!("OIDC not configured — entering no-auth mode (auto-inject default admin)");
-        app = app.layer(axum::middleware::from_fn(auth::no_auth_middleware));
+        // session_layer 必须是最外层，确保 no_auth_middleware 访问 Session 时已加载
+        app = app
+            .layer(axum::middleware::from_fn(auth::no_auth_middleware))
+            .layer(session_layer);
     }
 
     let addr = format!("{}:{}", host, port);

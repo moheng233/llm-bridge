@@ -131,6 +131,13 @@ export function createApiClient(options: ApiClientOptions) {
         request<UserResponse>(`/api/v1/admin/users/${id}/role`, { method: "PATCH", auth: true, body }),
     },
 
+    auth: {
+      login: () => `${options.baseUrl}/auth/login`,
+      callback: () => `${options.baseUrl}/auth/callback`,
+      me: () => request<void>("/auth/me"),
+      logout: () => request<void>("/auth/logout", { method: "POST" }),
+    },
+
     models: {
       listAllModels: () => request<ModelResponse[]>("/api/v1/models", { auth: true }),
       listAvailableModels: () => request<ModelResponse[]>("/api/v1/models/available", { auth: true }),

@@ -354,10 +354,21 @@
                     class="flex flex-col rounded-lg border border-border bg-card p-3 gap-2 transition-colors"
                   >
                     <!-- Card header -->
-                    <div class="flex items-start justify-between gap-2">
+                    <div class="flex items-start gap-2">
+                      <!-- Provider logo -->
+                      <div class="h-8 w-8 rounded-lg bg-white shrink-0 flex items-center justify-center p-1">
+                        <img
+                          src={"https://models.dev/logos/" + p.provider_id + ".svg"}
+                          alt={p.provider_id}
+                          class="h-full w-full object-contain"
+                          onerror={(e) => {
+                            (e.target as HTMLImageElement).style.display = "none";
+                          }}
+                        />
+                      </div>
                       <div class="flex flex-col gap-0.5 min-w-0 flex-1">
                         <div class="flex items-center gap-1.5">
-                          <Globe class="h-3.5 w-3.5 text-[#22C55E] shrink-0" />
+                          <Globe class="h-3.5 w-3.5 text-[#22C55E] shrink-0 hidden" />
                           <span class="font-mono font-semibold text-foreground text-sm truncate">
                             {p.provider_id}
                           </span>
