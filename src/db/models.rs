@@ -17,7 +17,7 @@
 //! Token 的 `allowed_models` 引用 `models.model_name`。
 
 use jiff::Timestamp;
-use toasty::schema::{BelongsTo, HasMany};
+use toasty::schema::Deferred;
 
 use crate::config::models::ProviderCompatibility;
 
@@ -63,7 +63,7 @@ pub struct User {
     pub updated_at: Timestamp,
 
     #[has_many]
-    pub tokens: HasMany<Token>,
+    pub tokens: Deferred<Vec<Token>>,
 }
 
 // ── API Token 表 ──
@@ -83,7 +83,7 @@ pub struct Token {
     #[index]
     pub user_id: u64,
     #[belongs_to(key = user_id, references = id)]
-    pub user: BelongsTo<User>,
+    pub user: Deferred<User>,
 
     /// Token 名称（用户自定义，如 "dev-machine"）
     pub name: String,
@@ -111,7 +111,7 @@ pub struct Token {
     pub last_used_at: Option<i64>,
 
     #[has_many]
-    pub usage_records: HasMany<UsageRecord>,
+    pub usage_records: Deferred<Vec<UsageRecord>>,
 }
 
 // ── 用量记录表 ──
@@ -127,7 +127,7 @@ pub struct UsageRecord {
     #[index]
     pub token_id: u64,
     #[belongs_to(key = token_id, references = id)]
-    pub token: BelongsTo<Token>,
+    pub token: Deferred<Token>,
 
     /// 周期标识（如 `"2026-05"`）
     pub period_key: String,
@@ -185,7 +185,7 @@ pub struct LLMModel {
     pub updated_at: Timestamp,
 
     #[has_many]
-    pub providers: HasMany<ModelProvider>,
+    pub providers: Deferred<Vec<ModelProvider>>,
 }
 
 // ── 提供者配置表 ──
@@ -230,7 +230,7 @@ pub struct Provider {
     pub updated_at: Timestamp,
 
     #[has_many]
-    pub model_links: HasMany<ModelProvider>,
+    pub model_links: Deferred<Vec<ModelProvider>>,
 }
 
 // ── 模型-提供者关联表 ──
@@ -253,13 +253,13 @@ pub struct ModelProvider {
     #[index]
     pub model_id: u64,
     #[belongs_to(key = model_id, references = id)]
-    pub llm_model: BelongsTo<LLMModel>,
+    pub llm_model: Deferred<LLMModel>,
 
     /// 关联的提供者
     #[index]
     pub provider_id: u64,
     #[belongs_to(key = provider_id, references = id)]
-    pub provider: BelongsTo<Provider>,
+    pub provider: Deferred<Provider>,
 
     /// 提供者侧的模型 ID（如 `"gpt-4o"`）
     pub provider_model_id: String,
