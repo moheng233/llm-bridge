@@ -63,10 +63,10 @@
     try {
       const result = await api.tokens.createToken({
         name: newName,
-        allowed_models: [],
-        request_quota: newRequestQuota,
-        token_quota: newTokenQuota,
-        quota_period: newQuotaPeriod,
+        allowedModels: [],
+        requestQuota: newRequestQuota,
+        tokenQuota: newTokenQuota,
+        quotaPeriod: newQuotaPeriod,
       });
       createdToken = result;
       tokenCopied = false;
@@ -117,8 +117,8 @@
 
   function quotaLabel(t: TokenListItem): string {
     const parts: string[] = [];
-    if (t.request_quota > 0) parts.push(`${t.request_quota} 次请求`);
-    if (t.token_quota > 0) parts.push(`${(t.token_quota / 1_000_000).toFixed(1)}M tokens`);
+    if (t.requestQuota > 0) parts.push(`${t.requestQuota} 次请求`);
+    if (t.tokenQuota > 0) parts.push(`${(t.tokenQuota / 1_000_000).toFixed(1)}M tokens`);
     if (parts.length === 0) return "不限制";
     return parts.join(" · ");
   }
@@ -227,22 +227,22 @@
           <div class="flex flex-col gap-1 min-w-0">
             <div class="flex items-center gap-2">
               <span class="font-mono font-semibold text-foreground">{t.name}</span>
-              <code class="text-xs text-muted-foreground font-mono">{t.token_prefix}</code>
+              <code class="text-xs text-muted-foreground font-mono">{t.tokenPrefix}</code>
               <Badge variant={t.active ? "default" : "secondary"} class="text-xs">
                 {t.active ? "启用" : "禁用"}
               </Badge>
             </div>
             <div class="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
               <span>配额: {quotaLabel(t)}</span>
-              <span>周期: {formatQuotaPeriod(t.quota_period)}</span>
-              <span>创建: {formatTime(t.created_at)}</span>
-              {#if t.last_used_at}
-                <span>最近使用: {formatTime(t.last_used_at)}</span>
+              <span>周期: {formatQuotaPeriod(t.quotaPeriod)}</span>
+              <span>创建: {formatTime(t.createdAt)}</span>
+              {#if t.lastUsedAt}
+                <span>最近使用: {formatTime(t.lastUsedAt)}</span>
               {/if}
             </div>
-            {#if t.allowed_models.length > 0}
+            {#if t.allowedModels.length > 0}
               <div class="flex flex-wrap gap-1 mt-1">
-                {#each t.allowed_models as m}
+                {#each t.allowedModels as m}
                   <Badge variant="outline" class="text-xs font-mono">{m}</Badge>
                 {/each}
               </div>

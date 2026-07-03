@@ -95,7 +95,7 @@
                   <Badge variant="destructive" class="text-xs">已禁用</Badge>
                 {/if}
               </div>
-              <span class="text-xs text-muted-foreground truncate">{u.email || u.oidc_sub}</span>
+              <span class="text-xs text-muted-foreground truncate">{u.email || u.oidcSub}</span>
             </div>
           </div>
           <div class="flex items-center gap-2 shrink-0">

@@ -3,4 +3,4 @@
 /**
  * Token 列表项（不含 token_hash）。
  */
-export type TokenListItem = { id: number, name: string, token_prefix: string, allowed_models: Array<string>, request_quota: number, token_quota: number, quota_period: string, active: boolean, created_at: number, last_used_at: number | null, };
+export type TokenListItem = { id: number, name: string, tokenPrefix: string, allowedModels: Array<string>, requestQuota: number, tokenQuota: number, quotaPeriod: string, active: boolean, createdAt: number, lastUsedAt: number | null, };

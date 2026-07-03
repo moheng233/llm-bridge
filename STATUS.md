@@ -1,7 +1,7 @@
 # LLM-Bridge 项目现状报告
 
-> 生成日期：2026-05-18（最后更新：2026-06-25，增加 §11 计划变更）
-> 以代码实现为准。
+> 生成日期：2026-05-18
+> 最后更新：2026-07-03 — **大幅同步**，对齐 [`PLAN.md`](PLAN.md)（2026-06-29 多协议架构重设计）。以代码实况为准。
 
 ---
 
@@ -59,8 +59,6 @@
 | `/api/v1/admin/providers/{id}/models` | GET | Admin | 列出提供者下的模型关联 |
 | `/api/v1/admin/providers/{id}/models` | POST | Admin | 为提供者添加 ModelProvider 关联 |
 | `/api/v1/admin/providers/{id}/models/{model_id}` | PUT / DELETE | Admin | 更新 / 删除某条 ModelProvider 关联 |
-| `/api/v1/admin/models-dev/search` | GET | Admin | 搜索 models.dev 目录（发现新模型）。⚠️ **计划移除**（2026-06-25），见 §11 |
-| `/api/v1/admin/models-dev/import` | POST | Admin | 从 models.dev 导入提供者与模型。⚠️ **计划移除**（2026-06-25），见 §11 |
 | `/api/v1/admin/users` | GET | Admin | 列出所有用户 |
 | `/api/v1/admin/users/{id}/role` | PATCH | Admin | 修改用户角色 |
 
@@ -84,34 +82,27 @@
 - Thinking/Reasoning 内容传输
 - 工具调用结果传递
 
-### 2.4 模型目录同步（⚠️ 计划重写 — 见 §11）
+### 2.4 模型目录同步（🔴 已删除 models.dev 集成）
 
-**当前文件：** `src/config/models_dev_catalog.rs`, `src/models_dev.rs`
+按照 [`PLAN.md`](PLAN.md)（2026-06-29）§4「删除 models.dev 集成」执行，至今完成的部分：
 
-**现状（仍绑定 models.dev）：**
-- 数据源：**models.dev**（`https://models.dev/api.json`）
-- 启动时优先从本地缓存（`catalog_cache.json`）加载，若无则从 models.dev 拉取
-- 支持 ETag 条件请求（304 Not Modified）
-- 定期后台刷新（默认 900 秒，最小 30 秒）
-- `strict_bootstrap` 模式：首次启动时若拉取失败且本地无缓存，则拒绝启动
-
-**计划变更（2026-06-25，详见 §11）：**
-- 切断对 models.dev 的硬编码依赖，远端源抽象为 `CatalogSource`；具体响应格式由后续设计阶段定义
-- 允许**空配置启动**，远端不可达不阻塞启动（取代 `strict_bootstrap`）
-- 移除 `catalog_cache.json` 磁盘缓存 + ETag 刷新循环；后台增量同步改为可选且默认关闭
-- Admin 端点 `/api/v1/admin/models-dev/search` + `/import` 计划移除（改为通用 CatalogSource 发现/导入，形态度待实施时定）
-- 环境变量 `LLM_BRIDGE_CATALOG_BASE_URL` / `LLM_BRIDGE_CATALOG_STRICT_BOOTSTRAP` / `LLM_BRIDGE_CATALOG_REFRESH_INTERVAL_SECS` 计划下线
+- ✅ 删除 `src/models_dev.rs`
+- ✅ 删除 `src/config/models_dev_catalog.rs`（`src/config/` 现仅剩 `mod.rs` + `models.rs`）
+- ✅ 删除 `src/store/catalog.rs`（`src/store/` 现仅剩 `compat.rs / error.rs / mod.rs / router.rs`）
+- ✅ 删除 `data/llm-bridge/catalog_cache.json`（目录中仅剩 `llm-bridge.db`）
+- ✅ 删除前端 `CatalogProviderSummary.ts` / `ImportedProvider.ts` 等 models.dev 相关绑
+- ✅ `src/store/compat.rs` 已重写：模块注释显式声明「models.dev 集成已删除，兼容协议改由 `ProviderProtocol.protocol` 显式声明」
+- 🔴 **未删**：`src/config/models.rs:46-72` 仍保留 `ModelCatalogConfig` 结构体与 `LLM_BRIDGE_CATALOG_*` 四个环境变量解析；`src/main.rs:105` 仍打印 `catalog_base_url` 启动日志（属 Phase 4 models.dev 清理的残留）
 
 ### 2.5 存储层
 
-**文件：** `src/store/`（`mod.rs`, `catalog.rs`, `compat.rs`, `router.rs`, `error.rs`）
+**文件：** `src/store/`（`mod.rs`, `compat.rs`, `router.rs`, `error.rs`）
 
 - 持久化方式：**toasty + SQLite**（旧 JSON 文件 + RwLock 方案在 Phase 3 已废弃）
 - `Store` 结构：`{ db: db::Db, path: PathBuf, key_selector: Arc<KeySelector> }`，直接持有 toasty 句柄，无内存缓存层
-- `catalog.rs`：仅负责 `catalog_cache.json` 的磁盘读写，供 models.dev 发现功能使用，**不参与运行时路由**
-- `compat.rs`：`npm_to_compatibility`（npm 包名 → 协议枚举）、`ModelCapabilitiesFromDev::from_models_dev` / `ModelPricingFromDev::from_models_dev` / `deduce_base_url`（导入时数据映射）
-- `router.rs`：路由解析基于 `models` + `model_providers` + `providers` 三表应用层关联查询（`LLMModel::filter → ModelProvider::filter → Provider::get_by_id`，非 SQL 原生 JOIN；模型量增大时为 N+1 热点，见第 6 章）
-- `providers.rs`（旧 JSON 提供者存储）已在 Phase 3 **物理删除**
+- `compat.rs`：models.dev 集成已删除，现仅保留 `ProviderCompatibility` 枚举推导提示（面向 CatalogSource 导入路径，尚未启用）
+- `router.rs`：路由解析基于 **四张表** `models` + `model_providers` + `provider_protocols` + `providers` 应用层关联查询（`LLMModel::filter → ModelProvider::filter → ProviderProtocol::get_by_id → Provider::get_by_id`，非 SQL 原生 JOIN；模型量增大时为 N+1 热点，见第 6 章）
+- `providers.rs`（旧 JSON 提供者存储）已在 Phase 3 **物理删除**；`catalog.rs`（models.dev 磁盘缓存）已在多协议重构中**物理删除**
 - 加权轮询 (weighted round-robin) API Key 选择由 `KeySelector`（`Mutex<HashMap<String, AtomicU64>>`）维护，仍在 Store 层
 
 ### 2.6 Actor 模型
@@ -123,7 +114,7 @@ GatewayManagerActor（单例）
     └── ProviderActor（每次请求临时创建，请求结束即销毁）
 ```
 
-- **GatewayManagerActor**：管理模型目录初始化与定时刷新，处理模型查询与路由解析
+- **GatewayManagerActor**：管理配额重置（每小时）与 Token 使用计数；原目录初始化/刷新职责已在多协议重构中删除（见 `PLAN.md` §5.6）
 - **ProviderActor**：由 HTTP handler 直接创建，接收 ChatRequest，分发到对应协议适配器，返回流式响应后销毁
 - 当前无 WebSocket 连接管理 Actor
 
@@ -136,16 +127,16 @@ GatewayManagerActor（单例）
 | 登录 | `/login` | 无 | 自动触发 OIDC `/auth/login` 跳转 |
 | 模型目录 | `/` 或 `/models` | Session | 表格展示，支持搜索、排序、全部/可用筛选 |
 | API Token 管理 | `/tokens` | Session | 当前用户 Token 的 CRUD（创建对话框返回明文 Token，仅一次） |
-| 提供者管理 | `/providers` | Admin | 卡片列表，编辑对话框 + 删除 + 模型关联管理。⚠️ **计划增强**（2026-06-25，见 §11）：补齐完整 Provider CRUD（API Keys/base_url/compat_settings/优先级/启用）+ 内嵌 ModelProvider 关联管理（provider↔model、provider_model_id、compatibility、覆盖能力、定价、priority） |
-| 模型管理 | `/admin/models` | Admin | ⚠️ **计划新增**（2026-06-25，见 §11）：完整 LLMModel CRUD（model_name、display_name、标称能力 max_input/output_tokens、tool_calling/vision/thinking/adaptive_thinking、status）+ 内嵌 ModelProvider 关联管理。**与提供者页对称**，无论是否配置 CatalogSource 都必须可用 |
+| 提供者管理 | `/providers` | Admin | 卡片列表，编辑对话框 + 删除 + 模型关联管理。⚠️ **部分实现**：Provider CRUD 与模型关联 CRUD 已走通；但**未含协议（ProviderProtocol）的增删改 UI**，`createProvider` 请求亦未附带 `protocols` 字段（见 §11） |
+| 模型管理 | `/admin/models` | Admin | ⚠️ **未实现**（PLAN.md 多协议重构未涵盖）：完整 LLMModel CRUD（model_name、display_name、标称能力 max_input/output_tokens、tool_calling/vision/thinking/adaptive_thinking、status）+ 内嵌 ModelProvider 关联管理。**与提供者页对称**，不依赖任何远端 CatalogSource（见 §11.3） |
 | 用户管理 | `/users` | Admin | 用户列表 + 角色修改 |
 
 **特点：**
 - 侧边栏导航（可折叠），按 RBAC 分组：菜单区（模型目录、API Token）所有用户可见；管理区（提供者、模型、用户）仅 `isAdmin` 可见
 - 未认证访问受保护路由时自动跳转 `/login`
-- **手动配置三件套为一等公民**（2026-06-25 计划，见 §11）：Provider / LLMModel / ModelProvider 三层在提供者页与模型页对称地可完整手动 CRUD，**不依赖 CatalogSource**；空配置启动也必须能用
+- **手动配置三件套为一等公民**（PLAN.md §1 指导原则）：Provider / LLMModel / ModelProvider 三层在提供者页与模型页对称地可完整手动 CRUD，**不依赖 CatalogSource**；空配置启动也必须能用。当前提供者页部分实现（缺协议管理 UI），模型管理页尚未实现，见 §11.1 行动项 E
 - TypeScript 类型自动生成（`ts-rs` 负责类型文件，`axfetchum` 负责 API 客户端 `frontend/src/bindings/client.ts`）
-- `frontend/src/bindings/` 当前含 31 个自动生成的 `.ts` 文件
+- `frontend/src/bindings/` 当前含 26 个自动生成的 `.ts` 文件（多协议重构后已删除 models.dev 相关绑定）；其中已含 `AddModelRequest.ts` / `UpdateModelRequest.ts` 的 `protocolId` 字段，但**尚无** `CreateProtocolEntry.ts` / `ProtocolView` 等协议专用类型
 
 ### 2.8 可观测性
 
@@ -164,14 +155,12 @@ src/
 ├── main.rs                     # 入口：初始化可观测性 → 加载配置 → 启动 HTTP 服务
 ├── lib.rs                      # 模块声明
 ├── types.rs                    # 通用 LM 类型（消息、角色、响应、工具调用等）
-├── models_dev.rs               # ⚠️ 计划重写（2026-06-25）：models.dev 数据结构 → CatalogSource 通用响应格式，详见 §11
 ├── config/
 │   ├── mod.rs
-│   ├── models.rs               # RuntimeSettings, OidcConfig, 环境变量解析
-│   └── models_dev_catalog.rs   # ⚠️ 计划重写（2026-06-25）：models.dev HTTP 客户端 → CatalogSource 抽象，详见 §11
+│   └── models.rs               # RuntimeSettings, OidcConfig, ProviderCompatibility 枚举。⚠️ 仍残留 `ModelCatalogConfig` + `LLM_BRIDGE_CATALOG_*` 环境变量（Phase 4 清理未完）
 ├── db/                         # 🆕 Phase 1 — toasty ORM 数据库层
-│   ├── mod.rs                  # 连接管理、init 函数、all_models()（注册 6 张表）、集成测试
-│   └── models.rs               # User, Token, UsageRecord, LLMModel, Provider, ModelProvider（Phase 4a 重构后）
+│   ├── mod.rs                  # 连接管理、init 函数、all_models()（注册 **7 张表**）、集成测试
+│   └── models.rs               # User, Token, UsageRecord, LLMModel, Provider, **ProviderProtocol**, ModelProvider
 ├── middleware/                  # 🆕 Phase 2 — 认证中间件
 │   ├── mod.rs                  # 模块入口
 │   ├── session_auth.rs         # Session 认证提取器（SessionAuth / AdminAuth）
@@ -182,15 +171,14 @@ src/
 │   ├── session.rs              # Session 数据类型（OidcContext / SessionUser）
 │   ├── token.rs                # 🆕 Token Service（创建/验证/CRUD/模型权限检查）
 │   └── quota.rs                # 🆕 Quota Service（周期计数/配额检查/扣减/重置）
-├── store/                      # 🔄 Phase 3 重写 — 基于 toasty + SQLite
+├── store/                      # 🔄 Phase 3 重写 + 多协议重构
 │   ├── mod.rs                  # Store 核心（db + KeySelector + CRUD，含 ensure_model()）
-│   ├── catalog.rs              # models.dev 磁盘缓存读写（仅发现用）
-│   ├── compat.rs               # 🆕 npm → 兼容协议推导 + models.dev 数据映射
-│   ├── router.rs               # 🆕 路由解析（基于 models + model_providers + providers 应用层关联）
+│   ├── compat.rs               # 🆕 已删除 models.dev 集成；保留 ProviderCompatibility 枚举提示
+│   ├── router.rs               # 🆕 路由解析（四表：models + model_providers + provider_protocols + providers 应用层关联）
 │   └── error.rs                # StoreError
 ├── actors/
 │   ├── mod.rs
-│   ├── gateway_manager.rs      # GatewayManagerActor（目录初始化、定时刷新、路由解析）
+│   ├── gateway_manager.rs      # GatewayManagerActor（配额重置、路由解析）；catalog 刷新循环已删除
 │   └── provider/
 │       ├── mod.rs              # ProviderActor（请求入口，分发到适配器）
 │       ├── adapters.rs         # 适配器分发（按 ProviderCompatibility 枚举）
@@ -200,7 +188,7 @@ src/
 │           └── anthropic_messages.rs
 ├── server/
 │   ├── mod.rs
-│   ├── admin.rs                # 🔄 Admin REST API（Session + Admin 认证）
+│   ├── admin.rs                # 🔄 Admin REST API（Session + Admin 认证）。⚠️ 缺 `protocols` 子路由
 │   ├── auth.rs                 # 🆕 Auth API（/auth/login, callback, me, logout）
 │   ├── tokens.rs               # 🆕 Token 管理 API（CRUD）
 │   └── openai_api.rs           # OpenAI 兼容 API + 服务器启动
@@ -217,19 +205,19 @@ src/
 | `LLM_BRIDGE_GATEWAY_ID` | `llm-bridge-v1` | 网关标识 |
 | `LLM_BRIDGE_HOST` | `127.0.0.1` | 监听地址 |
 | `LLM_BRIDGE_PORT` | `3000` | 监听端口 |
-| `LLM_BRIDGE_AUTH_TOKEN` | 无 | Bearer Token（不设置则无认证） |
+| `LLM_BRIDGE_AUTH_TOKEN` | 无 | Bearer Token（不设置则无认证 — 死代码保留，见第 6 章） |
 | `LLM_BRIDGE_STORE_PATH` | `./data/llm-bridge` | 数据存储目录 |
-| `LLM_BRIDGE_CATALOG_BASE_URL` | `https://models.dev` | 模型目录 API 地址。⚠️ **计划下线**（2026-06-25），见 §11 |
-| `LLM_BRIDGE_CATALOG_REFRESH_INTERVAL_SECS` | `900` | 目录刷新间隔（秒）。⚠️ **计划下线**或重命名（见 §11） |
-| `LLM_BRIDGE_CATALOG_REQUEST_TIMEOUT_SECS` | `30` | 目录请求超时（秒）。⚠️ 可能随 §11 重构调整 |
-| `LLM_BRIDGE_CATALOG_STRICT_BOOTSTRAP` | `true` | 首次启动时必须成功拉取目录。⚠️ **计划下线**（2026-06-25）：新方案允许空配置启动，见 §11 |
+| `LLM_BRIDGE_CATALOG_BASE_URL` | `https://models.dev` | 🔴 **残留**：仍由 `ModelCatalogConfig` 解析，但 models.dev 集成已删，属于 Phase 4 待清扫项 |
+| `LLM_BRIDGE_CATALOG_REFRESH_INTERVAL_SECS` | `900` | 🔴 **残留**：同上 |
+| `LLM_BRIDGE_CATALOG_REQUEST_TIMEOUT_SECS` | `30` | 🔴 **残留**：同上 |
+| `LLM_BRIDGE_CATALOG_STRICT_BOOTSTRAP` | `true` | 🔴 **残留**：同上（与 PLAN.md「空配置启动」目标冲突） |
 | `RUST_LOG` | `info` | 日志级别（tracing-subscriber env-filter） |
 
 ---
 
 ## 5. Phase 1-5 实施进度
 
-> 详见 [`PLAN.md`](PLAN.md) 第 6 章。
+> **历史快照（2026-05-18 → 06-25 原始重构）**：详见 [`PLAN.md`](PLAN.md) 第 6 章。这部分已完成的工作在 2026-06-29 多协议架构重设计后已被超越，下表为历史记录，**不代表当前任务总线**。当前任务总线见 §5.5。
 
 ### Phase 1：基础设施（数据库 + OIDC）
 
@@ -296,7 +284,7 @@ src/
 **已知问题：**
 - ~~OpenTelemetry 版本冲突（`opentelemetry 0.31 vs 0.32`）~~ → ✅ 已解决（2026-06-25 复核）：`Cargo.toml` 已统一为 `opentelemetry 0.32.x` 单一版本，`observability/mod.rs` 完整使用 0.32 API 且无编译错误
 - **死代码残留**：`src/server/openai_api.rs:23 fn check_auth(...)` 仍在文件中，引用 `AppState.auth_token`，但全工作区无任何调用点；`AppState.auth_token: Option<String>` 字段也保留未删。Phase 3.7 称"清理废弃代码"完成，实际未彻底
-- **应用层 N+1 查询**：`src/store/router.rs` 注释称为"三表 JOIN"，实为 `LLMModel::filter → ModelProvider::filter → Provider::get_by_id` 应用层循环关联，非 SQL 原生 JOIN。模型量增大后为性能热点，建议后续用 toasty 预加载或原生 JOIN 优化
+- **应用层 N+1 查询**：`src/store/router.rs` 注释称“四表 JOIN”，实为 `LLMModel::filter → ModelProvider::filter → ProviderProtocol::get_by_id → Provider::get_by_id` 应用层循环关联，非 SQL 原生 JOIN。模型量增大后为性能热点，建议后续用 toasty 预加载或原生 JOIN 优化
 - **注释与实现符号不一致**：`src/store/compat.rs` 顶部模块注释提到 `models_dev_to_model_data`，实际功能被拆为 `ModelCapabilitiesFromDev::from_models_dev` + `ModelPricingFromDev::from_models_dev` + `deduce_base_url` 三个符号，无同名函数
 - **测试计数存疑**：第 10 章曾称"55 个测试全部通过"，实际 `src/` 下仅 25 个 `#[test]`/`#[tokio::test]`。需 `cargo test --no-run` 给出权威统计后方可定稿
 - **TS 客户端漂移检测禁用**：`tests/generate_ts_client.rs::check_ts_client_up_to_date` 当前被注释，CI 无法捕获前端绑定生成物与后端路由不同步
@@ -332,7 +320,7 @@ Model ──< ModelProvider >── Provider
 | 文件 | 变更 |
 |------|------|
 | `src/db/models.rs` | 新增 `LLMModel` 表（`#[toasty(table="models")]`），`ProviderModel` → `ModelProvider`（`#[toasty(table="model_providers")]`），字段 restructure |
-| `src/db/mod.rs` | `all_models()` 注册 6 张表（User, Token, UsageRecord, LLMModel, Provider, ModelProvider） |
+| `src/db/mod.rs` | `all_models()` 注册 **7 张表**（User, Token, UsageRecord, LLMModel, Provider, **ProviderProtocol**, ModelProvider） |
 | `src/store/router.rs` | 完全重写，基于 models + model_providers + providers **应用层关联查询**（非 SQL 原生 JOIN） |
 | `src/store/mod.rs` | CRUD 适配新结构，新增 `ensure_model()` 自动创建 LLMModel |
 | `src/server/openai_api.rs` | `/v1/models` 返回增强格式（capabilities + providers[]） |
@@ -411,6 +399,15 @@ cd frontend && bun run build
 | Phase 4：Admin API + 前端 | ✅ 基本完成 | 2026-06-25 |
 | Phase 5：测试与文档 | 🔄 部分启动 | — |
 | toasty 0.7.0 迁移 | ✅ 已完成 | 2026-06-25 |
+| **多协议架构重设计 PLAN（2026-06-29）** | 🔄 进行中 | — |
+| └ Phase 1 数据模型 | ✅ 已完成 | 2026-07-01（估算） |
+| └ Phase 2 Store 适配 | 🟡 80% | — |
+| └ Phase 3 Admin API | 🟡 50% | — |
+| └ Phase 4 删 models.dev | 🟡 75% | — |
+| └ Phase 5 前端适配 | 🔴 0% | — |
+| └ Phase 6 Actor 确认 | ✅ 已完成 | — |
+
+> 多协议重构 Phase 详细进度见 §5.5；当前行动项见 §11。
 
 **Phase 4 实际状态（2026-06-25 复核）：**
 - 后端 Admin API 已含提供者 CRUD、ModelProvider 关联 CRUD、models.dev 搜索 + 导入、用户角色管理（见 2.2 节）
@@ -423,18 +420,35 @@ cd frontend && bun run build
 - `tests/generate_ts_client.rs` 存在（含 `generate_ts_client` 测试；`check_ts_client_up_to_date` 当前被注释禁用）
 - `src/db/mod.rs` 含 2 个集成测试，三个适配器共 23 个 `#[test]`，合计 `src/` 下 25 个 `#[test]`/`#[tokio::test]`（权威计数待 `cargo test --no-run`）
 
+---
+
+### 5.5 多协议架构重设计 Phase 进度（2026-06-29 →）
+
+> 见 [`PLAN.md`](PLAN.md)。下表为当前任务总线。**注意**：PLAN Phase 编号与历史 Phase 不重合，PLAN Phase 1 = 数据模型定义，对应历史概念的「Phase 4a 续作」。
+
+| Phase | 内容 | 状态 | 备注 |
+|-------|------|------|------|
+| **Phase 1** | 数据模型：新增 `ProviderProtocol`，重构 `Provider`/`ModelProvider` | ✅ 完成 | `src/db/models.rs` 七张表已实现：Provider 删 npm/base_url/compat_settings、`api_keys: toasty::Json<Vec<ApiKeyEntry>>`、ModelProvider 以 `protocol_id` FK 替代 compatibility 枚举 |
+| **Phase 2** | Store 层适配：upsert、级联删除、四表 JOIN、KeySelector 直接收 `&[ApiKeyEntry]` | 🟡 大部分完成 | `upsert_provider` 新签名、`delete_provider_by_id` 级联删 ProviderProtocol、`router.rs` 四表关联查询均已落地。⬜ **缺 `upsert_protocols` 方法**（PLAN §5.2） |
+| **Phase 3** | Admin API：删旧字段、新增 `CreateProtocolEntry`、`GET/PUT /providers/:id/protocols` 端点 | 🟡 部分完成 | `CreateProviderRequest`/`UpdateProviderRequest` 已删旧字段、`AddModelRequest` 已用 `protocol_id`。⬜ **缺独立协议端点**（`GET/PUT /api/v1/admin/providers/{id}/protocols`），且 `CreateProviderRequest` **未含 `protocols: Vec<CreateProtocolEntry>` 字段**——创建 Provider 时无法附带协议 |
+| **Phase 4** | 删除 models.dev 集成 | 🟡 大部分完成 | ✅ 删 `models_dev.rs`、`models_dev_catalog.rs`、`store/catalog.rs`、`catalog_cache.json`、前端 models.dev 绑定。⬜ **`config/models.rs` 仍残 `ModelCatalogConfig` + 四个 `LLM_BRIDGE_CATALOG_*` 环境变量**，`main.rs:105` 仍打印 `catalog_base_url` |
+| **Phase 5** | 前端适配：协议增删改 UI、重新生成绑定 | 🔴 未启动 | `frontend/src/bindings/` 已无 models.dev 类型；但 `ProvidersPage.svelte` **未含协议管理 UI**（grep 仅命中展示字段 `m.compatibility` / `protocolId`，无增删改组件），且无 `CreateProtocolEntry.ts` 等协议专用绑定 |
+| **Phase 6** | Actor / 适配器确认 | ✅ 完成 | `adapters.rs` 通过 `state.compatibility` 分发，来自 `ResolvedProviderRoute.compatibility`，数据源由 ModelProvider.compatibility 改为 ProviderProtocol.protocol，但适配器层值不变 |
+
+**整体完成度估计**：约 **60%**（Phase 1 ✅、Phase 2 🟡 80%、Phase 3 🟡 50%、Phase 4 🟡 75%、Phase 5 🔴 0%、Phase 6 ✅）
+
 ### 8.3 核心变更（已完成）
 
 | 方面 | 重构前 | 重构后（当前代码实况） |
 |------|-----------------|------------------|
 | 存储 | JSON 文件 + RwLock | ✅ toasty + SQLite 完全替换 |
 | 认证 | Bearer Token（环境变量） | ✅ OIDC + Session + API Token 三通道 |
-| 模型目录 | models.dev 直接驱动路由 | ✅ models.dev 仅作发现，运行时全走 SQLite<br>⚠️ 计划进一步切断（2026-06-25）：去 models.dev 硬依赖 → CatalogSource 抽象，见 §11 |
+| 模型目录 | models.dev 直接驱动路由 | ✅ models.dev 集成**已删除**（多协议重构 Phase 4 大部分完成，仅剩 `ModelCatalogConfig` 残留）；运行时全走本地 SQLite 四表，见 §2.4 |
 | Admin API | Bearer Token 认证 | ✅ Session + RBAC（SessionAuth / AdminAuth） |
 | Token 管理 | 无 | ✅ 用户创建多 Token，每 Token 独立配额 + 模型范围 |
 | API 认证 | Bearer Token（环境变量） | ✅ TokenAuth 提取器（bcrypt 验证 Token） |
 | 前端 | 无认证 | ✅ OIDC 登录 + 5 个管理页面 |
-| 数据模型 | 5 张表（ProviderModel 耦合能力+定价） | ✅ 6 张表（LLMModel 标称 + ModelProvider 关联，Phase 4a） |
+| 数据模型 | 5 张表（ProviderModel 耦合能力+定价） | ✅ **7 张表**（LLMModel 标称 + ModelProvider 关联 + ProviderProtocol 协议，多协议重构后） |
 | toasty 版本 | 0.6（BelongsTo / HasMany） | ✅ 0.7.0（关系字段全部为 `Deferred<T>`） |
 | OpenTelemetry | 0.31 vs 0.32 冲突 | ✅ 统一为 0.32.x |
 
@@ -444,12 +458,12 @@ cd frontend && bun run build
 
 LLM-Bridge 当前处于**重构 Phase 4 基本完成、Phase 5 部分启动**。核心路径与前端管理界面均已实现，剩余工作集中在测试套件完善与文档定稿。
 
-> 注：下方 Phase 1/2/3 描述为历史快照，部分字段名（如 `ProviderModel`）已在 Phase 4a 重构为 `ModelProvider` 并新增 `LLMModel` 表，详见第 10 章。当前实际为 **6 张核心表**：`users`、`tokens`、`usage_records`、`models`、`providers`、`model_providers`。
+> 注：下方 Phase 1/2/3 描述为历史快照，部分字段名（如 `ProviderModel`）已在 Phase 4a 重构为 `ModelProvider` 并新增 `LLMModel` 表，随后在 2026-06-29 多协议重构中进一步新增 `ProviderProtocol` 表。当前实际为 **7 张核心表**：`users`、`tokens`、`usage_records`、`models`、`providers`、`provider_protocols`、`model_providers`。
 
 **Phase 1 已完成：**
 - 引入 `toasty` ORM + `jiff` 时间库，新增 `openidconnect` + `tower-sessions` + `bcrypt` + `rand` 依赖
 - SQLite（默认）+ PostgreSQL（可选 feature）双数据库支持
-- ~~5 张核心表数据模型定义完毕~~ → Phase 4a 重构后为 **6 张表**（`User`, `Token`, `UsageRecord`, `LLMModel`, `Provider`, `ModelProvider`）
+- ~~5 张核心表数据模型定义完毕~~ → Phase 4a 重构后为 6 张表 → 多协议重构后为 **7 张表**（新增 `ProviderProtocol`，`User`, `Token`, `UsageRecord`, `LLMModel`, `Provider`, `ProviderProtocol`, `ModelProvider`）
 - 数据库初始化与自动建表（`db::init` / `db::init_sqlite`）
 - OIDC Service（`OidcService::discover` / `login_url` / `callback`）
 - Session 管理（`tower-sessions` + `MemoryStore`）
@@ -474,8 +488,8 @@ LLM-Bridge 当前处于**重构 Phase 4 基本完成、Phase 5 部分启动**。
 **Phase 3 核心已完成（6/7 任务）：**
 - 重写 `src/store/mod.rs` — 废弃 JSON 文件 + RwLock，改用 toasty Db 直接操作 SQLite
 - 删除 `src/store/providers.rs` — JSON 文件读写全部移除（物理删除）
-- 新增 `src/store/router.rs` — 路由解析从 `model_providers` + `models` + `providers` 三表应用层关联查询，含加权轮询 KeySelector
-- 新增 `src/store/compat.rs` — npm → ProviderCompatibility 推导 + models.dev 数据映射
+- 新增 `src/store/router.rs` — 路由解析从 `model_providers` + `provider_protocols` + `models` + `providers` **四表**应用层关联查询，含加权轮询 KeySelector
+- 新增 `src/store/compat.rs` — 原本为 npm → ProviderCompatibility 推导 + models.dev 数据映射；多协议重构后 models.dev 集成已删，仅保留枚举提示
 - 重写 `src/server/admin.rs` — 认证从 Bearer Token 改为 Session（SessionAuth / AdminAuth）；提供者列表返回完整 ProviderResponse
 - 更新 `src/server/openai_api.rs` — `list_models` / `resolve_model` → async；返回完整定价+能力
 - 更新 `src/main.rs` — Store 由 `Store::new(db, path)` 创建，移除 JSON 文件依赖
@@ -502,45 +516,39 @@ LLM-Bridge 当前处于**重构 Phase 4 基本完成、Phase 5 部分启动**。
 
 ---
 
-## 11. 计划变更（2026-06-25）：切断 models.dev 硬依赖
+## 11. 当前行动项（多协议架构重设计，2026-07-03 核对）
 
-> 本节为**尚未实施的计划变更**，记录于 PLAN.md §3.3 / §3.4 / §3.5 / §4.4。下列描述为代码当前仍处于"绑定 models.dev"状态；本节是未来要落地的目标形态。
+> 取代 2026-06-25 旧 §11「切断 models.dev 硬依赖」计划，纳入 PLAN.md（2026-06-29）多协议架构重设计任务总线。STATUS 维护原则与 PLAN 第 1 章一致：**不向后兼容、解决问题优先、不自主做决定**。
 
-### 11.1 决策摘要
+### 11.1 待落地清单（按建议优先级排序）
+
+| # | 项 | Phase | 优先级 | 关联文件 |
+|---|----|-------|--------|---------|
+| A | 实现 `upsert_protocols` 方法，对 ProviderProtocol 进行 diff upsert（增/改/删），与 PLAN §5.2 一致 | Phase 2 | 高 | `src/store/mod.rs` |
+| B | 在 `CreateProviderRequest`/`UpdateProviderRequest` 增加 `protocols: Vec<CreateProtocolEntry>` 字段，使 Provider 创建/更新时能附带协议 | Phase 3 | 高 | `src/server/admin.rs`、`frontend/src/bindings/` |
+| C | 新增两个协议子端点：`GET /api/v1/admin/providers/{id}/protocols`、`PUT /api/v1/admin/providers/{id}/protocols`（批量修改） | Phase 3 | 高 | `src/server/admin.rs` |
+| D | 删除 `src/config/models.rs:46-72` 的 `ModelCatalogConfig` 与四个 `LLM_BRIDGE_CATALOG_*` 环境变量；移除 `main.rs:105` 的 `catalog_base_url` 日志 | Phase 4 | 中 | `src/config/models.rs`、`src/main.rs` |
+| E | 在前端 `ProvidersPage.svelte` 实现协议列表增删改 UI（每项：协议类型下拉框 + URL 输入框 + compat settings 展开编辑） | Phase 5 | 高 | `frontend/src/lib/ProvidersPage.svelte`、`frontend/src/bindings/` |
+| F | 重新生成 TypeScript 绑定（`cargo test export_bindings` + `cargo test generate_ts_client`），同步 `CreateProtocolEntry` 等新类型 | Phase 5 | 中 | `frontend/src/bindings/` |
+| G | 补齐 ProviderProtocol CRUD 与四表 JOIN 的集成测试 | Phase 5（测试） | 中 | `src/db/mod.rs`、新增 `tests/` |
+| H | 清理历史死代码：`openai_api.rs::check_auth` + `AppState.auth_token` 字段（PLAN 未要求但 STATUS §6 持续登记） | 持续维护 | 低 | `src/server/openai_api.rs`、`src/server/mod.rs` |
+
+### 11.2 决策要点（从 PLAN.md 沿袭）
 
 | 维度 | 决策 |
 |------|------|
-| 范围 | 本轮仅更新文档；代码暂不动 |
-| 配置形态 | 运行时仍从**远端接口**获取目录元数据，但不绑死 models.dev 的 URL 与数据格式。远端源抽象为 `CatalogSource`；具体响应格式由后续设计阶段定义 |
-| models.dev 去留 | **完全切断**硬编码依赖 |
-| 首启策略 | 允许**空配置启动**——不要求任何目录数据；首启仅含 admin 账号、无模型；管理员通过 Admin UI 引导首填（手动新增提供者+模型，或配置一个 CatalogSource 后触发发现/导入） |
-| **前端手动配置** | **一等公民**：无论是否配置 CatalogSource，前端**必须始终**能完整手动配置 Provider（API Keys/base_url/compat_settings/优先级/启用）、LLMModel（model_name+标称能力）、ModelProvider（关联+覆盖能力+定价+compatibility）。空配置启动后，管理员仅靠手动路径即可把网关跑起来，不依赖任何远端源 |
+| ProviderProtocol 唯一约束 | **不加**（允许同协议多端点，支持负载均衡/分区域路由） |
+| `api_keys` 空值场景 | 自部署无认证模型（如本地 Ollama）存空数组 `[]`；KeySelector 遇空数组应跳过该 Provider 而非 panic |
+| 数据库迁移 | 不考虑向后兼容：删除旧 SQLite 文件，由 toasty 启动时据新 schema 自动建表；管理员通过 Admin API 手工重建 |
+| 数据库表数 | **七张**：`users`、`tokens`、`usage_records`、`models`、`providers`、`provider_protocols`、`model_providers` |
+| 运行时路由 | 始终只查本地四表（`models` + `model_providers` + `provider_protocols` + `providers`），不依赖任何远端源 |
 
-### 11.2 受影响项（现状 → 目标）
+### 11.3 开放问题（沿用 PLAN.md §6 与旧 §11 待决项）
 
-| 项目 | 现状 | 目标 |
-|------|------|------|
-| `src/config/models_dev_catalog.rs` | models.dev HTTP 客户端 + ETag 缓存 | 重写为 `CatalogSource` 抽象（HTTP 细节可配置可替换） |
-| `src/models_dev.rs` | 固化 models.dev 响应格式 | 重构为 `CatalogSource` 通用响应格式（schema 后定义）或废弃 |
-| `data/llm-bridge/catalog_cache.json` | 磁盘缓存 | 移除（远端仅按需发现/导入；后台同步可选且默认关闭） |
-| 启动流程 | strict_bootstrap 拉取失败即拒启 | 允许空配置启动；远端不可达不阻塞 |
-| `src/actors/gateway_manager.rs` | `initialize_catalog` + `spawn_refresh_loop` + `RefreshCatalog` 消息 | 移除强制刷新循环；后台增量同步改为可选且默认关闭，仅对已配置的 CatalogSource 生效 |
-| `src/store/catalog.rs` | `load_catalog_cache` / `save_catalog_cache` | 移除或重构（缓存语义随新设计重定义） |
-| Admin API | `/api/v1/admin/models-dev/search`、`/import` | 改为通用 `/api/v1/admin/catalog-source/*` 或下线该 UI 入口（待实施时定） |
-| 前端 `/admin/providers`、`/admin/models` | 内嵌 models.dev 发现/导入 | **手动配置三件套为一等公民**：提供者页（完整 Provider CRUD：API Keys/base_url/compat_settings/优先级/启用 + 内嵌 ModelProvider 关联管理）、模型页（完整 LLMModel CRUD：model_name/标称能力 + 内嵌 ModelProvider 关联管理）必须**无条件存在**且字段完整。CatalogSource 发现/导入仅作为可选的便利入口。首启空配置时这两个页面必须能用，无 CatalogSource 也无降级 |
-| 环境变量 | `LLM_BRIDGE_CATALOG_BASE_URL`、`..._STRICT_BOOTSTRAP`、`..._REFRESH_INTERVAL_SECS`、`..._REQUEST_TIMEOUT_SECS` | 全部计划下线；新增 `LLM_BRIDGE_CATALOG_SOURCE_URL`（可选）等，待实施时定 |
+1. **CatalogSource schema**：通用响应格式是否保留 models.dev 当前格式作为兼容子集？（不阻塞当前 Phase 1-3 推进）
+2. **多源支持**：是否允许同时配置多个 CatalogSource？
+3. **导入幂等性 / 后台同步冲突**：远端价格变动 vs 管理员本地修改如何取舍？
+4. **前端引导流**：是否需要首启空配置时的"欢迎向导"？底线：纯手动配置三件套必须始终可用，向导只能加速。
 
-### 11.3 不变项
-
-- **运行时路由解析**：始终只查 `models` + `model_providers` + `providers` 三张本地 SQLite 表，**不依赖任何远端源**（含 models.dev）。这一原则在旧设计和新设计中一致。
-- **兼容协议推导规则**：仍然把 `@ai-sdk/openai` / `openai-compatible` → `open_ai_chat_completions` + `open_ai_responses`、`@ai-sdk/anthropic` → `anthropic_messages` 作为默认规则，但从"绑定 models.dev"下移到"CatalogSource 导入路径"，供新远端源复用。
-- **数据库 6 张表结构**：`users`、`tokens`、`usage_records`、`models`、`providers`、`model_providers`，本次计划变更不动。
-
-### 11.4 开放问题（待实施前确认）
-
-1. **CatalogSource schema**：通用响应格式如何定义？是否保留 models.dev 当前格式作为兼容子集？
-2. **多源支持**：是否需要同时配置多个 CatalogSource？默认实现只支持一个还是 N 个？
-3. **导入幂等性**：重复导入同一个 CatalogSource 的同一批条目，应 upsert 还是跳过已存在项？
-4. **后台同步策略**：若开启可选后台增量同步，冲突如何处理（远端价格变动 vs 管理员本地修改）？
-5. **前端引导流**：首启空配置时，`/admin/providers` 与 `/admin/models` 页面是否需要专门的"欢迎/向导"模式？底线：向导只能加速，绝不能成为唯一入口——纯手动配置三件套必须始终可用。
+> 以上开放问题不阻塞当前 Phase 1-5 的具体行动项（§11.1 的 A-G）。
 

@@ -9,7 +9,7 @@ export type OpenAiModelEntry = { id: string, object: string, created: number,
 /**
  * 主要提供者（第一个可用提供者）
  */
-owned_by: string, 
+ownedBy: string, 
 /**
  * 模型的标称能力
  */

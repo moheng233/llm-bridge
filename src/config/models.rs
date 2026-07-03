@@ -112,7 +112,7 @@ impl OidcConfig {
 /// API compatibility protocol that a provider supports.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, TS, toasty::Embed)]
 #[ts(export)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "camelCase")]
 pub enum ProviderCompatibility {
     OpenAiChatCompletions,
     OpenAiResponses,
@@ -131,15 +131,6 @@ pub struct CompatibilitySettings {
     pub custom_params: HashMap<String, String>,
 }
 
-/// Configuration for a single compatibility slot on a provider.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, TS)]
-#[ts(export)]
-#[serde(rename_all = "camelCase")]
-pub struct ProviderCompatConfig {
-    pub enabled: bool,
-    pub settings: Option<CompatibilitySettings>,
-}
-
 /// A single API key entry with scheduling metadata.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
@@ -153,21 +144,6 @@ pub struct ApiKeyEntry {
 
 fn default_weight() -> u32 {
     1
-}
-
-/// User configuration for a single provider.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ProviderConfig {
-    #[serde(default)]
-    pub enabled: bool,
-    #[serde(default)]
-    pub priority: u32,
-    pub base_url_override: Option<String>,
-    #[serde(default)]
-    pub api_keys: Vec<ApiKeyEntry>,
-    /// Custom HTTP headers/params/path-suffix (applied to all compatibilities).
-    pub compat_settings: Option<CompatibilitySettings>,
 }
 
 fn env_or_default(key: &str, default: &str) -> String {

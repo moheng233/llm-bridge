@@ -46,7 +46,7 @@ async fn run_server() -> MainResult {
         .await
         .map_err(|e| std::io::Error::other(e.to_string()))?;
 
-    let store = Arc::new(Store::new(db.clone(), &settings.store_path));
+    let store = Arc::new(Store::new(db.clone()));
     info!(store_path = %settings.store_path, "store initialized");
 
     // Phase 1: OIDC discovery（如果配置了 OIDC）

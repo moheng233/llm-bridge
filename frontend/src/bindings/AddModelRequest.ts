@@ -8,7 +8,11 @@ modelName: string,
 /**
  * 提供者侧的模型 ID
  */
-providerModelId: string, compatibility: string, displayName: string, maxInputTokens: number, maxOutputTokens: number, toolCalling: boolean, vision: boolean, thinking: boolean, adaptiveThinking: boolean, 
+providerModelId: string, 
+/**
+ * 协议 ID（FK → provider_protocols）
+ */
+protocolId: number, displayName: string, maxInputTokens: number, maxOutputTokens: number, toolCalling: boolean, vision: boolean, thinking: boolean, adaptiveThinking: boolean, 
 /**
  * 提供者特定输入价格
  */

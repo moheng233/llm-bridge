@@ -3,4 +3,4 @@
 /**
  * API compatibility protocol that a provider supports.
  */
-export type ProviderCompatibility = "open_ai_chat_completions" | "open_ai_responses" | "anthropic_messages";
+export type ProviderCompatibility = "openAiChatCompletions" | "openAiResponses" | "anthropicMessages";

@@ -23,6 +23,7 @@ use crate::server::AppState;
 /// Token 列表项（不含 token_hash）。
 #[derive(Debug, Serialize, ts_rs::TS)]
 #[ts(export)]
+#[serde(rename_all = "camelCase")]
 pub struct TokenListItem {
     pub id: u64,
     pub name: String,

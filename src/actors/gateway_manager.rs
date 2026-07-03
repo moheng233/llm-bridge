@@ -5,7 +5,6 @@ use tracing::{Instrument, debug, info, info_span, instrument};
 
 use crate::auth::quota;
 use crate::config::models::RuntimeSettings;
-use crate::config::models_dev_catalog::ModelsDevCatalogClient;
 use crate::db;
 use crate::store::{self, Store};
 
@@ -30,7 +29,6 @@ pub enum GatewayManagerMessage {
         String,
         ractor::RpcReplyPort<Result<Vec<store::ResolvedProviderRoute>, String>>,
     ),
-    RefreshCatalog,
     ResetQuota,
 }
 
@@ -39,7 +37,6 @@ impl GatewayManagerMessage {
         match self {
             Self::GetAvailableModels(_) => "get_available_models",
             Self::ResolveModel(_, _) => "resolve_model",
-            Self::RefreshCatalog => "refresh_catalog",
             Self::ResetQuota => "reset_quota",
         }
     }
@@ -58,11 +55,6 @@ impl Actor for GatewayManagerActor {
         args: Self::Arguments,
     ) -> Result<Self::State, ActorProcessingErr> {
         info!("gateway manager starting");
-        initialize_catalog(&args.store, &args.settings)
-            .await
-            .map_err(ActorProcessingErr::from)?;
-
-        spawn_refresh_loop(myself.clone(), args.settings.model_catalog.refresh_interval_secs);
         spawn_quota_reset_loop(myself.clone());
         info!("gateway manager initialized");
 
@@ -100,12 +92,6 @@ impl Actor for GatewayManagerActor {
                     Err(e) => { let _ = reply.send(Err(e)); }
                 }
             }
-            GatewayManagerMessage::RefreshCatalog => {
-                debug!("handling RefreshCatalog");
-                if let Err(error) = refresh_catalog(&state.store, &state.settings).await {
-                    tracing::error!("failed to refresh model catalog: {}", error);
-                }
-            }
             GatewayManagerMessage::ResetQuota => {
                 debug!("handling ResetQuota");
                 if let Err(error) = quota::reset_expired_cycles(&state.db).await {
@@ -116,30 +102,6 @@ impl Actor for GatewayManagerActor {
 
         Ok(())
     }
-}
-
-fn spawn_refresh_loop(myself: ActorRef<GatewayManagerMessage>, interval_secs: u64) {
-    info!(
-        interval_secs = interval_secs.max(30),
-        "catalog refresh loop started"
-    );
-    tokio::spawn(
-        async move {
-            let mut interval =
-                tokio::time::interval(std::time::Duration::from_secs(interval_secs.max(30)));
-            interval.tick().await;
-            loop {
-                interval.tick().await;
-                if myself.cast(GatewayManagerMessage::RefreshCatalog).is_err() {
-                    break;
-                }
-            }
-        }
-        .instrument(info_span!(
-            "catalog_refresh_loop",
-            interval_secs = interval_secs.max(30)
-        )),
-    );
 }
 
 fn spawn_quota_reset_loop(myself: ActorRef<GatewayManagerMessage>) {
@@ -158,82 +120,4 @@ fn spawn_quota_reset_loop(myself: ActorRef<GatewayManagerMessage>) {
         }
         .instrument(info_span!("quota_reset_loop")),
     );
-}
-
-#[instrument(level = "info", skip(store, settings), fields(strict_bootstrap = settings.model_catalog.strict_bootstrap))]
-async fn initialize_catalog(
-    store: &Store,
-    settings: &RuntimeSettings,
-) -> Result<(), String> {
-    // Try loading from local cache first.
-    match ModelsDevCatalogClient::load_cache(settings.store_path.as_ref()) {
-        Ok(Some((data, metadata))) => {
-            info!(
-                fetched_at = metadata.fetched_at,
-                "catalog loaded from local cache"
-            );
-            store
-                .replace_catalog_cache(data, metadata)
-                .map_err(|e| e.to_string())?;
-        }
-        Ok(None) => {
-            info!("no local cache found, fetching from models.dev");
-            do_fetch_and_store(store, settings).await?;
-        }
-        Err(e) => {
-            tracing::warn!("failed to load cache: {}, fetching from models.dev", e);
-            do_fetch_and_store(store, settings).await?;
-        }
-    }
-
-    Ok(())
-}
-
-async fn do_fetch_and_store(
-    store: &Store,
-    settings: &RuntimeSettings,
-) -> Result<(), String> {
-    let client = ModelsDevCatalogClient::new(&settings.model_catalog)?;
-    match client.fetch(None).await {
-        Ok((data, metadata)) => {
-            store
-                .replace_catalog_cache(data, metadata)
-                .map_err(|e| e.to_string())?;
-            Ok(())
-        }
-        Err(e) if e == "unchanged" => Ok(()),
-        Err(e) => {
-            let store_path = std::path::Path::new(&settings.store_path);
-            if settings.model_catalog.strict_bootstrap && Store::catalog_provider_count(store_path) == 0 {
-                Err(format!("catalog bootstrap failed and store is empty: {e}"))
-            } else {
-                tracing::warn!("catalog refresh failed: {}", e);
-                Ok(())
-            }
-        }
-    }
-}
-
-#[instrument(level = "info", skip(store, settings))]
-async fn refresh_catalog(
-    store: &Store,
-    settings: &RuntimeSettings,
-) -> Result<(), String> {
-    info!("refreshing model catalog from models.dev");
-    let client = ModelsDevCatalogClient::new(&settings.model_catalog)?;
-
-    let metadata = store.get_catalog_metadata();
-    let (_data, _metadata) = match client.fetch(metadata.etag.as_deref()).await {
-        Ok(result) => result,
-        Err(e) if e == "unchanged" => {
-            info!("catalog unchanged, skipping refresh");
-            return Ok(());
-        }
-        Err(e) => return Err(e),
-    };
-
-    let (data, metadata) = client.fetch(None).await?;
-    store
-        .replace_catalog_cache(data, metadata)
-        .map_err(|e| e.to_string())
 }

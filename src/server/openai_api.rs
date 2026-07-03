@@ -40,6 +40,7 @@ fn check_auth(state: &AppState, headers: &HeaderMap) -> Result<(), Response> {
 
 #[derive(Debug, Serialize, ts_rs::TS)]
 #[ts(export)]
+#[serde(rename_all = "camelCase")]
 pub struct OpenAiModelList {
     object: &'static str,
     data: Vec<OpenAiModelEntry>,
@@ -48,6 +49,7 @@ pub struct OpenAiModelList {
 /// 单个模型的 API 条目（增强版，包含提供者列表和各自的定价/能力）。
 #[derive(Debug, Serialize, ts_rs::TS)]
 #[ts(export)]
+#[serde(rename_all = "camelCase")]
 struct OpenAiModelEntry {
     id: String,
     object: &'static str,
@@ -62,6 +64,7 @@ struct OpenAiModelEntry {
 
 #[derive(Debug, Serialize, ts_rs::TS)]
 #[ts(export)]
+#[serde(rename_all = "camelCase")]
 struct OpenAiModelCapabilities {
     max_input_tokens: u32,
     max_output_tokens: u32,
@@ -73,6 +76,7 @@ struct OpenAiModelCapabilities {
 
 #[derive(Debug, Serialize, ts_rs::TS)]
 #[ts(export)]
+#[serde(rename_all = "camelCase")]
 struct OpenAiModelProviderInfo {
     provider_id: String,
     provider_display_name: String,

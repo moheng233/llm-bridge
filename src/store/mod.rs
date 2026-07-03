@@ -1,12 +1,8 @@
-//! 数据存储层（Phase 3 重写 + Phase 4 重构）— 基于 toasty + SQLite。
+//! 数据存储层（Phase 3 重写 + Phase 4 重构 + 多协议架构）— 基于 toasty + SQLite。
 //!
-//! 替代旧的 JSON 文件 + RwLock 方案。路由解析、模型查询、提供者管理
-//! 全部通过 SQLite 的 `models` + `model_providers` + `providers` 三张表完成。
-//!
-//! models.dev 数据仅作发现用途，通过 `catalog.rs` 缓存到磁盘，
-//! 运行时路由不依赖 models.dev。
+//! 路由解析、模型查询、提供者管理全部通过 SQLite 的
+//! `models` + `model_providers` + `provider_protocols` + `providers` 四张表完成。
 
-pub mod catalog;
 pub mod compat;
 pub mod error;
 pub mod router;
@@ -14,12 +10,10 @@ pub mod router;
 pub use error::StoreError;
 pub use router::{AvailableModel, ModelProviderInfo, ResolvedProviderRoute};
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::db;
-use crate::config::models::ProviderCompatibility;
-use crate::models_dev::ModelsDevRoot;
+use crate::config::models::ApiKeyEntry;
 
 use router::KeySelector;
 
@@ -28,82 +22,20 @@ use router::KeySelector;
 pub struct Store {
     /// toasty 数据库句柄
     db: db::Db,
-    /// 数据存储目录（用于 models.dev 缓存）
-    path: PathBuf,
     /// 加权轮询 Key 选择器
     key_selector: Arc<KeySelector>,
 }
 
-/// models.dev 缓存元数据。
-#[derive(Debug, Clone)]
-pub struct StoreMetadata {
-    pub fetched_at: i64,
-    pub etag: Option<String>,
-}
-
 impl Store {
-    /// 创建 Store 实例（不负责数据库初始化，db 由 main.rs 传入）。
-    pub fn new(db: db::Db, path: impl Into<PathBuf>) -> Self {
+    /// 创建 Store 实例。
+    pub fn new(db: db::Db) -> Self {
         Self {
             db,
-            path: path.into(),
             key_selector: Arc::new(KeySelector::new()),
         }
     }
 
-    /// 从旧的 `Store::open` 风格创建（向后兼容迁移辅助）。
-    pub fn open(path: impl AsRef<std::path::Path>) -> Result<Self, StoreError> {
-        let path = std::path::PathBuf::from(path.as_ref());
-        std::fs::create_dir_all(&path)?;
-
-        // 返回一个占位 Store，db 需要后续设置
-        // 实际使用中由 main.rs 调用 Store::new(db, path)
-        Err(StoreError::Io(std::io::Error::other(
-            "Store::open is deprecated; use Store::new(db, path) instead",
-        )))
-    }
-
-    // ── Catalog (models.dev cache, for discovery only) ──
-
-    /// 获取 models.dev 缓存中的提供者数量（用于判断缓存是否为空）。
-    pub fn catalog_provider_count(path: &std::path::Path) -> usize {
-        catalog::load_catalog_cache(path)
-            .map(|(data, _)| data.len())
-            .unwrap_or(0)
-    }
-
-    /// 替换 models.dev 磁盘缓存（由 GatewayManagerActor 刷新时调用）。
-    pub fn replace_catalog_cache(
-        &self,
-        data: ModelsDevRoot,
-        metadata: StoreMetadata,
-    ) -> Result<(), StoreError> {
-        catalog::save_catalog_cache(
-            &self.path,
-            &crate::models_dev::CatalogCache {
-                fetched_at: metadata.fetched_at,
-                etag: metadata.etag.clone(),
-                data,
-            },
-        )
-    }
-
-    /// 获取 models.dev 缓存的元数据（用于 ETag 条件请求）。
-    pub fn get_catalog_metadata(&self) -> StoreMetadata {
-        catalog::load_catalog_cache(&self.path)
-            .map(|(_, meta)| meta)
-            .unwrap_or(StoreMetadata {
-                fetched_at: 0,
-                etag: None,
-            })
-    }
-
-    /// 从 models.dev 缓存中获取所有提供者（用于 Admin UI 发现）。
-    pub fn get_catalog_providers(&self) -> ModelsDevRoot {
-        catalog::load_catalog_cache(&self.path)
-            .map(|(data, _)| data)
-            .unwrap_or_default()
-    }
+    // ── Catalog (models.dev removed — providers created manually via Admin API) ──
 
     // ── Model listing ──
 
@@ -158,10 +90,7 @@ impl Store {
         &self,
         provider_id: String,
         display_name: String,
-        npm: Option<String>,
-        base_url: Option<String>,
-        api_keys: String,
-        compat_settings: Option<String>,
+        api_keys: Vec<ApiKeyEntry>,
         enabled: bool,
         priority: i64,
     ) -> Result<crate::db::models::Provider, String> {
@@ -174,10 +103,7 @@ impl Store {
             )
             .update()
             .display_name(display_name)
-            .npm(npm)
-            .base_url(base_url)
             .api_keys(api_keys)
-            .compat_settings(compat_settings)
             .enabled(enabled)
             .priority(priority)
             .exec(&mut self.db.clone())
@@ -191,10 +117,7 @@ impl Store {
             let provider = toasty::create!(db::models::Provider {
                 provider_id,
                 display_name,
-                npm,
-                base_url,
                 api_keys,
-                compat_settings,
                 enabled,
                 priority,
             })
@@ -206,7 +129,7 @@ impl Store {
         }
     }
 
-    /// 删除提供者（级联删除其 ModelProvider 关联）。
+    /// 删除提供者（级联删除其 ModelProvider 和 ProviderProtocol 关联）。
     pub async fn delete_provider(&self, provider_id: &str) -> Result<bool, String> {
         let provider = match self.get_provider(provider_id).await? {
             Some(p) => p,
@@ -226,6 +149,24 @@ impl Store {
         for link in links {
             crate::db::models::ModelProvider::filter(
                 crate::db::models::ModelProvider::fields().id().eq(link.id),
+            )
+            .delete()
+            .exec(&mut self.db.clone())
+            .await
+            .map_err(|e| e.to_string())?;
+        }
+
+        // 删除关联的 ProviderProtocol
+        let protocols = crate::db::models::ProviderProtocol::filter(
+            crate::db::models::ProviderProtocol::fields().provider_id().eq(row_id),
+        )
+        .exec(&mut self.db.clone())
+        .await
+        .map_err(|e| e.to_string())?;
+
+        for proto in protocols {
+            crate::db::models::ProviderProtocol::filter(
+                crate::db::models::ProviderProtocol::fields().id().eq(proto.id),
             )
             .delete()
             .exec(&mut self.db.clone())
@@ -271,7 +212,7 @@ impl Store {
         provider_id: u64,
         model_name: String,
         provider_model_id: String,
-        compatibility: ProviderCompatibility,
+        protocol_id: u64,
         display_name: String,
         description: Option<String>,
         max_input_tokens: i64,
@@ -301,7 +242,7 @@ impl Store {
             model_id,
             provider_id,
             provider_model_id,
-            compatibility,
+            protocol_id,
             display_name,
             max_input_tokens: None,  // 标称值已在 Model 中
             max_output_tokens: None,
@@ -428,10 +369,7 @@ impl Store {
         &self,
         id: u64,
         display_name: String,
-        npm: Option<String>,
-        base_url: Option<String>,
-        api_keys: String,
-        compat_settings: Option<String>,
+        api_keys: Vec<ApiKeyEntry>,
         enabled: bool,
         priority: i64,
     ) -> Result<crate::db::models::Provider, String> {
@@ -440,10 +378,7 @@ impl Store {
         )
         .update()
         .display_name(display_name)
-        .npm(npm)
-        .base_url(base_url)
         .api_keys(api_keys)
-        .compat_settings(compat_settings)
         .enabled(enabled)
         .priority(priority)
         .exec(&mut self.db.clone())
@@ -455,7 +390,7 @@ impl Store {
             .map_err(|e| e.to_string())
     }
 
-    /// 删除提供者（按 row id，级联删除其 ModelProvider 关联）。
+    /// 删除提供者（按 row id，级联删除其 ModelProvider 和 ProviderProtocol 关联）。
     pub async fn delete_provider_by_id(&self, id: u64) -> Result<bool, String> {
         let provider = match self.get_provider_by_id(id).await? {
             Some(p) => p,
@@ -482,6 +417,26 @@ impl Store {
             .map_err(|e| e.to_string())?;
         }
 
+        // 删除关联的 ProviderProtocol
+        let protocols = crate::db::models::ProviderProtocol::filter(
+            crate::db::models::ProviderProtocol::fields()
+                .provider_id()
+                .eq(provider.id),
+        )
+        .exec(&mut self.db.clone())
+        .await
+        .map_err(|e| e.to_string())?;
+
+        for proto in protocols {
+            crate::db::models::ProviderProtocol::filter(
+                crate::db::models::ProviderProtocol::fields().id().eq(proto.id),
+            )
+            .delete()
+            .exec(&mut self.db.clone())
+            .await
+            .map_err(|e| e.to_string())?;
+        }
+
         crate::db::models::Provider::filter(
             crate::db::models::Provider::fields().id().eq(provider.id),
         )
@@ -501,7 +456,7 @@ impl Store {
         &self,
         model_id: u64,
         provider_model_id: String,
-        compatibility: ProviderCompatibility,
+        protocol_id: u64,
         display_name: String,
         description: Option<String>,
         max_input_tokens: i64,
@@ -521,7 +476,7 @@ impl Store {
         )
         .update()
         .provider_model_id(provider_model_id)
-        .compatibility(compatibility)
+        .protocol_id(protocol_id)
         .display_name(display_name)
         .max_input_tokens(Some(max_input_tokens))
         .max_output_tokens(Some(max_output_tokens))
@@ -572,161 +527,13 @@ impl Store {
         Ok(())
     }
 
-    // ── models.dev discovery (from cache) ──
-
-    /// 在缓存的 models.dev 数据中搜索提供者。
-    pub fn search_catalog_providers(
-        &self,
-        query: &str,
-    ) -> Vec<CatalogProviderSummary> {
-        let catalog = self.get_catalog_providers();
-        let query_lower = query.to_lowercase();
-
-        catalog
-            .into_iter()
-            .filter(|(id, p)| {
-                id.to_lowercase().contains(&query_lower)
-                    || p.name.to_lowercase().contains(&query_lower)
-            })
-            .map(|(id, p)| CatalogProviderSummary {
-                provider_id: id,
-                display_name: p.name,
-                npm: p.npm,
-                doc: p.doc,
-                model_count: p.models.len() as u32,
-            })
-            .collect()
-    }
-
-    /// 从缓存的 models.dev 数据中导入一个提供者及其模型。
-    ///
-    /// 为每个模型创建 Model（标称值）+ ModelProvider（提供者特定定价）。
-    pub async fn import_from_models_dev(
-        &self,
-        provider_id: &str,
-        api_keys: Vec<crate::config::models::ApiKeyEntry>,
-    ) -> Result<ImportedProvider, String> {
-        let catalog = self.get_catalog_providers();
-        let pdata = catalog
-            .get(provider_id)
-            .ok_or_else(|| format!("provider '{}' not found in catalog", provider_id))?;
-
-        // Deduce compatibility and base_url
-        let compatibility = compat::npm_to_compatibility(&pdata.npm);
-        let base_url = pdata.api.clone();
-
-        // Serialize api_keys to JSON
-        let api_keys_json = serde_json::to_string(&api_keys).unwrap_or_else(|_| "[]".to_string());
-
-        // Upsert provider
-        let provider = self
-            .upsert_provider(
-                provider_id.to_string(),
-                pdata.name.clone(),
-                Some(pdata.npm.clone()),
-                base_url,
-                api_keys_json,
-                None,
-                true,
-                100,
-            )
-            .await?;
-
-        let mut imported_models = Vec::new();
-
-        for (model_key, mdata) in &pdata.models {
-            let caps = compat::ModelCapabilitiesFromDev::from_models_dev(mdata);
-            let pricing = compat::ModelPricingFromDev::from_models_dev(mdata);
-
-            let model_name = format!("{}/{}", provider_id, model_key);
-            let compat_for_model = mdata
-                .provider
-                .as_ref()
-                .and_then(|mp| mp.npm.as_deref())
-                .map(compat::npm_to_compatibility)
-                .unwrap_or(compatibility.clone());
-
-            // 确保 Model 存在（标称值）
-            let model_id = self.ensure_model(
-                &model_name,
-                &mdata.name,
-                None,
-                caps.max_input_tokens,
-                caps.max_output_tokens,
-                caps.tool_calling,
-                caps.vision,
-                caps.thinking,
-                caps.adaptive_thinking,
-            ).await?;
-
-            // 创建 ModelProvider（提供者特定定价）
-            let mp = toasty::create!(db::models::ModelProvider {
-                model_id,
-                provider_id: provider.id,
-                provider_model_id: mdata.id.clone(),
-                compatibility: compat_for_model,
-                display_name: mdata.name.clone(),
-                max_input_tokens: None,
-                max_output_tokens: None,
-                tool_calling: None,
-                vision: None,
-                thinking: None,
-                adaptive_thinking: None,
-                input_price_per_1m: pricing.input_price_per_1m,
-                output_price_per_1m: pricing.output_price_per_1m,
-                cache_read_price_per_1m: pricing.cache_read_price_per_1m,
-                enabled: true,
-                priority: 100,
-            })
-            .exec(&mut self.db.clone())
-            .await
-            .map_err(|e| e.to_string())?;
-
-            imported_models.push(ImportedModel {
-                id: mp.id,
-                model_name,
-            });
-        }
-
-        Ok(ImportedProvider {
-            provider_id: provider.provider_id.clone(),
-            provider_row_id: provider.id,
-            imported_models,
-        })
-    }
-}
-
-/// models.dev 目录中提供者的简要信息（用于 Admin UI 列表/卡片展示）。
-#[derive(Debug, Clone, serde::Serialize, ts_rs::TS)]
-#[ts(export)]
-pub struct CatalogProviderSummary {
-    pub provider_id: String,
-    pub display_name: String,
-    pub npm: String,
-    pub doc: String,
-    pub model_count: u32,
-}
-
-/// 导入结果。
-#[derive(Debug, Clone, serde::Serialize, ts_rs::TS)]
-#[ts(export)]
-pub struct ImportedProvider {
-    pub provider_id: String,
-    pub provider_row_id: u64,
-    pub imported_models: Vec<ImportedModel>,
-}
-
-/// 导入的单个模型。
-#[derive(Debug, Clone, serde::Serialize, ts_rs::TS)]
-#[ts(export)]
-pub struct ImportedModel {
-    pub id: u64,
-    pub model_name: String,
+    // ── Admin helpers ──
 }
 
 /// API Key 展示（隐藏敏感信息）。
 #[derive(Debug, Clone, serde::Serialize, ts_rs::TS)]
 #[ts(export)]
+#[serde(rename_all = "camelCase")]
 pub struct ApiKeyDisplay {
     pub label: String,
     pub weight: u32,

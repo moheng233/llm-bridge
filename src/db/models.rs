@@ -1,17 +1,19 @@
 //! 数据模型定义 — toasty ORM 模型。
 //!
-//! 包含用户、Token、用量记录、模型（规范定义）、提供者、模型-提供者关联六张核心表。
+//! 包含用户、Token、用量记录、模型（规范定义）、提供者、提供者协议、
+//! 模型-提供者关联七张核心表。
 //! 所有模型通过 `toasty::Model` derive 宏生成数据库操作代码。
 //!
 //! ## 核心设计（OpenRouter 风格）
 //!
 //! - **LLM 模型（LLMModel）** 是主要索引，拥有标称能力和描述
-//! - **提供者（Provider）** 是上游 LLM 服务配置
-//! - **模型-提供者关联（ModelProvider）** 记录哪个提供者提供哪个模型，
+//! - **提供者（Provider）** 是上游 LLM 服务配置，持有跨协议共享的 API Keys
+//! - **提供者协议（ProviderProtocol）** 声明提供者支持的协议及其端点 URL
+//! - **模型-提供者关联（ModelProvider）** 记录哪个提供者以何种协议提供哪个模型，
 //!   以及提供者侧的实际参数（可覆盖标称值）和独立定价
 //!
-//! ```
-//! LLMModel ──< ModelProvider >── Provider
+//! ```text
+//! LLMModel --< ModelProvider >-- ProviderProtocol --< Provider
 //! ```
 //!
 //! Token 的 `allowed_models` 引用 `models.model_name`。
@@ -19,7 +21,7 @@
 use jiff::Timestamp;
 use toasty::schema::Deferred;
 
-use crate::config::models::ProviderCompatibility;
+use crate::config::models::{ApiKeyEntry, ProviderCompatibility};
 
 /// 用户角色。
 #[derive(Debug, Clone, PartialEq, Eq, toasty::Embed)]
@@ -192,8 +194,9 @@ pub struct LLMModel {
 
 /// 提供者 — 上游 LLM 提供者配置。
 ///
-/// 管理员手动创建或从 models.dev 导入。
-/// `api_keys` 存储 JSON 数组，支持多 Key 轮询。
+/// 管理员通过 Admin API 手动创建。
+/// `api_keys` 使用 toasty::Json 原生 JSON 列存储，支持多 Key 轮询（跨协议共享）。
+/// 协议和 URL 配置拆分到 [`ProviderProtocol`] 表。
 #[derive(Debug, toasty::Model)]
 #[table = "providers"]
 pub struct Provider {
@@ -207,17 +210,8 @@ pub struct Provider {
     /// 显示名称
     pub display_name: String,
 
-    /// AI SDK npm 包名（从 models.dev 导入时填充）
-    pub npm: Option<String>,
-
-    /// 基础 URL
-    pub base_url: Option<String>,
-
-    /// API Keys（JSON 数组字符串）
-    pub api_keys: String,
-
-    /// 自定义 HTTP 设置（JSON 对象字符串）
-    pub compat_settings: Option<String>,
+    /// API Keys（JSON 列，跨协议共享，加权轮询选择）
+    pub api_keys: toasty::Json<Vec<ApiKeyEntry>>,
 
     /// 是否启用
     pub enabled: bool,
@@ -231,6 +225,50 @@ pub struct Provider {
 
     #[has_many]
     pub model_links: Deferred<Vec<ModelProvider>>,
+
+    #[has_many]
+    pub protocols: Deferred<Vec<ProviderProtocol>>,
+}
+
+// ── 提供者协议配置表 ──
+
+/// 提供者协议配置 — 记录提供者支持的每种协议及其端点 URL。
+///
+/// 一个 Provider 可以有多个 ProviderProtocol，例如 OpenAI 同时支持
+/// Chat Completions 和 Responses 两种协议，分别配置不同 URL。
+///
+/// `compat_settings` 从 Provider 下沉至此，不同协议可有不同 HTTP 定制。
+#[derive(Debug, toasty::Model)]
+#[table = "provider_protocols"]
+pub struct ProviderProtocol {
+    #[key]
+    #[auto]
+    pub id: u64,
+
+    /// 关联的提供者
+    #[index]
+    pub provider_id: u64,
+    #[belongs_to(key = provider_id, references = id)]
+    pub provider: Deferred<Provider>,
+
+    /// 协议枚举
+    pub protocol: ProviderCompatibility,
+
+    /// 协议端点 URL（必填）
+    pub base_url: String,
+
+    /// 自定义 HTTP 设置（JSON 对象字符串，对应 CompatibilitySettings）
+    pub compat_settings: Option<String>,
+
+    /// 是否启用
+    pub enabled: bool,
+    /// 多协议间的优先级
+    pub priority: i64,
+
+    #[auto]
+    pub created_at: Timestamp,
+    #[auto]
+    pub updated_at: Timestamp,
 }
 
 // ── 模型-提供者关联表 ──
@@ -239,7 +277,7 @@ pub struct Provider {
 ///
 /// 这是 LLM 模型（LLMModel）与提供者（Provider）之间的多对多关联表。
 /// 包含提供者侧的实际能力覆盖（nullable = 使用模型标称值）、
-/// 提供者特定的定价，以及兼容协议信息。
+/// 提供者特定的定价，以及协议引用。
 ///
 /// 同一模型可有多个提供者，按 `priority` 排序作为 fallback 链。
 #[derive(Debug, toasty::Model)]
@@ -264,8 +302,11 @@ pub struct ModelProvider {
     /// 提供者侧的模型 ID（如 `"gpt-4o"`）
     pub provider_model_id: String,
 
-    /// 兼容协议
-    pub compatibility: ProviderCompatibility,
+    /// 关联的协议配置（FK → provider_protocols）
+    #[index]
+    pub protocol_id: u64,
+    #[belongs_to(key = protocol_id, references = id)]
+    pub protocol: Deferred<ProviderProtocol>,
 
     /// 显示名称
     pub display_name: String,

@@ -16,7 +16,7 @@
   let error = $state("");
   let search = $state("");
   let onlyAvailable = $state(false);
-  let sortField = $state<"name" | "max_input_tokens" | "max_output_tokens">("name");
+  let sortField = $state<"name" | "maxInputTokens" | "maxOutputTokens">("name");
   let sortDir = $state<"asc" | "desc">("asc");
 
   async function load() {
@@ -43,15 +43,15 @@
     if (search.trim()) {
       const q = search.toLowerCase();
       result = result.filter(m =>
-        m.model_name.toLowerCase().includes(q) ||
+        m.modelName.toLowerCase().includes(q) ||
         m.description?.toLowerCase().includes(q)
       );
     }
     result = [...result].sort((a, b) => {
       const dir = sortDir === "asc" ? 1 : -1;
-      if (sortField === "name") return dir * a.model_name.localeCompare(b.model_name);
-      if (sortField === "max_input_tokens") return dir * (a.max_input_tokens - b.max_input_tokens);
-      if (sortField === "max_output_tokens") return dir * (a.max_output_tokens - b.max_output_tokens);
+      if (sortField === "name") return dir * a.modelName.localeCompare(b.modelName);
+      if (sortField === "maxInputTokens") return dir * (a.maxInputTokens - b.maxInputTokens);
+      if (sortField === "maxOutputTokens") return dir * (a.maxOutputTokens - b.maxOutputTokens);
       return 0;
     });
     return result;
@@ -116,11 +116,11 @@
             <th class="px-4 py-3 text-left font-mono text-xs text-muted-foreground cursor-pointer hover:text-foreground transition-colors" onclick={() => toggleSort("name")}>
               模型名称{sortIndicator("name")}
             </th>
-            <th class="px-4 py-3 text-right font-mono text-xs text-muted-foreground cursor-pointer hover:text-foreground transition-colors" onclick={() => toggleSort("max_input_tokens")}>
-              输入{sortIndicator("max_input_tokens")}
+            <th class="px-4 py-3 text-right font-mono text-xs text-muted-foreground cursor-pointer hover:text-foreground transition-colors" onclick={() => toggleSort("maxInputTokens")}>
+              输入{sortIndicator("maxInputTokens")}
             </th>
-            <th class="px-4 py-3 text-right font-mono text-xs text-muted-foreground cursor-pointer hover:text-foreground transition-colors" onclick={() => toggleSort("max_output_tokens")}>
-              输出{sortIndicator("max_output_tokens")}
+            <th class="px-4 py-3 text-right font-mono text-xs text-muted-foreground cursor-pointer hover:text-foreground transition-colors" onclick={() => toggleSort("maxOutputTokens")}>
+              输出{sortIndicator("maxOutputTokens")}
             </th>
             <th class="px-4 py-3 text-center font-mono text-xs text-muted-foreground">能力</th>
             <th class="px-4 py-3 text-right font-mono text-xs text-muted-foreground">输入价格</th>
@@ -132,24 +132,24 @@
             <tr class="border-b border-border/50 hover:bg-accent/50 transition-colors cursor-pointer">
               <td class="px-4 py-3">
                 <div class="flex flex-col gap-0.5">
-                  <span class="font-mono font-medium text-foreground">{model.model_name}</span>
+                  <span class="font-mono font-medium text-foreground">{model.modelName}</span>
                   {#if model.description}
                     <span class="text-xs text-muted-foreground line-clamp-1">{model.description}</span>
                   {/if}
-                  {#if model.provider_ids.length > 0}
+                  {#if model.providerIds.length > 0}
                     <div class="flex gap-1 mt-1">
-                      {#each model.provider_ids as pid}
+                      {#each model.providerIds as pid}
                         <Badge variant="outline" class="text-xs font-mono px-1.5 py-0">{pid}</Badge>
                       {/each}
                     </div>
                   {/if}
                 </div>
               </td>
-              <td class="px-4 py-3 text-right font-mono tabular-nums text-foreground">{formatTokens(model.max_input_tokens)}</td>
-              <td class="px-4 py-3 text-right font-mono tabular-nums text-foreground">{formatTokens(model.max_output_tokens)}</td>
+              <td class="px-4 py-3 text-right font-mono tabular-nums text-foreground">{formatTokens(model.maxInputTokens)}</td>
+              <td class="px-4 py-3 text-right font-mono tabular-nums text-foreground">{formatTokens(model.maxOutputTokens)}</td>
               <td class="px-4 py-3">
                 <div class="flex items-center justify-center gap-1.5">
-                  {#if model.tool_calling}
+                  {#if model.toolCalling}
                     <Wrench class="h-3.5 w-3.5 text-[#22C55E]" title="工具调用" />
                   {/if}
                   {#if model.vision}
@@ -160,8 +160,8 @@
                   {/if}
                 </div>
               </td>
-              <td class="px-4 py-3 text-right font-mono tabular-nums text-foreground">{formatPrice(model.input_price_per_1m)}</td>
-              <td class="px-4 py-3 text-right font-mono tabular-nums text-foreground">{formatPrice(model.output_price_per_1m)}</td>
+              <td class="px-4 py-3 text-right font-mono tabular-nums text-foreground">{formatPrice(model.inputPricePer1m)}</td>
+              <td class="px-4 py-3 text-right font-mono tabular-nums text-foreground">{formatPrice(model.outputPricePer1m)}</td>
             </tr>
           {/each}
         </tbody>

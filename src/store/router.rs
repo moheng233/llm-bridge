@@ -1,8 +1,8 @@
-//! 路由解析（Phase 3.4 + Phase 4 重构）。
+//! 路由解析（Phase 3.4 + Phase 4 重构 + 多协议架构）。
 //!
-//! 基于 `models` + `model_providers` + `providers` 三表 JOIN 查询。
+//! 基于 `models` + `model_providers` + `provider_protocols` + `providers` 四表 JOIN 查询。
 //!
-//! - `resolve_model`: 查找模型 → 关联提供者 → 构建路由列表（按 priority 排序 fallback）
+//! - `resolve_model`: 查找模型 → 关联提供者 → 关联协议 → 构建路由列表（按 priority 排序 fallback）
 //! - `list_available_models`: 列出所有已启用模型的可用提供者
 //! - `list_all_models`: 列出所有模型（含未启用的）
 
@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
 use crate::config::models::{ApiKeyEntry, CompatibilitySettings, ProviderCompatibility};
-use crate::db::{self, models::{LLMModel as DbLLMModel, ModelProvider as DbModelProvider, Provider as DbProvider}};
+use crate::db::{self, models::{LLMModel as DbLLMModel, ModelProvider as DbModelProvider, Provider as DbProvider, ProviderProtocol as DbProviderProtocol}};
 use crate::types::LMModelInfo;
 
 /// 解析后的提供者路由（传递给 ProviderActor）。
@@ -162,16 +162,25 @@ pub async fn resolve_model(
             continue;
         }
 
-        // 解析 API Keys
-        let api_keys: Vec<ApiKeyEntry> =
-            serde_json::from_str(&provider.api_keys).unwrap_or_default();
+        // 关联的 ProviderProtocol（获取协议、URL、compat_settings）
+        let protocol = match DbProviderProtocol::get_by_id(&mut db.clone(), &mp.protocol_id).await {
+            Ok(p) => p,
+            Err(_) => continue,
+        };
+
+        if !protocol.enabled {
+            continue;
+        }
+
+        // 解析 API Keys（toasty::Json 自动反序列化，通过 Deref 获取内部值）
+        let api_keys: &Vec<ApiKeyEntry> = &provider.api_keys;
         if api_keys.is_empty() {
             continue;
         }
 
-        let selected_key = key_selector.select_key(&provider.provider_id, &api_keys);
+        let selected_key = key_selector.select_key(&provider.provider_id, api_keys);
 
-        let compat_settings: Option<CompatibilitySettings> = provider
+        let compat_settings: Option<CompatibilitySettings> = protocol
             .compat_settings
             .as_ref()
             .and_then(|s| serde_json::from_str(s).ok());
@@ -194,9 +203,9 @@ pub async fn resolve_model(
             provider_name: provider.provider_id.clone(),
             provider_model_name: mp.provider_model_id.clone(),
             priority: mp.priority as u32,
-            compatibility: mp.compatibility.clone(),
+            compatibility: protocol.protocol.clone(),
             compat_settings,
-            base_url: provider.base_url.clone(),
+            base_url: Some(protocol.base_url.clone()),
             api_key: selected_key.key.clone(),
             key_label: selected_key.label.clone(),
         });
@@ -259,11 +268,17 @@ async fn list_models_internal(db: &db::Db, only_enabled: bool) -> Result<Vec<Ava
                 continue;
             }
 
+            // 从 ProviderProtocol 获取协议信息
+            let compatibility = match DbProviderProtocol::get_by_id(&mut db.clone(), &mp.protocol_id).await {
+                Ok(p) => p.protocol,
+                Err(_) => continue,
+            };
+
             provider_infos.push(ModelProviderInfo {
                 provider_id: provider.provider_id.clone(),
                 provider_display_name: provider.display_name.clone(),
                 provider_model_id: mp.provider_model_id.clone(),
-                compatibility: mp.compatibility.clone(),
+                compatibility,
                 max_input_tokens: mp.max_input_tokens,
                 max_output_tokens: mp.max_output_tokens,
                 tool_calling: mp.tool_calling,

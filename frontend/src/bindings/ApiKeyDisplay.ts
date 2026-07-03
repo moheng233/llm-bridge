@@ -3,4 +3,4 @@
 /**
  * API Key 展示（隐藏敏感信息）。
  */
-export type ApiKeyDisplay = { label: string, weight: number, masked_key: string, };
+export type ApiKeyDisplay = { label: string, weight: number, maskedKey: string, };

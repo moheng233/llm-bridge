@@ -3,4 +3,4 @@
 /**
  * 创建 Token 的请求体（来自 API）。
  */
-export type CreateTokenRequest = { name: string, allowed_models: Array<string>, request_quota: number, token_quota: number, quota_period: string, };
+export type CreateTokenRequest = { name: string, allowedModels: Array<string>, requestQuota: number, tokenQuota: number, quotaPeriod: string, };

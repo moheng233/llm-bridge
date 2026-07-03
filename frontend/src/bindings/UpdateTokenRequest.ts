@@ -3,4 +3,4 @@
 /**
  * 更新 Token 的请求体。
  */
-export type UpdateTokenRequest = { name: string | null, allowed_models: Array<string> | null, request_quota: number | null, token_quota: number | null, quota_period: string | null, active: boolean | null, };
+export type UpdateTokenRequest = { name: string | null, allowedModels: Array<string> | null, requestQuota: number | null, tokenQuota: number | null, quotaPeriod: string | null, active: boolean | null, };

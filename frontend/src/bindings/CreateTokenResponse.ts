@@ -11,4 +11,4 @@ token: string,
 /**
  * Token 前缀（UI 识别用）
  */
-token_prefix: string, allowed_models: Array<string>, request_quota: number, token_quota: number, quota_period: string, created_at: number, };
+tokenPrefix: string, allowedModels: Array<string>, requestQuota: number, tokenQuota: number, quotaPeriod: string, createdAt: number, };
