@@ -8,8 +8,24 @@
   import { Skeleton } from "$lib/components/ui/skeleton/index.js";
   import { Search, Cpu, Eye, Wrench, Brain } from "@lucide/svelte";
   import type { ModelResponse } from "$bindings/ModelResponse";
+  import type { ModelProviderSummary } from "$bindings/ModelProviderSummary";
 
   const api = getApi();
+
+  // 从模型下的 providers[] 聚合最小价格（用于在模型目录中快速展示代表性定价）。
+  // null 表示该模型下没有任何 provider 配置了对应价格。
+  function cheapestInputPrice(providers: ModelProviderSummary[]): number | null {
+    const prices = providers
+      .map((p) => p.inputPricePer1m)
+      .filter((v): v is number => v != null);
+    return prices.length > 0 ? Math.min(...prices) : null;
+  }
+  function cheapestOutputPrice(providers: ModelProviderSummary[]): number | null {
+    const prices = providers
+      .map((p) => p.outputPricePer1m)
+      .filter((v): v is number => v != null);
+    return prices.length > 0 ? Math.min(...prices) : null;
+  }
 
   let models = $state<ModelResponse[]>([]);
   let loading = $state(true);
@@ -136,10 +152,10 @@
                   {#if model.description}
                     <span class="text-xs text-muted-foreground line-clamp-1">{model.description}</span>
                   {/if}
-                  {#if model.providerIds.length > 0}
-                    <div class="flex gap-1 mt-1">
-                      {#each model.providerIds as pid}
-                        <Badge variant="outline" class="text-xs font-mono px-1.5 py-0">{pid}</Badge>
+                  {#if model.providers.length > 0}
+                    <div class="flex gap-1 mt-1 flex-wrap">
+                      {#each model.providers as p}
+                        <Badge variant="outline" class="text-xs font-mono px-1.5 py-0" title={p.providerModelId}>{p.providerDisplayName}</Badge>
                       {/each}
                     </div>
                   {/if}
@@ -160,8 +176,8 @@
                   {/if}
                 </div>
               </td>
-              <td class="px-4 py-3 text-right font-mono tabular-nums text-foreground">{formatPrice(model.inputPricePer1m)}</td>
-              <td class="px-4 py-3 text-right font-mono tabular-nums text-foreground">{formatPrice(model.outputPricePer1m)}</td>
+              <td class="px-4 py-3 text-right font-mono tabular-nums text-foreground">{formatPrice(cheapestInputPrice(model.providers))}</td>
+              <td class="px-4 py-3 text-right font-mono tabular-nums text-foreground">{formatPrice(cheapestOutputPrice(model.providers))}</td>
             </tr>
           {/each}
         </tbody>
