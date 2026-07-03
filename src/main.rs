@@ -102,7 +102,6 @@ fn load_runtime_settings() -> Result<RuntimeSettings, std::io::Error> {
         port = settings.server.port,
         store_path = %settings.store_path,
         auth_required = settings.server.auth_token.is_some(),
-        catalog_base_url = %settings.model_catalog.base_url,
         "runtime settings loaded"
     );
 

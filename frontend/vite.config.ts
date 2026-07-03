@@ -8,7 +8,7 @@ export default defineConfig({
   plugins: [tailwindcss(), svelte()],
   server: {
     proxy: {
-      '/api': {
+      '^/(api|auth|v1)(/.*)?$': {
         target: 'http://127.0.0.1:3000',
         changeOrigin: true,
       },

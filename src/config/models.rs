@@ -10,7 +10,6 @@ pub struct RuntimeSettings {
     pub gateway_id: String,
     pub server: ServerConfig,
     pub store_path: String,
-    pub model_catalog: ModelCatalogConfig,
     pub oidc: Option<OidcConfig>,
 }
 
@@ -20,7 +19,6 @@ impl RuntimeSettings {
             gateway_id: env_or_default("LLM_BRIDGE_GATEWAY_ID", "llm-bridge-v1"),
             server: ServerConfig::from_env()?,
             store_path: env_or_default("LLM_BRIDGE_STORE_PATH", "./data/llm-bridge"),
-            model_catalog: ModelCatalogConfig::from_env()?,
             oidc: OidcConfig::from_env_optional()?,
         })
     }
@@ -40,35 +38,6 @@ impl ServerConfig {
             host: env_or_default("LLM_BRIDGE_HOST", "127.0.0.1"),
             port: parse_env_or_default("LLM_BRIDGE_PORT", 3000)?,
             auth_token: env::var("LLM_BRIDGE_AUTH_TOKEN").ok(),
-        })
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ModelCatalogConfig {
-    pub base_url: String,
-    pub refresh_interval_secs: u64,
-    pub request_timeout_secs: u64,
-    pub strict_bootstrap: bool,
-}
-
-impl ModelCatalogConfig {
-    fn from_env() -> Result<Self, String> {
-        Ok(Self {
-            base_url: env_or_default(
-                "LLM_BRIDGE_CATALOG_BASE_URL",
-                "https://models.dev",
-            ),
-            refresh_interval_secs: parse_env_or_default(
-                "LLM_BRIDGE_CATALOG_REFRESH_INTERVAL_SECS",
-                900,
-            )?,
-            request_timeout_secs: parse_env_or_default(
-                "LLM_BRIDGE_CATALOG_REQUEST_TIMEOUT_SECS",
-                30,
-            )?,
-            strict_bootstrap: parse_env_or_default("LLM_BRIDGE_CATALOG_STRICT_BOOTSTRAP", true)?,
         })
     }
 }

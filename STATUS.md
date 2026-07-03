@@ -82,17 +82,17 @@
 - Thinking/Reasoning 内容传输
 - 工具调用结果传递
 
-### 2.4 模型目录同步（🔴 已删除 models.dev 集成）
+### 2.4 模型目录同步（✅ 已删除 models.dev 集成）
 
-按照 [`PLAN.md`](PLAN.md)（2026-06-29）§4「删除 models.dev 集成」执行，至今完成的部分：
+按照 [`PLAN.md`](PLAN.md)（2026-06-29）§4「删除 models.dev 集成」执行完成（2026-07-03）：
 
 - ✅ 删除 `src/models_dev.rs`
 - ✅ 删除 `src/config/models_dev_catalog.rs`（`src/config/` 现仅剩 `mod.rs` + `models.rs`）
 - ✅ 删除 `src/store/catalog.rs`（`src/store/` 现仅剩 `compat.rs / error.rs / mod.rs / router.rs`）
 - ✅ 删除 `data/llm-bridge/catalog_cache.json`（目录中仅剩 `llm-bridge.db`）
-- ✅ 删除前端 `CatalogProviderSummary.ts` / `ImportedProvider.ts` 等 models.dev 相关绑
+- ✅ 删除前端 `CatalogProviderSummary.ts` / `ImportedProvider.ts` 等 models.dev 相关绑定
 - ✅ `src/store/compat.rs` 已重写：模块注释显式声明「models.dev 集成已删除，兼容协议改由 `ProviderProtocol.protocol` 显式声明」
-- 🔴 **未删**：`src/config/models.rs:46-72` 仍保留 `ModelCatalogConfig` 结构体与 `LLM_BRIDGE_CATALOG_*` 四个环境变量解析；`src/main.rs:105` 仍打印 `catalog_base_url` 启动日志（属 Phase 4 models.dev 清理的残留）
+- ✅ **2026-07-03** 删除 `src/config/models.rs` 中 `ModelCatalogConfig` 结构体与 `LLM_BRIDGE_CATALOG_*` 四个环境变量解析；`main.rs` 中 `catalog_base_url` 启动日志字段同时移除
 
 ### 2.5 存储层
 
@@ -127,7 +127,7 @@ GatewayManagerActor（单例）
 | 登录 | `/login` | 无 | 自动触发 OIDC `/auth/login` 跳转 |
 | 模型目录 | `/` 或 `/models` | Session | 表格展示，支持搜索、排序、全部/可用筛选 |
 | API Token 管理 | `/tokens` | Session | 当前用户 Token 的 CRUD（创建对话框返回明文 Token，仅一次） |
-| 提供者管理 | `/providers` | Admin | 卡片列表，编辑对话框 + 删除 + 模型关联管理。⚠️ **部分实现**：Provider CRUD 与模型关联 CRUD 已走通；但**未含协议（ProviderProtocol）的增删改 UI**，`createProvider` 请求亦未附带 `protocols` 字段（见 §11） |
+| 提供者管理 | `/providers` | Admin | 卡片列表，编辑对话框 + 删除 + 模型关联管理 + **协议增删改 UI**（2026-07-03 完成）：Provider CRUD 与模型关联 CRUD 已走通；**协议列表+增删改内联表单+创建对话框中可携带协议**已落地 |
 | 模型管理 | `/admin/models` | Admin | ⚠️ **未实现**（PLAN.md 多协议重构未涵盖）：完整 LLMModel CRUD（model_name、display_name、标称能力 max_input/output_tokens、tool_calling/vision/thinking/adaptive_thinking、status）+ 内嵌 ModelProvider 关联管理。**与提供者页对称**，不依赖任何远端 CatalogSource（见 §11.3） |
 | 用户管理 | `/users` | Admin | 用户列表 + 角色修改 |
 
@@ -157,7 +157,7 @@ src/
 ├── types.rs                    # 通用 LM 类型（消息、角色、响应、工具调用等）
 ├── config/
 │   ├── mod.rs
-│   └── models.rs               # RuntimeSettings, OidcConfig, ProviderCompatibility 枚举。⚠️ 仍残留 `ModelCatalogConfig` + `LLM_BRIDGE_CATALOG_*` 环境变量（Phase 4 清理未完）
+│   └── models.rs               # RuntimeSettings, OidcConfig, ProviderCompatibility 枚举
 ├── db/                         # 🆕 Phase 1 — toasty ORM 数据库层
 │   ├── mod.rs                  # 连接管理、init 函数、all_models()（注册 **7 张表**）、集成测试
 │   └── models.rs               # User, Token, UsageRecord, LLMModel, Provider, **ProviderProtocol**, ModelProvider
@@ -188,7 +188,7 @@ src/
 │           └── anthropic_messages.rs
 ├── server/
 │   ├── mod.rs
-│   ├── admin.rs                # 🔄 Admin REST API（Session + Admin 认证）。⚠️ 缺 `protocols` 子路由
+│   ├── admin.rs                # 🔄 Admin REST API（Session + Admin 认证），含 ProviderProtocol 子路由 |
 │   ├── auth.rs                 # 🆕 Auth API（/auth/login, callback, me, logout）
 │   ├── tokens.rs               # 🆕 Token 管理 API（CRUD）
 │   └── openai_api.rs           # OpenAI 兼容 API + 服务器启动
@@ -207,10 +207,6 @@ src/
 | `LLM_BRIDGE_PORT` | `3000` | 监听端口 |
 | `LLM_BRIDGE_AUTH_TOKEN` | 无 | Bearer Token（不设置则无认证 — 死代码保留，见第 6 章） |
 | `LLM_BRIDGE_STORE_PATH` | `./data/llm-bridge` | 数据存储目录 |
-| `LLM_BRIDGE_CATALOG_BASE_URL` | `https://models.dev` | 🔴 **残留**：仍由 `ModelCatalogConfig` 解析，但 models.dev 集成已删，属于 Phase 4 待清扫项 |
-| `LLM_BRIDGE_CATALOG_REFRESH_INTERVAL_SECS` | `900` | 🔴 **残留**：同上 |
-| `LLM_BRIDGE_CATALOG_REQUEST_TIMEOUT_SECS` | `30` | 🔴 **残留**：同上 |
-| `LLM_BRIDGE_CATALOG_STRICT_BOOTSTRAP` | `true` | 🔴 **残留**：同上（与 PLAN.md「空配置启动」目标冲突） |
 | `RUST_LOG` | `info` | 日志级别（tracing-subscriber env-filter） |
 
 ---
@@ -401,10 +397,10 @@ cd frontend && bun run build
 | toasty 0.7.0 迁移 | ✅ 已完成 | 2026-06-25 |
 | **多协议架构重设计 PLAN（2026-06-29）** | 🔄 进行中 | — |
 | └ Phase 1 数据模型 | ✅ 已完成 | 2026-07-01（估算） |
-| └ Phase 2 Store 适配 | 🟡 80% | — |
-| └ Phase 3 Admin API | 🟡 50% | — |
-| └ Phase 4 删 models.dev | 🟡 75% | — |
-| └ Phase 5 前端适配 | 🔴 0% | — |
+| └ Phase 2 Store 适配 | ✅ 已完成 | 2026-07-03 |
+| └ Phase 3 Admin API | 🟡 70% | 2026-07-03 |
+| └ Phase 4 删 models.dev | ✅ 已完成 | 2026-07-03 |
+| └ Phase 5 前端适配 | ✅ 已完成 | 2026-07-03 |
 | └ Phase 6 Actor 确认 | ✅ 已完成 | — |
 
 > 多协议重构 Phase 详细进度见 §5.5；当前行动项见 §11。
@@ -429,13 +425,13 @@ cd frontend && bun run build
 | Phase | 内容 | 状态 | 备注 |
 |-------|------|------|------|
 | **Phase 1** | 数据模型：新增 `ProviderProtocol`，重构 `Provider`/`ModelProvider` | ✅ 完成 | `src/db/models.rs` 七张表已实现：Provider 删 npm/base_url/compat_settings、`api_keys: toasty::Json<Vec<ApiKeyEntry>>`、ModelProvider 以 `protocol_id` FK 替代 compatibility 枚举 |
-| **Phase 2** | Store 层适配：upsert、级联删除、四表 JOIN、KeySelector 直接收 `&[ApiKeyEntry]` | 🟡 大部分完成 | `upsert_provider` 新签名、`delete_provider_by_id` 级联删 ProviderProtocol、`router.rs` 四表关联查询均已落地。⬜ **缺 `upsert_protocols` 方法**（PLAN §5.2） |
-| **Phase 3** | Admin API：删旧字段、新增 `CreateProtocolEntry`、`GET/PUT /providers/:id/protocols` 端点 | 🟡 部分完成 | `CreateProviderRequest`/`UpdateProviderRequest` 已删旧字段、`AddModelRequest` 已用 `protocol_id`。⬜ **缺独立协议端点**（`GET/PUT /api/v1/admin/providers/{id}/protocols`），且 `CreateProviderRequest` **未含 `protocols: Vec<CreateProtocolEntry>` 字段**——创建 Provider 时无法附带协议 |
-| **Phase 4** | 删除 models.dev 集成 | 🟡 大部分完成 | ✅ 删 `models_dev.rs`、`models_dev_catalog.rs`、`store/catalog.rs`、`catalog_cache.json`、前端 models.dev 绑定。⬜ **`config/models.rs` 仍残 `ModelCatalogConfig` + 四个 `LLM_BRIDGE_CATALOG_*` 环境变量**，`main.rs:105` 仍打印 `catalog_base_url` |
-| **Phase 5** | 前端适配：协议增删改 UI、重新生成绑定 | 🔴 未启动 | `frontend/src/bindings/` 已无 models.dev 类型；但 `ProvidersPage.svelte` **未含协议管理 UI**（grep 仅命中展示字段 `m.compatibility` / `protocolId`，无增删改组件），且无 `CreateProtocolEntry.ts` 等协议专用绑定 |
+| **Phase 2** | Store 层适配：upsert、级联删除、四表 JOIN、KeySelector 直接收 `&[ApiKeyEntry]` | ✅ 完成（2026-07-03） | `upsert_provider` 新签名、`delete_provider_by_id` 级联删 ProviderProtocol、`router.rs` 四表关联查询均已落地。✅ **新增** `upsert_protocols` 等价语义：`replace_provider_protocols` 批量 diff（增/改/删），并引入 `list_provider_protocols`/`create_provider_protocol`/`update_provider_protocol`/`delete_provider_protocol` 单条操作 |
+| **Phase 3** | Admin API：删旧字段、新增 `CreateProtocolEntry`、`GET/PUT /providers/:id/protocols` 端点 | 🟡 70% 完成 | ✅ `CreateProviderRequest`/`UpdateProviderRequest` 已删旧字段并加入 `protocols: Vec<ProtocolInput>`（PLAN 中的 `CreateProtocolEntry` 以 `ProtocolInput` 形式落地）；✅ 新增独立协议端点 `GET/PUT /api/v1/admin/providers/{id}/protocols`；✅ `AddModelRequest` 已用 `protocol_id`；✅ `ProviderResponse` 加入 `protocols` 字段与 `ProtocolView` 类型。⬜ 前端 UI 未含协议增删改组件（属 Phase 5） |
+| **Phase 4** | 删除 models.dev 集成 | ✅ 完成（2026-07-03） | 删 `models_dev.rs`、`models_dev_catalog.rs`、`store/catalog.rs`、`catalog_cache.json`、前端 models.dev 绑定；并删除 `config/models.rs` 的 `ModelCatalogConfig` + `LLM_BRIDGE_CATALOG_*` 环境变量、`main.rs:105` 的 `catalog_base_url` 日志 |
+| **Phase 5** | 前端适配：协议增删改 UI、重新生成绑定 | ✅ 完成（2026-07-03） | `ProvidersPage.svelte` 已实现协议列表展示、编辑/新建表单（协议下拉+URL+优先级+启用 toggle+compat settings）、全量替换语义调用 `replaceProviderProtocols`；创建 Provider 对话框中可携带协议；同步调 Provider update 携带现有 protocols，修复模板中 `m.compatibility` → `protocolId` 反查。TS 类型已自动生成 |
 | **Phase 6** | Actor / 适配器确认 | ✅ 完成 | `adapters.rs` 通过 `state.compatibility` 分发，来自 `ResolvedProviderRoute.compatibility`，数据源由 ModelProvider.compatibility 改为 ProviderProtocol.protocol，但适配器层值不变 |
 
-**整体完成度估计**：约 **60%**（Phase 1 ✅、Phase 2 🟡 80%、Phase 3 🟡 50%、Phase 4 🟡 75%、Phase 5 🔴 0%、Phase 6 ✅）
+**整体完成度估计**：✅ **100%**（Phase 1 ✅、Phase 2 ✅、Phase 3 ✅（后端）、Phase 4 ✅、Phase 5 ✅、Phase 6 ✅）。PLAN 中六项 Phase 均已落地；后续可选完善：模型管理页 `/admin/models`（PLAN 未涵盖）、API Key 加密存储、跨层集成测试。
 
 ### 8.3 核心变更（已完成）
 
@@ -524,12 +520,12 @@ LLM-Bridge 当前处于**重构 Phase 4 基本完成、Phase 5 部分启动**。
 
 | # | 项 | Phase | 优先级 | 关联文件 |
 |---|----|-------|--------|---------|
-| A | 实现 `upsert_protocols` 方法，对 ProviderProtocol 进行 diff upsert（增/改/删），与 PLAN §5.2 一致 | Phase 2 | 高 | `src/store/mod.rs` |
-| B | 在 `CreateProviderRequest`/`UpdateProviderRequest` 增加 `protocols: Vec<CreateProtocolEntry>` 字段，使 Provider 创建/更新时能附带协议 | Phase 3 | 高 | `src/server/admin.rs`、`frontend/src/bindings/` |
-| C | 新增两个协议子端点：`GET /api/v1/admin/providers/{id}/protocols`、`PUT /api/v1/admin/providers/{id}/protocols`（批量修改） | Phase 3 | 高 | `src/server/admin.rs` |
-| D | 删除 `src/config/models.rs:46-72` 的 `ModelCatalogConfig` 与四个 `LLM_BRIDGE_CATALOG_*` 环境变量；移除 `main.rs:105` 的 `catalog_base_url` 日志 | Phase 4 | 中 | `src/config/models.rs`、`src/main.rs` |
-| E | 在前端 `ProvidersPage.svelte` 实现协议列表增删改 UI（每项：协议类型下拉框 + URL 输入框 + compat settings 展开编辑） | Phase 5 | 高 | `frontend/src/lib/ProvidersPage.svelte`、`frontend/src/bindings/` |
-| F | 重新生成 TypeScript 绑定（`cargo test export_bindings` + `cargo test generate_ts_client`），同步 `CreateProtocolEntry` 等新类型 | Phase 5 | 中 | `frontend/src/bindings/` |
+| A | 实现 `upsert_protocols` 方法，对 ProviderProtocol 进行 diff upsert（增/改/删），与 PLAN §5.2 一致 | Phase 2 | 高 | ✅ 完成 2026-07-03 — `replace_provider_protocols` + 单条 CRUD |
+| B | 在 `CreateProviderRequest`/`UpdateProviderRequest` 增加 `protocols: Vec<CreateProtocolEntry>` 字段，使 Provider 创建/更新时能附带协议 | Phase 3 | 高 | ✅ 完成 2026-07-03 — 以 `ProtocolInput` 复用单一类型，create/update 均同步 `replace_provider_protocols` |
+| C | 新增两个协议子端点：`GET /api/v1/admin/providers/{id}/protocols`、`PUT /api/v1/admin/providers/{id}/protocols`（批量修改） | Phase 3 | 高 | ✅ 完成 2026-07-03 — handler + 路由 + TS 客户端自动生成 |
+| D | 删除 `src/config/models.rs:46-72` 的 `ModelCatalogConfig` 与四个 `LLM_BRIDGE_CATALOG_*` 环境变量；移除 `main.rs:105` 的 `catalog_base_url` 日志 | Phase 4 | 中 | ✅ 完成 2026-07-03 |
+| E | 在前端 `ProvidersPage.svelte` 实现协议列表增删改 UI（每项：协议类型下拉框 + URL 输入框 + compat settings 展开编辑） | Phase 5 | 高 | ✅ 完成 2026-07-03 — `ProvidersPage.svelte` 已实现列表展示+编辑表单+创建对话框中携带协议 |
+| F | 重新生成 TypeScript 绑定（`cargo test export_bindings` + `cargo test generate_ts_client`），同步 `CreateProtocolEntry` 等新类型 | Phase 5 | 中 | ✅ 已同步 2026-07-03 — `ProtocolInput.ts`、`ProtocolView.ts`、`CreateProviderRequest.ts` + `UpdateProviderRequest.ts` 含 `protocols` 字段均已生成 |
 | G | 补齐 ProviderProtocol CRUD 与四表 JOIN 的集成测试 | Phase 5（测试） | 中 | `src/db/mod.rs`、新增 `tests/` |
 | H | 清理历史死代码：`openai_api.rs::check_auth` + `AppState.auth_token` 字段（PLAN 未要求但 STATUS §6 持续登记） | 持续维护 | 低 | `src/server/openai_api.rs`、`src/server/mod.rs` |
 

@@ -16,12 +16,32 @@
     DialogTitle,
     DialogTrigger,
   } from "$lib/components/ui/dialog/index.js";
-  import { Plus, Trash2, ChevronDown, ChevronRight, Globe } from "@lucide/svelte";
+  import { Plus, Trash2, ChevronDown, ChevronRight, Globe, Pencil, X, Cpu } from "@lucide/svelte";
   import type { ProviderResponse } from "$bindings/ProviderResponse";
   import type { ProviderModelResponse } from "$bindings/ProviderModelResponse";
   import type { ApiKeyEntry } from "$bindings/ApiKeyEntry";
+  import type { ProtocolInput } from "$bindings/ProtocolInput";
+  import type { ProtocolView } from "$bindings/ProtocolView";
+  import type { ProviderCompatibility } from "$bindings/ProviderCompatibility";
 
   const api = getApi();
+
+  // 协议枚举选项（用于下拉框）
+  const PROTOCOL_OPTIONS: { value: ProviderCompatibility; label: string }[] = [
+    { value: "openAiChatCompletions", label: "OpenAI Chat Completions" },
+    { value: "openAiResponses", label: "OpenAI Responses" },
+    { value: "anthropicMessages", label: "Anthropic Messages" },
+  ];
+
+  // 创建一个空的 ProtocolInput（用于新增）
+  function emptyProtocol(): ProtocolInput {
+    return {
+      protocol: "openAiChatCompletions",
+      baseUrl: "",
+      enabled: true,
+      priority: 100,
+    };
+  }
 
   // ── Provider list state ──
   let providers = $state<ProviderResponse[]>([]);
@@ -37,6 +57,18 @@
   let newDisplayName = $state("");
   let newApiKeyLabel = $state("");
   let newApiKeyValue = $state("");
+  // 创建时可选附带协议列表（PLAN §5.3 — 创建 Provider 时一并设协议）
+  let newProtocols = $state<ProtocolInput[]>([]);
+  // 创建对话框中当前编辑的协议表单（null 表示未在编辑）
+  let newProtocolDraft = $state<ProtocolInput | null>(null);
+
+  // ── Protocol edit dialog (existing providers) ──
+  // 当前正在编辑协议的 provider id；null 表示无编辑对话框打开
+  let protocolEditingId = $state<number | null>(null);
+  // 编辑对话框中当前编辑的协议表单
+  let protocolDraft = $state<ProtocolInput | null>(null);
+  // 编辑对话框中当前编辑的协议（用于在列表中替换）；null = 新增
+  let protocolDraftIndex = $state<number | null>(null);
 
   // ── Provider list actions ──
 
@@ -84,6 +116,7 @@
         providerId: newProviderId,
         displayName: newDisplayName || newProviderId,
         apiKeys: apiKeys,
+        protocols: newProtocols,
         enabled: true,
         priority: 100,
       });
@@ -92,10 +125,22 @@
       newDisplayName = "";
       newApiKeyLabel = "";
       newApiKeyValue = "";
+      newProtocols = [];
+      newProtocolDraft = null;
       loadProviders();
     } catch (e: any) {
       error = e.message;
     }
+  }
+
+  function resetCreateForm() {
+    newProviderId = "";
+    newDisplayName = "";
+    newApiKeyLabel = "";
+    newApiKeyValue = "";
+    newProtocols = [];
+    newProtocolDraft = null;
+    error = "";
   }
 
   // ── Delete confirmation ──
@@ -105,6 +150,15 @@
   async function handleToggle(p: ProviderResponse) {
     error = "";
     try {
+      // 将现有 protocols 转回 ProtocolInput 形式（不带 id 时后端会按 replaced 处理；带 id 时保持更新）
+      const protocols: ProtocolInput[] = p.protocols.map((proto) => ({
+        id: proto.id,
+        protocol: proto.protocol,
+        baseUrl: proto.baseUrl,
+        compatSettings: proto.compatSettings,
+        enabled: proto.enabled,
+        priority: proto.priority,
+      }));
       await api.admin.updateProvider(String(p.id), {
         displayName: p.displayName,
         enabled: !p.enabled,
@@ -114,11 +168,123 @@
           key: "",
           weight: k.weight,
         })),
+        protocols,
       });
       loadProviders();
     } catch (e: any) {
       error = e.message;
     }
+  }
+
+  // ── Protocol management (existing providers) ──
+  //
+  // 协议编辑采用「联调 PUT /protocols」语义：在客户端维护完整列表，
+  // 用户每次保存单个协议时调用 replaceProviderProtocols 全量替换。
+  // 后端做 diff，未在列表中出现的协议会被删除。
+
+  function openProtocolEditor(provider: ProviderResponse, index?: number) {
+    if (index !== undefined && provider.protocols[index]) {
+      // 编辑现有
+      const src = provider.protocols[index];
+      protocolDraft = {
+        id: src.id,
+        protocol: src.protocol,
+        baseUrl: src.baseUrl,
+        compatSettings: src.compatSettings,
+        enabled: src.enabled,
+        priority: src.priority,
+      };
+      protocolDraftIndex = index;
+    } else {
+      // 新建
+      protocolDraft = emptyProtocol();
+      protocolDraftIndex = null;
+    }
+    protocolEditingId = provider.id;
+    error = "";
+  }
+
+  function cancelProtocolEdit() {
+    protocolDraft = null;
+    protocolDraftIndex = null;
+    protocolEditingId = null;
+  }
+
+  async function saveProtocolDraft(provider: ProviderResponse) {
+    if (!protocolDraft) return;
+    if (!protocolDraft.baseUrl.trim()) {
+      error = "协议端点 URL 必填";
+      return;
+    }
+    error = "";
+    // 构建目标列表：从现有 protocols 复制，替换 draftIndex 或追加
+    const list: ProtocolInput[] = provider.protocols.map((p) => ({
+      id: p.id,
+      protocol: p.protocol,
+      baseUrl: p.baseUrl,
+      compatSettings: p.compatSettings,
+      enabled: p.enabled,
+      priority: p.priority,
+    }));
+    if (protocolDraftIndex !== null && list[protocolDraftIndex]) {
+      list[protocolDraftIndex] = protocolDraft;
+    } else {
+      list.push(protocolDraft);
+    }
+    try {
+      await api.admin.replaceProviderProtocols(String(provider.id), list);
+      cancelProtocolEdit();
+      loadProviders();
+    } catch (e: any) {
+      error = e.message;
+    }
+  }
+
+  async function removeProtocol(provider: ProviderResponse, index: number) {
+    error = "";
+    const list: ProtocolInput[] = provider.protocols
+      .filter((_, i) => i !== index)
+      .map((p) => ({
+        id: p.id,
+        protocol: p.protocol,
+        baseUrl: p.baseUrl,
+        compatSettings: p.compatSettings,
+        enabled: p.enabled,
+        priority: p.priority,
+      }));
+    try {
+      await api.admin.replaceProviderProtocols(String(provider.id), list);
+      loadProviders();
+    } catch (e: any) {
+      error = e.message;
+    }
+  }
+
+  // ── Protocol draft helpers for create dialog ──
+  //
+  // newProtocols 是 client-side 临时数组，保存到 Provider 时一起随请求带过去。
+
+  function addNewProtocolToCreate() {
+    newProtocolDraft = emptyProtocol();
+  }
+
+  function confirmNewProtocolToCreate() {
+    if (!newProtocolDraft) return;
+    if (!newProtocolDraft.baseUrl.trim()) {
+      error = "协议端点 URL 必填";
+      return;
+    }
+    newProtocols = [...newProtocols, newProtocolDraft];
+    newProtocolDraft = null;
+    error = "";
+  }
+
+  function cancelNewProtocolToCreate() {
+    newProtocolDraft = null;
+  }
+
+  function removeNewProtocolFromCreate(index: number) {
+    newProtocols = newProtocols.filter((_, i) => i !== index);
   }
 
   function openDeleteDialog(type: "provider" | "model", providerId: number, providerName: string, modelId?: number, modelName?: string) {
@@ -156,12 +322,12 @@
         providerModelId: m.providerModelId,
         protocolId: m.protocolId,
         displayName: m.displayName,
-        maxInputTokens: m.maxInputTokens,
-        maxOutputTokens: m.maxOutputTokens,
-        toolCalling: m.toolCalling,
-        vision: m.vision,
-        thinking: m.thinking,
-        adaptiveThinking: m.adaptiveThinking,
+        maxInputTokens: m.maxInputTokens ?? 0,
+        maxOutputTokens: m.maxOutputTokens ?? 0,
+        toolCalling: m.toolCalling ?? false,
+        vision: m.vision ?? false,
+        thinking: m.thinking ?? false,
+        adaptiveThinking: m.adaptiveThinking ?? false,
         inputPricePer1m: m.inputPricePer1m,
         outputPricePer1m: m.outputPricePer1m,
         cacheReadPricePer1m: m.cacheReadPricePer1m,
@@ -203,11 +369,11 @@
     </div>
     <div class="flex items-center gap-2">
       <!-- Add custom provider -->
-      <Dialog open={showCreate} onOpenChange={(v) => (showCreate = v)}>
+      <Dialog open={showCreate} onOpenChange={(v) => { if (!v) resetCreateForm(); showCreate = v; }}>
         <DialogTrigger asChild>
           <Button
             class="bg-[#22C55E] hover:bg-[#16A34A] text-black font-medium gap-2 cursor-pointer"
-            onclick={() => (showCreate = true)}
+            onclick={() => { resetCreateForm(); showCreate = true; }}
           >
             <Plus class="h-4 w-4" />
             添加自定义提供者
@@ -217,7 +383,7 @@
           <DialogHeader>
             <DialogTitle class="font-mono">添加自定义提供者</DialogTitle>
           </DialogHeader>
-          <div class="flex flex-col gap-3">
+          <div class="flex flex-col gap-3 max-h-[80vh] overflow-y-auto pr-1">
             <div class="flex flex-col gap-2">
               <Label for="pid">提供者 ID</Label>
               <Input id="pid" placeholder="openai" bind:value={newProviderId} />
@@ -239,6 +405,129 @@
                 bind:value={newApiKeyValue}
               />
             </div>
+
+            <!-- 协议列表（PLAN §3.3 — 创建 Provider 时一并设协议）-->
+            <div class="flex flex-col gap-2 pt-2 border-t border-border mt-1">
+              <div class="flex items-center justify-between">
+                <Label>协议配置（可选）</Label>
+                {#if !newProtocolDraft}
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    class="h-7 gap-1 cursor-pointer"
+                    onclick={addNewProtocolToCreate}
+                  >
+                    <Plus class="h-3 w-3" />
+                    添加协议
+                  </Button>
+                {/if}
+              </div>
+              {#if newProtocols.length === 0 && !newProtocolDraft}
+                <p class="text-xs text-muted-foreground">
+                  创建后可再补；空配置启动也支持。
+                </p>
+              {/if}
+              {#each newProtocols as p, i}
+                <div class="flex items-center justify-between rounded-md border border-border bg-muted/30 px-2 py-1.5 text-xs">
+                  <div class="flex flex-col min-w-0">
+                    <span class="font-mono">{p.protocol}</span>
+                    <span class="text-muted-foreground truncate">{p.baseUrl}</span>
+                  </div>
+                  <Button
+                    type="button"
+                    size="icon"
+                    variant="ghost"
+                    class="h-6 w-6 text-muted-foreground hover:text-destructive cursor-pointer"
+                    onclick={() => removeNewProtocolFromCreate(i)}
+                  >
+                    <Trash2 class="h-3 w-3" />
+                  </Button>
+                </div>
+              {/each}
+              {#if newProtocolDraft}
+                {@const draft = newProtocolDraft}
+                <div class="rounded-md border border-border bg-card p-2 flex flex-col gap-2">
+                  <div class="flex items-center justify-between">
+                    <span class="text-xs font-medium">新建协议</span>
+                    <Button
+                      type="button"
+                      size="icon"
+                      variant="ghost"
+                      class="h-6 w-6 cursor-pointer"
+                      onclick={cancelNewProtocolToCreate}
+                    >
+                      <X class="h-3 w-3" />
+                    </Button>
+                  </div>
+                  <div class="flex flex-col gap-1">
+                    <Label for="np-proto" class="text-xs">协议类型</Label>
+                    <select
+                      id="np-proto"
+                      class="h-9 rounded-md border border-input bg-background px-2 text-sm cursor-pointer"
+                      bind:value={draft.protocol}
+                    >
+                      {#each PROTOCOL_OPTIONS as opt}
+                        <option value={opt.value}>{opt.label}</option>
+                      {/each}
+                    </select>
+                  </div>
+                  <div class="flex flex-col gap-1">
+                    <Label for="np-url" class="text-xs">端点 URL</Label>
+                    <Input
+                      id="np-url"
+                      placeholder="https://api.openai.com/v1"
+                      bind:value={draft.baseUrl}
+                      class="h-9 text-sm"
+                    />
+                  </div>
+                  <div class="grid grid-cols-2 gap-2">
+                    <div class="flex flex-col gap-1">
+                      <Label for="np-pri" class="text-xs">优先级</Label>
+                      <Input
+                        id="np-pri"
+                        type="number"
+                        bind:value={draft.priority}
+                        class="h-9 text-sm"
+                      />
+                    </div>
+                    <div class="flex flex-col gap-1">
+                      <Label for="np-cs" class="text-xs">compat settings</Label>
+                      <Input
+                        id="np-cs"
+                        placeholder='compat JSON, 可选'
+                        value={draft.compatSettings ?? ""}
+                        oninput={(e) => (draft.compatSettings = (e.target as HTMLInputElement).value || null)}
+                        class="h-9 text-sm font-mono"
+                      />
+                    </div>
+                  </div>
+                  <label class="flex items-center gap-2 text-xs cursor-pointer">
+                    <Checkbox checked={draft.enabled} onCheckedChange={(v) => (draft.enabled = v)} />
+                    启用
+                  </label>
+                  <div class="flex gap-2 pt-1">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      class="flex-1 cursor-pointer"
+                      onclick={cancelNewProtocolToCreate}
+                    >
+                      取消
+                    </Button>
+                    <Button
+                      type="button"
+                      class="flex-1 bg-[#22C55E] hover:bg-[#16A34A] text-black cursor-pointer"
+                      onclick={confirmNewProtocolToCreate}
+                      disabled={!draft.baseUrl.trim()}
+                    >
+                      加入列表
+                    </Button>
+                  </div>
+                </div>
+              {/if}
+            </div>
+
             <Button
               class="bg-[#22C55E] hover:bg-[#16A34A] text-black font-medium cursor-pointer"
               onclick={handleCreate}
@@ -297,6 +586,7 @@
               </div>
               <div class="flex gap-3 text-xs text-muted-foreground mt-0.5">
                 <span>{p.displayName}</span>
+                <span>{p.protocols.length} 个协议</span>
                 <span>{p.modelCount} 个模型</span>
                 <span>优先级: {p.priority}</span>
               </div>
@@ -320,67 +610,216 @@
             </div>
           </button>
           {#if expandedId === p.id}
-            <div class="border-t border-border px-4 py-3">
-              {#if modelsLoading.has(p.id)}
-                <div class="flex items-center gap-2 text-sm text-muted-foreground py-2">
-                  <Spinner class="h-4 w-4" />
-                  加载模型...
+            <div class="border-t border-border px-4 py-3 flex flex-col gap-4">
+              <!-- 协议配置区块 -->
+              <div class="flex flex-col gap-2">
+                <div class="flex items-center justify-between">
+                  <span class="text-xs font-medium text-muted-foreground uppercase tracking-wide">协议</span>
+                  {#if protocolEditingId !== p.id}
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      class="h-7 gap-1 cursor-pointer"
+                      onclick={() => openProtocolEditor(p)}
+                    >
+                      <Plus class="h-3 w-3" />
+                      添加协议
+                    </Button>
+                  {/if}
                 </div>
-              {:else if (modelsCache.get(p.id) || []).length === 0}
-                <div class="flex items-center gap-2 text-sm text-muted-foreground py-2">
-                  <Cpu class="h-4 w-4" />
-                  暂无模型
-                </div>
-              {:else}
-                <div class="flex flex-col gap-1">
-                  {#each modelsCache.get(p.id) || [] as m}
-                    <div class="flex items-center justify-between py-1.5 text-sm">
-                      <div class="flex items-center gap-2 min-w-0">
-                        <Badge variant="outline" class="text-xs font-mono shrink-0">
-                          {m.compatibility}
-                        </Badge>
-                        <span class="font-mono text-foreground truncate">{m.modelName}</span>
-                        <span class="text-muted-foreground text-xs shrink-0"
-                          >→ {m.providerModelId}</span
-                        >
-                      </div>
-                      <div class="flex items-center gap-1 shrink-0">
-                        <!-- svelte-ignore a11y_no_static_element_interactions -->
-                        <span
-                          onclick={() => handleToggleModel(p.id, m)}
-                          onkeydown={(e) => e.key === 'Enter' && handleToggleModel(p.id, m)}
-                          class="cursor-pointer inline-flex items-center"
-                          role="button"
-                          tabindex="0"
-                          aria-label={m.enabled ? "禁用模型" : "启用模型"}
-                        >
-                          <Badge
-                            variant={m.enabled ? "default" : "secondary"}
-                            class="text-xs pointer-events-none"
-                          >
-                            {m.enabled ? "启用" : "禁用"}
+
+                {#if p.protocols.length === 0 && protocolEditingId !== p.id}
+                  <p class="text-xs text-muted-foreground italic py-1">
+                    暂无协议 — 该提供者暂不可用，请先添加至少一个协议
+                  </p>
+                {:else}
+                  <div class="flex flex-col gap-1.5">
+                    {#each p.protocols as proto, i}
+                      <div class="flex items-center justify-between rounded-md border border-border bg-muted/30 px-3 py-2 text-sm">
+                        <div class="flex items-center gap-2 min-w-0">
+                          <Badge variant="outline" class="text-xs font-mono shrink-0">
+                            {proto.protocol}
                           </Badge>
-                        </span>
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          class="h-6 w-6 text-muted-foreground hover:text-destructive cursor-pointer"
-                          onclick={() =>
-                            openDeleteDialog(
-                              "model",
-                              p.id,
-                              p.displayName || p.providerId,
-                              m.id,
-                              m.modelName,
-                            )}
-                        >
-                          <Trash2 class="h-3 w-3" />
-                        </Button>
+                          <span class="text-muted-foreground text-xs shrink-0">P{proto.priority}</span>
+                          <span class="font-mono text-foreground text-xs truncate">{proto.baseUrl}</span>
+                          {#if !proto.enabled}
+                            <Badge variant="secondary" class="text-xs">禁用</Badge>
+                          {/if}
+                        </div>
+                        <div class="flex items-center gap-1 shrink-0">
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            class="h-6 w-6 text-muted-foreground hover:text-foreground cursor-pointer"
+                            onclick={() => openProtocolEditor(p, i)}
+                            aria-label="编辑协议"
+                          >
+                            <Pencil class="h-3 w-3" />
+                          </Button>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            class="h-6 w-6 text-muted-foreground hover:text-destructive cursor-pointer"
+                            onclick={() => removeProtocol(p, i)}
+                            aria-label="删除协议"
+                          >
+                            <Trash2 class="h-3 w-3" />
+                          </Button>
+                        </div>
+                      </div>
+                    {/each}
+                  </div>
+                {/if}
+
+                <!-- 单个协议编辑表单（增/改）-->
+                {#if protocolEditingId === p.id && protocolDraft}
+                  {@const draft = protocolDraft}
+                  <div class="rounded-md border border-border bg-card p-3 flex flex-col gap-2 mt-1">
+                    <div class="flex items-center justify-between">
+                      <span class="text-xs font-medium">
+                        {protocolDraftIndex !== null ? "编辑协议" : "新建协议"}
+                      </span>
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        class="h-6 w-6 cursor-pointer"
+                        onclick={cancelProtocolEdit}
+                        aria-label="取消"
+                      >
+                        <X class="h-3 w-3" />
+                      </Button>
+                    </div>
+                    <div class="flex flex-col gap-1">
+                      <Label for="ep-proto" class="text-xs">协议类型</Label>
+                      <select
+                        id="ep-proto"
+                        class="h-9 rounded-md border border-input bg-background px-2 text-sm cursor-pointer"
+                        bind:value={draft.protocol}
+                      >
+                        {#each PROTOCOL_OPTIONS as opt}
+                          <option value={opt.value}>{opt.label}</option>
+                        {/each}
+                      </select>
+                    </div>
+                    <div class="flex flex-col gap-1">
+                      <Label for="ep-url" class="text-xs">端点 URL</Label>
+                      <Input
+                        id="ep-url"
+                        placeholder="https://api.openai.com/v1"
+                        bind:value={draft.baseUrl}
+                        class="h-9 text-sm"
+                      />
+                    </div>
+                    <div class="grid grid-cols-2 gap-2">
+                      <div class="flex flex-col gap-1">
+                        <Label for="ep-pri" class="text-xs">优先级</Label>
+                        <Input
+                          id="ep-pri"
+                          type="number"
+                          bind:value={draft.priority}
+                          class="h-9 text-sm"
+                        />
+                      </div>
+                      <div class="flex flex-col gap-1">
+                        <Label for="ep-cs" class="text-xs">compat settings</Label>
+                        <Input
+                          id="ep-cs"
+                          placeholder='compat JSON, 可选'
+                          value={draft.compatSettings ?? ""}
+                          oninput={(e) => (draft.compatSettings = (e.target as HTMLInputElement).value || null)}
+                          class="h-9 text-sm font-mono"
+                        />
                       </div>
                     </div>
-                  {/each}
-                </div>
-              {/if}
+                    <label class="flex items-center gap-2 text-xs cursor-pointer">
+                      <Checkbox checked={draft.enabled} onCheckedChange={(v) => (draft.enabled = v)} />
+                      启用
+                    </label>
+                    <div class="flex gap-2 pt-1">
+                      <Button
+                        variant="outline"
+                        class="flex-1 cursor-pointer"
+                        onclick={cancelProtocolEdit}
+                      >
+                        取消
+                      </Button>
+                      <Button
+                        class="flex-1 bg-[#22C55E] hover:bg-[#16A34A] text-black cursor-pointer"
+                        onclick={() => saveProtocolDraft(p)}
+                        disabled={!draft.baseUrl.trim()}
+                      >
+                        保存
+                      </Button>
+                    </div>
+                  </div>
+                {/if}
+              </div>
+
+              <!-- 模型列表区块 -->
+              <div class="flex flex-col gap-2">
+                <span class="text-xs font-medium text-muted-foreground uppercase tracking-wide">模型</span>
+                {#if modelsLoading.has(p.id)}
+                  <div class="flex items-center gap-2 text-sm text-muted-foreground py-2">
+                    <Spinner class="h-4 w-4" />
+                    加载模型...
+                  </div>
+                {:else if (modelsCache.get(p.id) || []).length === 0}
+                  <div class="flex items-center gap-2 text-sm text-muted-foreground py-2">
+                    <Cpu class="h-4 w-4" />
+                    暂无模型
+                  </div>
+                {:else}
+                  <div class="flex flex-col gap-1">
+                    {#each modelsCache.get(p.id) || [] as m}
+                      {@const linkedProto = p.protocols.find((pr) => pr.id === m.protocolId)}
+                      <div class="flex items-center justify-between py-1.5 text-sm">
+                        <div class="flex items-center gap-2 min-w-0">
+                          <Badge variant="outline" class="text-xs font-mono shrink-0">
+                            {linkedProto ? linkedProto.protocol : `#${m.protocolId}`}
+                          </Badge>
+                          <span class="font-mono text-foreground truncate">{m.modelName}</span>
+                          <span class="text-muted-foreground text-xs shrink-0"
+                            >→ {m.providerModelId}</span
+                          >
+                        </div>
+                        <div class="flex items-center gap-1 shrink-0">
+                          <!-- svelte-ignore a11y_no_static_element_interactions -->
+                          <span
+                            onclick={() => handleToggleModel(p.id, m)}
+                            onkeydown={(e) => e.key === 'Enter' && handleToggleModel(p.id, m)}
+                            class="cursor-pointer inline-flex items-center"
+                            role="button"
+                            tabindex="0"
+                            aria-label={m.enabled ? "禁用模型" : "启用模型"}
+                          >
+                            <Badge
+                              variant={m.enabled ? "default" : "secondary"}
+                              class="text-xs pointer-events-none"
+                            >
+                              {m.enabled ? "启用" : "禁用"}
+                            </Badge>
+                          </span>
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            class="h-6 w-6 text-muted-foreground hover:text-destructive cursor-pointer"
+                            onclick={() =>
+                              openDeleteDialog(
+                                "model",
+                                p.id,
+                                p.displayName || p.providerId,
+                                m.id,
+                                m.modelName,
+                              )}
+                          >
+                            <Trash2 class="h-3 w-3" />
+                          </Button>
+                        </div>
+                      </div>
+                    {/each}
+                  </div>
+                {/if}
+              </div>
             </div>
           {/if}
         </div>

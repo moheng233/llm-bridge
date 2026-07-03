@@ -5,14 +5,16 @@
   import { Button } from "$lib/components/ui/button/index.js";
   import { Spinner } from "$lib/components/ui/spinner/index.js";
   import { auth } from "$lib/stores/auth.svelte";
+  import { theme } from "$lib/stores/theme.svelte";
   import ModelsPage from "./lib/ModelsPage.svelte";
   import TokensPage from "./lib/TokensPage.svelte";
   import ProvidersPage from "./lib/ProvidersPage.svelte";
   import UsersPage from "./lib/UsersPage.svelte";
   import LoginPage from "./lib/LoginPage.svelte";
-  import { Cpu, Key, Globe, Users, LogOut } from "@lucide/svelte";
+  import AdminModelsPage from "./lib/AdminModelsPage.svelte";
+  import { Cpu, Key, Globe, Users, LogOut, Sun, Moon, Boxes } from "@lucide/svelte";
 
-  type PagePath = "/models" | "/tokens" | "/providers" | "/users";
+  type PagePath = "/models" | "/tokens" | "/providers" | "/users" | "/admin/models";
 
   const routes = {
     "/": ModelsPage,
@@ -20,6 +22,7 @@
     "/tokens": TokensPage,
     "/providers": ProvidersPage,
     "/users": UsersPage,
+    "/admin/models": AdminModelsPage,
     "/login": LoginPage,
   };
 
@@ -29,6 +32,7 @@
     if (path === "/tokens") return "/tokens";
     if (path === "/providers") return "/providers";
     if (path === "/users") return "/users";
+    if (path === "/admin/models") return "/admin/models";
     return "/models";
   };
 
@@ -49,6 +53,7 @@
   ];
 
   const adminNavItems = [
+    { path: "/admin/models" as const, label: "模型管理", icon: Boxes },
     { path: "/providers" as const, label: "提供者管理", icon: Globe },
     { path: "/users" as const, label: "用户管理", icon: Users },
   ];
@@ -135,6 +140,24 @@
               <span class="font-mono text-foreground">{auth.user.name}</span>
             </div>
           {/if}
+          <Button
+            variant="ghost"
+            size="sm"
+            class="justify-start gap-2 text-muted-foreground hover:text-foreground cursor-pointer group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-1"
+            onclick={() => theme.toggle()}
+            aria-label={theme.isDark ? "切换到白天模式" : "切换到黑夜模式"}
+            title={theme.isDark ? "切换到白天模式" : "切换到黑夜模式"}
+          >
+            {#if theme.isDark}
+              <Sun class="h-4 w-4" />
+            {:else}
+              <Moon class="h-4 w-4" />
+            {/if}
+            <span
+              class="overflow-hidden whitespace-nowrap transition-[opacity,max-width] duration-200 ease-linear group-data-[state=collapsed]:opacity-0 group-data-[state=collapsed]:max-w-0 group-data-[state=expanded]:opacity-100 group-data-[state=expanded]:max-w-[200px]"
+              >{theme.isDark ? "白天模式" : "黑夜模式"}</span
+            >
+          </Button>
           <Button
             variant="ghost"
             size="sm"
