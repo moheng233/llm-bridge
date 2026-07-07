@@ -6,6 +6,11 @@
 //! Auth routes are unified: the same endpoints work with or without OIDC.
 //! Handlers check `AppState.auth` internally to decide behavior.
 
+// Handler 统一返回 `Result<T, axum::Response>`(axum 官方惯用法)。
+// `Response<Body>` 体积 ≥ 128 字节,会触发 `clippy::result_large_err`。
+// 此模式经社区广泛验证,在此模块级别显式 allow。
+#![allow(clippy::result_large_err)]
+
 pub mod admin;
 pub mod auth;
 pub mod openai_api;
