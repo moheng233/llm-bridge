@@ -23,6 +23,7 @@
   import type { ProtocolInput } from "$bindings/ProtocolInput";
   import type { ProtocolView } from "$bindings/ProtocolView";
   import type { ProviderCompatibility } from "$bindings/ProviderCompatibility";
+  import type { ProviderQuotaAdapter } from "$bindings/ProviderQuotaAdapter";
 
   const api = getApi();
 
@@ -33,6 +34,28 @@
     { value: "anthropicMessages", label: "Anthropic Messages" },
   ];
 
+  // 额度适配器下拉选项（select value 用字符串，`"none"` 哨兵表示不配置）。
+  const QUOTA_ADAPTER_OPTIONS: { value: string; label: string }[] = [
+    { value: "none", label: "不查询上游额度" },
+    { value: "umans", label: "Umans" },
+  ];
+
+  // 将适配器下拉的字符串值映射为 ProviderQuotaAdapter | null
+  function quotaAdapterFromSelect(v: string): ProviderQuotaAdapter | null {
+    if (v === "umans") return "umans";
+    return null;
+  }
+
+  // 反向：ProviderQuotaAdapter | null → 下拉字符串值
+  function quotaAdapterToSelect(a: ProviderQuotaAdapter | null): string {
+    return a ?? "none";
+  }
+
+  // 额度适配器枚举 → 中文展示名
+  const QUOTA_ADAPTER_LABELS: Record<string, string> = {
+    umans: "Umans",
+  };
+
   // 创建一个空的 ProtocolInput（用于新增）
   function emptyProtocol(): ProtocolInput {
     return {
@@ -41,6 +64,19 @@
       enabled: true,
       priority: 100,
     };
+  }
+
+  // 将适配器配置字段拼接为后端期望的 JSON 字符串。
+  // 三个字段都为空时返回 null，表示该 Provider 不带适配器配置（使用内置默认值）。
+  function buildQuotaConfigString(
+    baseUrl: string,
+    keyLabelFilter: string,
+  ): string | null {
+    const cfg: Record<string, string> = {};
+    if (baseUrl.trim()) cfg.baseUrl = baseUrl.trim();
+    if (keyLabelFilter.trim()) cfg.keyLabelFilter = keyLabelFilter.trim();
+    if (Object.keys(cfg).length === 0) return null;
+    return JSON.stringify(cfg);
   }
 
   // ── Provider list state ──
@@ -61,6 +97,10 @@
   let newProtocols = $state<ProtocolInput[]>([]);
   // 创建对话框中当前编辑的协议表单（null 表示未在编辑）
   let newProtocolDraft = $state<ProtocolInput | null>(null);
+  // ── Quota adapter (创建对话框) ──
+  let newQuotaAdapter = $state<ProviderQuotaAdapter | null>(null);
+  let newQuotaBaseUrl = $state("");
+  let newQuotaKeyLabelFilter = $state("");
 
   // ── Protocol edit dialog (existing providers) ──
   // 当前正在编辑协议的 provider id；null 表示无编辑对话框打开
@@ -119,6 +159,8 @@
         protocols: newProtocols,
         enabled: true,
         priority: 100,
+        quotaAdapter: newQuotaAdapter,
+        quotaAdapterConfig: buildQuotaConfigString(newQuotaBaseUrl, newQuotaKeyLabelFilter),
       });
       showCreate = false;
       newProviderId = "";
@@ -127,6 +169,9 @@
       newApiKeyValue = "";
       newProtocols = [];
       newProtocolDraft = null;
+      newQuotaAdapter = null;
+      newQuotaBaseUrl = "";
+      newQuotaKeyLabelFilter = "";
       loadProviders();
     } catch (e: any) {
       error = e.message;
@@ -140,6 +185,9 @@
     newApiKeyValue = "";
     newProtocols = [];
     newProtocolDraft = null;
+    newQuotaAdapter = null;
+    newQuotaBaseUrl = "";
+    newQuotaKeyLabelFilter = "";
     error = "";
   }
 
@@ -169,6 +217,8 @@
           weight: k.weight,
         })),
         protocols,
+        quotaAdapter: p.quotaAdapter,
+        quotaAdapterConfig: p.quotaAdapterConfig,
       });
       loadProviders();
     } catch (e: any) {
@@ -379,35 +429,80 @@
             添加自定义提供者
           </Button>
         </DialogTrigger>
-        <DialogContent class="sm:max-w-md">
+        <DialogContent class="sm:max-w-4xl">
           <DialogHeader>
             <DialogTitle class="font-mono">添加自定义提供者</DialogTitle>
           </DialogHeader>
-          <div class="flex flex-col gap-3 max-h-[80vh] overflow-y-auto pr-1">
-            <div class="flex flex-col gap-2">
-              <Label for="pid">提供者 ID</Label>
-              <Input id="pid" placeholder="openai" bind:value={newProviderId} />
-            </div>
-            <div class="flex flex-col gap-2">
-              <Label for="dn">显示名称</Label>
-              <Input id="dn" placeholder="OpenAI" bind:value={newDisplayName} />
-            </div>
-            <div class="flex flex-col gap-2">
-              <Label for="kl">API Key 标签</Label>
-              <Input id="kl" placeholder="default" bind:value={newApiKeyLabel} />
-            </div>
-            <div class="flex flex-col gap-2">
-              <Label for="kv">API Key</Label>
-              <Input
-                id="kv"
-                type="password"
-                placeholder="sk-..."
-                bind:value={newApiKeyValue}
-              />
+          <div class="grid grid-cols-1 gap-x-5 gap-y-3 max-h-[80vh] overflow-y-auto pr-1 lg:grid-cols-12">
+            <!-- 左列：基本属性 + 额度适配器 -->
+            <div class="flex flex-col gap-3 lg:col-span-7">
+              <div class="flex flex-col gap-2">
+                <Label for="pid">提供者 ID</Label>
+                <Input id="pid" placeholder="openai" bind:value={newProviderId} />
+              </div>
+              <div class="flex flex-col gap-2">
+                <Label for="dn">显示名称</Label>
+                <Input id="dn" placeholder="OpenAI" bind:value={newDisplayName} />
+              </div>
+              <div class="grid grid-cols-2 gap-3">
+                <div class="flex flex-col gap-2">
+                  <Label for="kl">API Key 标签</Label>
+                  <Input id="kl" placeholder="default" bind:value={newApiKeyLabel} />
+                </div>
+                <div class="flex flex-col gap-2">
+                  <Label for="kv">API Key</Label>
+                  <Input
+                    id="kv"
+                    type="password"
+                    placeholder="sk-..."
+                    bind:value={newApiKeyValue}
+                  />
+                </div>
+              </div>
+
+              <!-- 额度适配器配置（可选）-->
+              <div class="flex flex-col gap-2 pt-2 border-t border-border mt-1">
+                <Label>额度适配器（可选）</Label>
+                <p class="text-xs text-muted-foreground -mt-1">
+                  声明该提供者使用的上游额度查询协议，用于在后台实时查询每个 API Key 的剩余额度。
+                </p>
+                <select
+                  class="h-9 rounded-md border border-input bg-background px-2 text-sm cursor-pointer"
+                  value={quotaAdapterToSelect(newQuotaAdapter)}
+                  onchange={(e) => (newQuotaAdapter = quotaAdapterFromSelect((e.target as HTMLSelectElement).value))}
+                >
+                  {#each QUOTA_ADAPTER_OPTIONS as opt}
+                    <option value={opt.value}>{opt.label}</option>
+                  {/each}
+                </select>
+                {#if newQuotaAdapter}
+                  <div class="flex flex-col gap-2 pl-2 border-l-2 border-border">
+                    <div class="flex flex-col gap-1">
+                      <Label for="qa-url" class="text-xs">覆盖端点 URL（可选）</Label>
+                      <Input
+                        id="qa-url"
+                        placeholder="留空使用适配器默认值，如 https://api.code.umans.ai/v1/usage"
+                        bind:value={newQuotaBaseUrl}
+                        class="h-9 text-sm font-mono"
+                      />
+                    </div>
+                    <div class="flex flex-col gap-1">
+                      <Label for="qa-klf" class="text-xs">仅查询该 label 的 Key（可选）</Label>
+                      <Input
+                        id="qa-klf"
+                        placeholder="留空 = 查询全部 Key"
+                        bind:value={newQuotaKeyLabelFilter}
+                        class="h-9 text-sm"
+                      />
+                    </div>
+                  </div>
+                {/if}
+              </div>
             </div>
 
+            <!-- 右列：协议配置 -->
             <!-- 协议列表（PLAN §3.3 — 创建 Provider 时一并设协议）-->
-            <div class="flex flex-col gap-2 pt-2 border-t border-border mt-1">
+            <div class="flex flex-col gap-2 pt-2 border-t border-border mt-1 lg:col-span-5 lg:pt-0 lg:border-t-0 lg:border-l lg:pl-5 lg:mt-0">
               <div class="flex items-center justify-between">
                 <Label>协议配置（可选）</Label>
                 {#if !newProtocolDraft}
@@ -481,7 +576,7 @@
                       class="h-9 text-sm"
                     />
                   </div>
-                  <div class="grid grid-cols-2 gap-2">
+                  <div class="grid grid-cols-1 gap-2">
                     <div class="flex flex-col gap-1">
                       <Label for="np-pri" class="text-xs">优先级</Label>
                       <Input
@@ -529,7 +624,7 @@
             </div>
 
             <Button
-              class="bg-[#22C55E] hover:bg-[#16A34A] text-black font-medium cursor-pointer"
+              class="bg-[#22C55E] hover:bg-[#16A34A] text-black font-medium cursor-pointer lg:col-span-12"
               onclick={handleCreate}
               disabled={!newProviderId.trim()}
             >
@@ -589,6 +684,11 @@
                 <span>{p.protocols.length} 个协议</span>
                 <span>{p.modelCount} 个模型</span>
                 <span>优先级: {p.priority}</span>
+                {#if p.quotaAdapter}
+                  <span class="text-foreground/70">
+                    额度适配器: {QUOTA_ADAPTER_LABELS[p.quotaAdapter] ?? p.quotaAdapter}
+                  </span>
+                {/if}
               </div>
             </div>
             <div class="flex items-center gap-1" role="toolbar">
@@ -611,6 +711,29 @@
           </button>
           {#if expandedId === p.id}
             <div class="border-t border-border px-4 py-3 flex flex-col gap-4">
+              <!-- 额度适配器区块 -->
+              <div class="flex flex-col gap-1.5">
+                <span class="text-xs font-medium text-muted-foreground uppercase tracking-wide">额度适配器</span>
+                {#if p.quotaAdapter}
+                  <div class="rounded-md border border-border bg-muted/30 px-3 py-2 text-sm flex flex-col gap-1">
+                    <div class="flex items-center gap-2">
+                      <Badge variant="outline" class="text-xs font-mono shrink-0">
+                        {QUOTA_ADAPTER_LABELS[p.quotaAdapter] ?? p.quotaAdapter}
+                      </Badge>
+                    </div>
+                    {#if p.quotaAdapterConfig}
+                      <pre class="text-xs font-mono text-muted-foreground whitespace-pre-wrap break-all m-0">{p.quotaAdapterConfig}</pre>
+                    {:else}
+                      <span class="text-xs text-muted-foreground italic">使用适配器默认配置</span>
+                    {/if}
+                  </div>
+                {:else}
+                  <p class="text-xs text-muted-foreground italic">
+                    未配置 — 该提供者不查询上游额度。如需查询，请在创建时指定额度适配器。
+                  </p>
+                {/if}
+              </div>
+
               <!-- 协议配置区块 -->
               <div class="flex flex-col gap-2">
                 <div class="flex items-center justify-between">
