@@ -21,7 +21,7 @@
 use jiff::Timestamp;
 use toasty::schema::Deferred;
 
-use crate::config::models::{ApiKeyEntry, ProviderCompatibility};
+use crate::config::models::{ApiKeyEntry, ProviderCompatibility, ProviderQuotaAdapter};
 
 /// 用户角色。
 #[derive(Debug, Clone, PartialEq, Eq, toasty::Embed)]
@@ -217,6 +217,15 @@ pub struct Provider {
     pub enabled: bool,
     /// 优先级（数字越小优先级越高）
     pub priority: i64,
+
+    /// 额度适配器类型（NULL = 不查询上游额度）。
+    ///
+    /// 声明该 Provider 使用哪种上游额度查询协议（如 umans）。
+    /// 启用后可通过 Admin API `GET /api/v1/admin/providers/{id}/quota`
+    /// 实时查询每个 API Key 的剩余额度。
+    pub quota_adapter: Option<ProviderQuotaAdapter>,
+    /// 适配器配置（JSON 字符串，对应 [`crate::config::models::QuotaAdapterConfig`]）。
+    pub quota_adapter_config: Option<String>,
 
     #[auto]
     pub created_at: Timestamp,

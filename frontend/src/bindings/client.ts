@@ -13,6 +13,7 @@ import type { OpenAiModelList } from "./OpenAiModelList";
 import type { ProtocolInput } from "./ProtocolInput";
 import type { ProtocolView } from "./ProtocolView";
 import type { ProviderModelResponse } from "./ProviderModelResponse";
+import type { ProviderQuotaResponse } from "./ProviderQuotaResponse";
 import type { ProviderResponse } from "./ProviderResponse";
 import type { TokenListItem } from "./TokenListItem";
 import type { UpdateModelProviderRequest } from "./UpdateModelProviderRequest";
@@ -123,6 +124,8 @@ export function createApiClient(options: ApiClientOptions) {
         request<ProtocolView[]>(`/api/v1/admin/providers/${id}/protocols`, { auth: true }),
       replaceProviderProtocols: (id: string, body: ProtocolInput[]) =>
         request<ProtocolView[]>(`/api/v1/admin/providers/${id}/protocols`, { method: "PUT", auth: true, body }),
+      getProviderQuota: (id: string) =>
+        request<ProviderQuotaResponse>(`/api/v1/admin/providers/${id}/quota`, { auth: true }),
       listProviderModels: (id: string) =>
         request<ProviderModelResponse[]>(`/api/v1/admin/providers/${id}/models`, { auth: true }),
       addProviderModel: (id: string, body: AddModelRequest) =>

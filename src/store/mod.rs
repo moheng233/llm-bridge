@@ -13,7 +13,7 @@ pub use router::{AvailableModel, ModelProviderInfo, ResolvedProviderRoute};
 use std::sync::Arc;
 
 use crate::db;
-use crate::config::models::ApiKeyEntry;
+use crate::config::models::{ApiKeyEntry, ProviderQuotaAdapter};
 
 use router::KeySelector;
 
@@ -93,6 +93,8 @@ impl Store {
         api_keys: Vec<ApiKeyEntry>,
         enabled: bool,
         priority: i64,
+        quota_adapter: Option<ProviderQuotaAdapter>,
+        quota_adapter_config: Option<String>,
     ) -> Result<crate::db::models::Provider, String> {
         let existing = self.get_provider(&provider_id).await?;
 
@@ -106,6 +108,8 @@ impl Store {
             .api_keys(api_keys)
             .enabled(enabled)
             .priority(priority)
+            .quota_adapter(quota_adapter)
+            .quota_adapter_config(quota_adapter_config)
             .exec(&mut self.db.clone())
             .await
             .map_err(|e| e.to_string())?;
@@ -120,6 +124,8 @@ impl Store {
                 api_keys,
                 enabled,
                 priority,
+                quota_adapter,
+                quota_adapter_config,
             })
             .exec(&mut self.db.clone())
             .await
@@ -640,6 +646,8 @@ impl Store {
         api_keys: Vec<ApiKeyEntry>,
         enabled: bool,
         priority: i64,
+        quota_adapter: Option<ProviderQuotaAdapter>,
+        quota_adapter_config: Option<String>,
     ) -> Result<crate::db::models::Provider, String> {
         crate::db::models::Provider::filter(
             crate::db::models::Provider::fields().id().eq(id),
@@ -649,6 +657,8 @@ impl Store {
         .api_keys(api_keys)
         .enabled(enabled)
         .priority(priority)
+        .quota_adapter(quota_adapter)
+        .quota_adapter_config(quota_adapter_config)
         .exec(&mut self.db.clone())
         .await
         .map_err(|e| e.to_string())?;

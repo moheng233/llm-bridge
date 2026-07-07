@@ -115,6 +115,36 @@ fn default_weight() -> u32 {
     1
 }
 
+// ── Provider quota adapter ──
+
+/// 供应商额度适配器类型 — 声明该 Provider 使用哪种上游额度查询协议。
+///
+/// `None`（数据库中为 NULL）表示该 Provider 不查询上游额度。
+/// 不同适配器对应不同供应商的额度 API；新增供应商只需在此枚举中追加变体并实现
+/// [`crate::quota::adapters::QuotaAdapter`]。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, TS, toasty::Embed)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub enum ProviderQuotaAdapter {
+    /// umans 平台（按请求次数、5 小时滑动窗口）。
+    Umans,
+}
+
+/// 适配器配置（JSON 对象字符串存储于 `Provider.quota_adapter_config`）。
+///
+/// 字段全部可选，未提供时使用适配器的内置默认值。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub struct QuotaAdapterConfig {
+    /// 覆盖适配器默认 endpoint URL（如自部署的 umans 兼容服务）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_url: Option<String>,
+    /// 仅查询 label 匹配此值的 API Key（None = 查询全部 Key）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key_label_filter: Option<String>,
+}
+
 fn env_or_default(key: &str, default: &str) -> String {
     env::var(key).unwrap_or_else(|_| default.to_string())
 }

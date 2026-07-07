@@ -12,16 +12,17 @@ use tracing::{info, warn};
 /// toasty 数据库句柄类型别名。
 pub type Db = toasty::Db;
 
-/// 返回包含所有 6 张核心表的 [`toasty::ModelSet`]。
+/// 返回包含所有 7 张核心表的 [`toasty::ModelSet`]。
 ///
-/// 注册：`User`, `Token`, `UsageRecord`, `LLMModel`, `Provider`, `ModelProvider`。
+/// 注册：`User`, `Token`, `UsageRecord`, `LLMModel`, `Provider`, `ModelProvider`,
+/// `ProviderProtocol`。
 /// 配合 [`init`] / [`init_sqlite`] 使用：
 ///
 /// ```ignore
 /// let db = db::init(db::all_models(), "sqlite::memory:").await?;
 /// ```
 pub fn all_models() -> toasty::ModelSet {
-    toasty::models!(models::User, models::Token, models::UsageRecord, models::LLMModel, models::Provider, models::ModelProvider)
+    toasty::models!(models::User, models::Token, models::UsageRecord, models::LLMModel, models::Provider, models::ModelProvider, models::ProviderProtocol)
 }
 
 /// 通过连接 URL 初始化数据库并自动建表。

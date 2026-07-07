@@ -31,9 +31,10 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::config::models::ApiKeyEntry;
+use crate::config::models::{ApiKeyEntry, ProviderQuotaAdapter};
 use crate::db::models;
 use crate::middleware::session_auth::{AdminAuth, SessionAuth};
+use crate::quota::fetch_provider_quota;
 use crate::server::AppState;
 use crate::store::{self, ApiKeyDisplay, AvailableModel, ModelInput, ProtocolInput};
 
@@ -83,6 +84,11 @@ pub fn admin_crud_routes() -> ApiRouter<AppState> {
             .done()
         .put("/api/v1/admin/providers/{id}/protocols", replace_provider_protocols)
             .json::<Vec<ProtocolInput>, Vec<ProtocolView>>()
+            .auth()
+            .done()
+        // Provider quota (实时查询上游额度)
+        .get("/api/v1/admin/providers/{id}/quota", get_provider_quota)
+            .response::<crate::quota::ProviderQuotaResponse>()
             .auth()
             .done()
         // Provider models
@@ -259,6 +265,10 @@ struct ProviderResponse {
     created_at: i64,
     model_count: usize,
     protocols: Vec<ProtocolView>,
+    /// 额度适配器类型；None 表示不查询上游额度。
+    quota_adapter: Option<ProviderQuotaAdapter>,
+    /// 额度适配器配置（JSON 字符串）。
+    quota_adapter_config: Option<String>,
 }
 
 fn provider_to_response(
@@ -283,6 +293,8 @@ fn provider_to_response(
         created_at: p.created_at.as_millisecond() / 1000,
         model_count,
         protocols,
+        quota_adapter: p.quota_adapter.clone(),
+        quota_adapter_config: p.quota_adapter_config.clone(),
     }
 }
 
@@ -382,6 +394,12 @@ struct CreateProviderRequest {
     enabled: bool,
     #[serde(default = "default_priority")]
     priority: i64,
+    /// 额度适配器类型；None = 不查询上游额度。
+    #[serde(default)]
+    quota_adapter: Option<ProviderQuotaAdapter>,
+    /// 额度适配器配置（JSON 字符串）。序列化的 [`crate::config::models::QuotaAdapterConfig`]。
+    #[serde(default)]
+    quota_adapter_config: Option<String>,
 }
 
 fn default_true() -> bool { true }
@@ -402,6 +420,12 @@ struct UpdateProviderRequest {
     enabled: bool,
     #[serde(default)]
     priority: i64,
+    /// 额度适配器类型；未传或为 null 表示不查询上游额度。
+    #[serde(default)]
+    quota_adapter: Option<ProviderQuotaAdapter>,
+    /// 额度适配器配置（JSON 字符串）。
+    #[serde(default)]
+    quota_adapter_config: Option<String>,
 }
 
 #[derive(Deserialize, TS)]
@@ -511,6 +535,8 @@ async fn create_provider(
         req.api_keys,
         req.enabled,
         req.priority,
+        req.quota_adapter,
+        req.quota_adapter_config,
     ).await.map_err(db_err)?;
 
     // 同步协议：传入则全量替换；传入 [] 表示清空
@@ -538,6 +564,8 @@ async fn update_provider(
         req.api_keys,
         req.enabled,
         req.priority,
+        req.quota_adapter,
+        req.quota_adapter_config,
     ).await.map_err(db_err)?;
 
     // 同步协议：传入则全量替换；传入 [] 表示清空
@@ -588,6 +616,36 @@ async fn replace_provider_protocols(
 
     let protos = state.store.replace_provider_protocols(id, inputs).await.map_err(db_err)?;
     Ok(Json(protos.iter().map(protocol_to_view).collect()))
+}
+
+// ── Provider Quota (实时查询上游额度) ──
+
+/// 查询 Provider 的实时额度（per API Key）。
+///
+/// - Provider 不存在 → `404`
+/// - Provider 未配置 `quota_adapter` → `400 Bad Request`
+/// - 上游查询失败不影响响应，错误信息放在每个 Key 的 `error` 字段中
+async fn get_provider_quota(
+    State(state): State<AppState>,
+    AdminAuth(_user): AdminAuth,
+    Path(id): Path<u64>,
+) -> Result<Json<crate::quota::ProviderQuotaResponse>, Response> {
+    let provider = state.store.get_provider_by_id(id).await.map_err(db_err)?
+        .ok_or_else(|| (StatusCode::NOT_FOUND, Json(serde_json::json!({"error": "provider not found"}))).into_response())?;
+
+    if provider.quota_adapter.is_none() {
+        return Err((StatusCode::BAD_REQUEST, Json(serde_json::json!({
+            "error": "provider has no quota_adapter configured"
+        }))).into_response());
+    }
+
+    let resp = fetch_provider_quota(&provider).await
+        .map_err(|e| (StatusCode::BAD_GATEWAY, Json(serde_json::json!({"error": e.to_string()}))).into_response())?
+        .ok_or_else(|| (StatusCode::BAD_REQUEST, Json(serde_json::json!({
+            "error": "no adapter registered for this quota_adapter"
+        }))).into_response())?;
+
+    Ok(Json(resp))
 }
 
 // ── Provider Models CRUD ──

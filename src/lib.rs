@@ -6,6 +6,7 @@ pub mod db;
 pub mod embed;
 pub mod middleware;
 pub mod observability;
+pub mod quota;
 pub mod server;
 pub mod store;
 pub mod types;
