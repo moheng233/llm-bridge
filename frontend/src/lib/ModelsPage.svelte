@@ -1,5 +1,6 @@
 <script lang="ts">
   import { getApi, formatTokens, formatPrice } from "$lib/api";
+  import { SKELETON_ROWS } from "$lib/constants";
   import { Input } from "$lib/components/ui/input/index.js";
   import { Badge } from "$lib/components/ui/badge/index.js";
   import { Alert, AlertDescription } from "$lib/components/ui/alert/index.js";
@@ -120,7 +121,7 @@
   <!-- Table -->
   {#if loading}
     <div class="flex flex-col gap-2">
-      {#each Array(6) as _}
+      {#each Array(SKELETON_ROWS.models) as _}
         <Skeleton class="h-12 w-full rounded-lg" />
       {/each}
     </div>

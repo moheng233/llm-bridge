@@ -1,5 +1,6 @@
 <script lang="ts">
   import { getApi, formatTime, formatQuotaPeriod } from "$lib/api";
+  import { QUOTA_PERIOD_OPTIONS, quotaPeriodLabel, SKELETON_ROWS } from "$lib/constants";
   import { auth } from "$lib/stores/auth.svelte";
   import { Button } from "$lib/components/ui/button/index.js";
   import { Input } from "$lib/components/ui/input/index.js";
@@ -179,14 +180,14 @@
             </div>
             <div class="flex flex-col gap-2">
               <Label>配额周期</Label>
-              <Select value={newQuotaPeriod} onValueChange={(v) => newQuotaPeriod = v ?? "unlimited"}>
+              <Select type="single" value={newQuotaPeriod} onValueChange={(v) => newQuotaPeriod = v ?? "unlimited"}>
                 <SelectTrigger>
-                  <span class="text-sm">{newQuotaPeriod === 'daily' ? '每天' : newQuotaPeriod === 'monthly' ? '每月' : '不限制'}</span>
+                  <span class="text-sm">{quotaPeriodLabel(newQuotaPeriod)}</span>
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="daily">每天</SelectItem>
-                  <SelectItem value="monthly">每月</SelectItem>
-                  <SelectItem value="unlimited">不限制</SelectItem>
+                  {#each QUOTA_PERIOD_OPTIONS as opt}
+                    <SelectItem value={opt.value}>{opt.label}</SelectItem>
+                  {/each}
                 </SelectContent>
               </Select>
             </div>
@@ -209,7 +210,7 @@
   <!-- Token List -->
   {#if loading}
     <div class="flex flex-col gap-3">
-      {#each Array(3) as _}
+      {#each Array(SKELETON_ROWS.tokens) as _}
         <Skeleton class="h-20 w-full rounded-lg" />
       {/each}
     </div>

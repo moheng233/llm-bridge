@@ -278,58 +278,64 @@ pub struct ResolvedProviderRoute {
 
 最大问题在管理员侧：两个页面单文件巨大（900~1100 行），单一职责严重失衡；且全站缺少数据层抽象、全局反馈、路由守卫。
 
+> **当前进度**：首批基础设施已完成（A1 错误格式化、A7 全局 toast、B2 展示组件、B3 useConfirm hook、B4/B5 数据层 store），详见 §13 实施进度。各页面接入替换与剩余项待后续推进。
+
 ---
 
 ## 8. 问题清单
 
 ### 8.1 可用性 / 交互
 
-| # | 问题 | 位置 |
-|---|------|------|
-| A1 | `catch (e: any) { error = e.message }` 直接展示后端原始字符串，无重试、无分类 | 全部页面 |
-| A2 | 加载失败后 `loading=false`，列表空白，用户只能刷新 | 全部页面 |
-| A3 | 创建 Token 表单缺验证；`requestQuota=0` 语义模糊（**allowedModels 字段保留现状不动**，按用户决策③） | `TokensPage` |
-| A4 | 一次性 Token 展示后关闭即丢失（**不加额外保护**，按用户决策④） | `TokensPage` |
-| A5 | 协议编辑用「全量 PUT 替换」语义，UI 未告知用户（**保留现状语义**，按用户决策⑤） | `ProvidersPage` |
-| A6 | 连接编辑「清除覆盖」交互绕（checkbox 三态切换 null/value） | `AdminModelsPage` |
-| A7 | 无全局 toast，操作成功/失败只在顶部 alert | 全部 |
-| A8 | 启用/禁用、角色变更等无确认，与删除操作口径不一致 | 多处 |
-| A9 | 模型目录表格行有 `cursor-pointer` + hover，但点击无反应，误导 | `ModelsPage` |
-| A10 | 路由无守卫：非 admin 直接访问 `#/admin/models` 会看到空白页 | `App.svelte` |
-| A11 | 表格无分页/虚拟化，大数据量会卡 | `ModelsPage` |
+| # | 状态 | 问题 | 位置 |
+|---|------|------|------|
+| A1 | ✅ 完成 | `catch (e: any) { error = e.message }` 直接展示后端原始字符串，无重试、无分类 — 已建 `formatApiError`（状态码映射中文主文案 + 原始 message 收 tooltip） | 全部页面 |
+| A2 | ⬜ 待做 | 加载失败后 `loading=false`，列表空白，用户只能刷新 | 全部页面 |
+| A3 | ⬜ 待做 | 创建 Token 表单缺验证；`requestQuota=0` 语义模糊（**allowedModels 字段保留现状不动**，按用户决策③） | `TokensPage` |
+| A4 | — 不做 | 一次性 Token 展示后关闭即丢失（**不加额外保护**，按用户决策④） | `TokensPage` |
+| A5 | — 不做 | 协议编辑用「全量 PUT 替换」语义，UI 未告知用户（**保留现状语义**，按用户决策⑤） | `ProvidersPage` |
+| A6 | ⬜ 待做 | 连接编辑「清除覆盖」交互绕（checkbox 三态切换 null/value） | `AdminModelsPage` |
+| A7 | ✅ 完成 | 无全局 toast，操作成功/失败只在顶部 alert — 已接入 `svelte-sonner`，`App.svelte` 挂载 `<Toaster>`，提供 `toast`/`toastSuccess`/`toastError` | 全部 |
+| A8 | ⬜ 待做 | 启用/禁用、角色变更等无确认，与删除操作口径不一致 — 口径已定（决策⑦仅删除确认），待各页面接入 `useConfirm` | 多处 |
+| A9 | ⬜ 待做 | 模型目录表格行有 `cursor-pointer` + hover，但点击无反应，误导 — 阶段 1 移除误导 cursor，阶段 2 做 Drawer | `ModelsPage` |
+| A10 | ⬜ 待做 | 路由无守卫：非 admin 直接访问 `#/admin/models` 会看到空白页 | `App.svelte` |
+| A11 | ⬜ 待做 | 表格无分页/虚拟化，大数据量会卡 | `ModelsPage` |
 
 ### 8.2 代码结构
 
-| # | 问题 |
-|---|------|
-| B1 | 两个管理员页面单文件 900~1100 行，职责混杂（list + 多个 dialog + 内联表单 + 删除确认） |
-| B2 | 每个页面重复 header / loading / error / empty 模板，无抽象 |
-| B3 | 两个管理员页面都自己实现 `deleteDialogOpen + deleteTarget + confirmDelete`，重复 |
-| B4 | 状态管理分散（每页自己 `loading/error/data`），无统一数据层 |
-| B5 | API 调用散落组件内，无缓存/失效/重试 |
-| B6 | 原生 `<select>` 与 shadcn `<Select>` 混用（`ProvidersPage` 用原生，`UsersPage` 用 shadcn） |
-| B7 | 枚举中文展示散落各处（`formatQuotaPeriod` 在 api.ts，但创建对话框内重复 hardcode） |
-| B8 | `Array(6)` / `Array(3)` / `Array(4)` skeleton 数量 magic number 散落 |
+| # | 状态 | 问题 |
+|---|------|------|
+| B1 | ⬜ 待做 | 两个管理员页面单文件 900~1100 行，职责混杂（list + 多个 dialog + 内联表单 + 删除确认） |
+| B2 | 🔨 部分完成 | 每个页面重复 header / loading / error / empty 模板，无抽象 — 已抽 `PageShell`/`SectionHeader`/`EmptyState`/`ErrorState` 4 个组件，待各页面接入替换 |
+| B3 | 🔨 部分完成 | 两个管理员页面都自己实现 `deleteDialogOpen + deleteTarget + confirmDelete`，重复 — 已抽 `useConfirm` hook + `ConfirmHost`，待两处删除对话框替换接入 |
+| B4 | ✅ 完成 | 状态管理分散（每页自己 `loading/error/data`），无统一数据层 — 已建 `ResourceStore`/`MapResourceStore` 基类 + 7 个资源 store，待各页面接入替换 |
+| B5 | ✅ 完成 | API 调用散落组件内，无缓存/失效/重试 — 已随 B4 落地 store 层（load/invalidate/markStale/mutate） |
+| B6 | ✅ 完成 | 原生 `<select>` 与 shadcn `<Select>` 混用（`ProvidersPage` 用原生，`UsersPage` 用 shadcn）— ProvidersPage 三处原生 select 已换为 shadcn `<Select type="single">`，顺手修复 UsersPage/TokensPage 的 Select 类型错误 |
+| B7 | ✅ 完成 | 枚举中文展示散落各处 — 已集中至 `$lib/constants.ts`（协议/配额周期/额度适配器/模型状态 + label 函数），`formatQuotaPeriod` 迁移为 `quotaPeriodLabel` |
+| B8 | ✅ 完成 | `Array(6)` / `Array(3)` / `Array(4)` skeleton 数量 magic number 散落 — 已集中至 `SKELETON_ROWS` 常量，五个页面接入 |
+
+> **B2/B3/B4/B5 说明**：基础设施（组件/hook/store 基类）已就绪，但「接入各页面替换现有内联实现」属于阶段 1 各页面修补（A.3）与阶段 2 拆分（B.3/B.4 文件拆分）的工作，故标为「部分完成」。组件本身可在浏览器中验证可用。
 
 ### 8.3 视觉 / 设计
 
-| # | 问题 |
-|---|------|
-| C1 | 绿色 CTA (`#22C55E`) 与 shadcn primary 黑色系并存，视觉语言不统一 |
-| C2 | 每个页面 header 单薄（h2 + 一行副标题），缺视觉层次 |
-| C3 | 展开/折叠直接出现/消失，无过渡动画 |
-| C4 | 空态仅「图标+一行字」，缺引导性 |
-| C5 | badge 颜色语义不统一：启用/禁用有的 default/secondary，有的 default/destructive |
-| C6 | 移动端/小屏未优化（表格横向滚动但无 responsive 处理） |
+| # | 状态 | 问题 |
+|---|------|------|
+| C1 | ⬜ 待做 | 绿色 CTA (`#22C55E`) 与 shadcn primary 黑色系并存，视觉语言不统一 |
+| C2 | ⬜ 待做 | 每个页面 header 单薄（h2 + 一行副标题），缺视觉层次 |
+| C3 | ⬜ 待做 | 展开/折叠直接出现/消失，无过渡动画 |
+| C4 | ⬜ 待做 | 空态仅「图标+一行字」，缺引导性 |
+| C5 | ⬜ 待做 | badge 颜色语义不统一：启用/禁用有的 default/secondary，有的 default/destructive |
+| C6 | ⬜ 待做 | 移动端/小屏未优化（表格横向滚动但无 responsive 处理） |
 
 ### 8.4 潜在 bug
 
-| # | 问题 |
-|---|------|
-| D1 | `AdminModelsPage.confirmDelete` / `handleToggleModel` 中 catch 没清 `linksLoading`，失败后 loading 卡死 |
-| D2 | `ProvidersPage.handleToggle` 把 `apiKeys` 的 `key: ""` 上送，依赖后端容忍空 key（隐式约定，**不在本计划范围**） |
-| D3 | `ModelsPage` 的 `$effect(() => { onlyAvailable; load(); })` 写法可工作但不明确 |
-| D4 | `TokensPage.closeCreate` 等多数 reset 函数未清 `error` |
+| # | 状态 | 问题 |
+|---|------|------|
+| D1 | ⬜ 待做 | `AdminModelsPage.confirmDelete` / `handleToggleModel` 中 catch 没清 `linksLoading`，失败后 loading 卡死 |
+| D2 | — 不做 | `ProvidersPage.handleToggle` 把 `apiKeys` 的 `key: ""` 上送，依赖后端容忍空 key（隐式约定，**不在本计划范围**） |
+| D3 | ⬜ 待做 | `ModelsPage` 的 `$effect(() => { onlyAvailable; load(); })` 写法可工作但不明确 |
+| D4 | ⬜ 待做 | `TokensPage.closeCreate` 等多数 reset 函数未清 `error` |
+
+> **D1/D4 待做说明**：原计划首批随基础设施一起修，实际首批聚焦基础设施（A1/A7/B2/B3/B4/B5），D1/D4 顺延至阶段 1 A.3 各页面修补时处理。
 
 ---
 
@@ -351,15 +357,15 @@ pub struct ResolvedProviderRoute {
 
 **无歧义直接做的部分**（无需决策）：
 
-- `formatApiError(e)` 统一错误格式化（含 401 自动跳登录扩展）
-- `ProvidersPage` 原生 `<select>` → shadcn `<Select>`
-- 抽 `PageShell` / `EmptyState` / `ErrorState` / `SectionHeader` 4 个展示组件
-- 抽 `useConfirm` hook（仅用于删除）
-- 修 bug D1（catch 漏清 loading）/ D4（reset 漏清 error）
+- ✅ `formatApiError(e)` 统一错误格式化（含 401 自动跳登录扩展）— 已完成
+- ⬜ `ProvidersPage` 原生 `<select>` → shadcn `<Select>` — 待阶段 1 A.3
+- ✅ 抽 `PageShell` / `EmptyState` / `ErrorState` / `SectionHeader` 4 个展示组件 — 已完成
+- ✅ 抽 `useConfirm` hook（仅用于删除）— 已完成
+- ⬜ 修 bug D1（catch 漏清 loading）/ D4（reset 漏清 error）— 待阶段 1 A.3
 
 **待确认的开放点**（阶段 1 执行前需对齐）：
 
-- 后端错误响应格式（决定 `formatApiError` 解析逻辑）— 执行时翻 `src/server/` + `src/store/error.rs` 确认
+- ✅ ~~后端错误响应格式（决定 `formatApiError` 解析逻辑）~~ — 已确认：`ApiError`（来自生成的 client.ts）含 `.status` / `.message` / `.body`，后端响应体格式不固定（`{error}` / `{message}` / 纯文本），client.ts 已做 fallback 解析。`formatApiError` 据此实现。
 
 ---
 
@@ -369,26 +375,28 @@ pub struct ResolvedProviderRoute {
 
 **目标**：不动结构，补齐可用性短板与一致性。
 
-#### A.1 基础设施
+#### A.1 基础设施 ✅ 完成
 
-1. **依赖**：`pnpm add svelte-sonner`
-2. **全局 toast 挂载**：在 `App.svelte` 根渲染 `<Toaster />`，配置深色模式跟随 + 中文默认
-3. **错误格式化** `$lib/utils/error.ts`：
+1. **依赖**：`pnpm add svelte-sonner` ✅
+2. **全局 toast 挂载**：在 `App.svelte` 根渲染 `<Toaster />`，配置深色模式跟随 + 中文默认 ✅
+3. **错误格式化** `$lib/utils/error.ts` ✅
    ```ts
    export function formatApiError(e: unknown): { title: string; detail?: string }
    ```
    - 解析后端响应体（结构化 / 纯字符串二选一，依后端实况）
    - 401 触发跳登录（已有逻辑保留）
    - 返回 `{ title: 中文主文案, detail?: 原始 message }`，主文案给 toast/alert，detail 用于 tooltip
-4. **抽展示组件** `$lib/components/common/`：
+4. **抽展示组件** `$lib/components/common/` ✅
    - `PageShell.svelte`：包裹 `<SectionHeader />` + 内容区，统一 padding 与 flex
    - `SectionHeader.svelte`：标题 + 描述 + 计数 badge + 右侧 action slot
    - `EmptyState.svelte`：图标 + 标题 + 副标题 + 可选 action
    - `ErrorState.svelte`：错误展示 + 重试按钮
-5. **抽 `useConfirm` hook** `$lib/hooks/useConfirm.svelte.ts`：
+5. **抽 `useConfirm` hook** `$lib/hooks/useConfirm.svelte.ts` ✅
    - 基于 shadcn `Dialog`，store 化 prompt
    - API：`const confirm = useConfirm(); await confirm({ title, description });`
    - 仅用于删除场景（决策⑦）
+
+> **验证**：svelte-check 新增/修改文件全部类型干净；浏览器实测 toast 弹出与 `confirm()` promise resolve 链路正常。
 
 #### A.2 路由守卫（决策⑥）
 
@@ -438,10 +446,11 @@ pub struct ResolvedProviderRoute {
 - 组件只消费 store，操作后调 `store.invalidate()` 自动刷新
 - 解决 B4 / B5，为乐观更新、重试打基础
 
-#### B.2 枚举集中化
+#### B.2 枚举集中化 ✅ 完成
 
-- 新建 `$lib/constants.ts`：协议、配额周期、状态的 value ↔ 中文 label 映射（B7）
+- 新建 `$lib/constants.ts`：协议、配额周期、额度适配器、模型状态的 value ↔ 中文 label 映射（B7）
 - 删除散落 hardcode
+- 顺带集中 `SKELETON_ROWS` 常量（B8），五个页面 skeleton 接入
 
 #### B.3 拆分 `ProvidersPage`（1100 行 → 多文件）
 
@@ -493,21 +502,58 @@ pub struct ResolvedProviderRoute {
 
 ```
 第 1 周（Phase A — 快速胜利）
-  Day 1   基础设施：svelte-sonner + formatApiError + 4 个展示组件 + useConfirm hook
-  Day 2   路由守卫 + 各页面修补（bug 修复 + select 统一 + toast 接入）+ 一致性收尾
+  Day 1   基础设施：svelte-sonner + formatApiError + 4 个展示组件 + useConfirm hook  ✅ 完成
+  Day 2   路由守卫 + 各页面修补（bug 修复 + select 统一 + toast 接入）+ 一致性收尾  ⬜ 待做
 
 第 2 周（Phase B — 结构重构）
-  Day 3-4 数据层 + 枚举集中化
-  Day 5-6 拆分 ProvidersPage
-  Day 7   拆分 AdminModelsPage
-  Day 8   模型目录详情 Drawer + 列表性能
+  Day 3-4 数据层 + 枚举集中化                          🔨 数据层 store 基类已就绪，待接入
+  Day 5-6 拆分 ProvidersPage                            ⬜ 待做
+  Day 7   拆分 AdminModelsPage                          ⬜ 待做
+  Day 8   模型目录详情 Drawer + 列表性能                ⬜ 待做
 
 第 3 周（Phase C — 设计打磨）
-  Day 9   绿色定位收窄 + SectionHeader 升级
-  Day 10  动效 + badge 语义 + 响应式 + a11y
+  Day 9   绿色定位收窄 + SectionHeader 升级             ⬜ 待做
+  Day 10  动效 + badge 语义 + 响应式 + a11y             ⬜ 待做
 ```
 
 **优先级理由**：Phase A 全是低风险高收益的「补丁」，能立刻提升可用性 & 一致性，也为 Phase B 拆分时提供现成的 `PageShell`/`EmptyState`/`useConfirm` 去填充。Phase B 是结构性投资，回报在长期可维护性。Phase C 纯打磨，可按需取舍。
+
+---
+
+## 13. 实施进度
+
+> 最后更新：2026-07-08
+
+### 已完成（首批基础设施）
+
+| 项 | 对应问题 | 交付物 |
+|----|----------|--------|
+| A1 | 错误格式化 | `frontend/src/lib/utils/error.ts` — `formatApiError` / `toastError` |
+| A7 | 全局 toast | `frontend/src/lib/utils/toast.ts` + `App.svelte` 挂载 `<Toaster>` |
+| B2 | 展示组件抽离 | `frontend/src/lib/components/common/` — `PageShell` / `SectionHeader` / `EmptyState` / `ErrorState` |
+| B3 | useConfirm hook | `frontend/src/lib/hooks/useConfirm.svelte.ts` + `frontend/src/lib/components/common/confirm-host.svelte` |
+| B4 | 数据层 store | `frontend/src/lib/stores/resource.svelte.ts` — `ResourceStore` / `MapResourceStore`（基于 `@tanstack/svelte-store`） |
+| B5 | API 缓存/失效 | `frontend/src/lib/stores/resources.svelte.ts` — 7 个资源 store 实例 + `resetAllStores` |
+| B6 | select 统一 | `ProvidersPage` 三处原生 `<select>` → shadcn `<Select type="single">`；顺手修 UsersPage/TokensPage Select 类型错误 |
+| B7 | 枚举集中化 | `frontend/src/lib/constants.ts` — 协议/配额周期/额度适配器/模型状态 + label 函数；`formatQuotaPeriod` 迁移为 `quotaPeriodLabel` |
+| B8 | skeleton 常量化 | `frontend/src/lib/constants.ts` — `SKELETON_ROWS` 常量，五个页面接入 |
+| — | 401 兑底 | `frontend/src/lib/api.ts` — onError 避免在 `/auth/*` 上死循环跳转 |
+
+### 待做（阶段 1 剩余 + 阶段 2/3）
+
+- **A.2** 路由守卫（403 无权限页）
+- **A.3** 各页面修补：ModelsPage 移除误导 cursor、TokensPage 校验+toast、ProvidersPage select 统一+useConfirm 接入、AdminModelsPage 修 D1+useConfirm 接入、UsersPage toast
+- **A.4** 一致性收尾：各页面接入 `PageShell`/`SectionHeader`/`EmptyState`/`ErrorState`
+- **B.1** 数据层接入各页面（store 已就绪，待替换组件内联状态）
+- **B.2~B.6** 枚举集中化、ProvidersPage/AdminModelsPage 拆分、模型目录 Drawer、列表性能
+- **Phase C** 设计打磨
+
+### 存量类型错误（非本次范围，待阶段 1 各页面修补时处理）
+
+- `TokensPage.svelte` / `ProvidersPage.svelte` — `asChild` 不在 DialogTrigger props（bits-ui API 变更）
+- `TokensPage.svelte` / `UsersPage.svelte` — Select `value` 类型 `string[]` vs `string` 错位
+- `TokensPage.svelte:111` — `{ active: boolean }` 不匹配 `UpdateTokenRequest`
+- `components/table/Subscribe.svelte` — 2 个警告
 
 ---
 

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { getApi } from "$lib/api";
   import { auth } from "$lib/stores/auth.svelte";
+  import { SKELETON_ROWS } from "$lib/constants";
   import { Badge } from "$lib/components/ui/badge/index.js";
   import { Alert, AlertDescription } from "$lib/components/ui/alert/index.js";
   import { Skeleton } from "$lib/components/ui/skeleton/index.js";
@@ -64,7 +65,7 @@
 
   {#if loading}
     <div class="flex flex-col gap-2">
-      {#each Array(4) as _}
+      {#each Array(SKELETON_ROWS.users) as _}
         <Skeleton class="h-16 w-full rounded-lg" />
       {/each}
     </div>
@@ -100,7 +101,7 @@
           </div>
           <div class="flex items-center gap-2 shrink-0">
             <Shield class="h-4 w-4 text-muted-foreground" />
-            <Select value={u.role} onValueChange={(v) => v && changeRole(u.id, v)}>
+            <Select type="single" value={u.role} onValueChange={(v) => v && changeRole(u.id, v)}>
               <SelectTrigger class="w-28 h-8 text-xs">
                 <span class="text-xs">{u.role}</span>
               </SelectTrigger>

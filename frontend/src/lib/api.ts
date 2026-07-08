@@ -49,12 +49,6 @@ export function formatTime(ts: number): string {
   });
 }
 
-// Utility: format quota period
-export function formatQuotaPeriod(period: string): string {
-  switch (period) {
-    case "daily": return "每天";
-    case "monthly": return "每月";
-    case "unlimited": return "不限制";
-    default: return period;
-  }
-}
+// Utility: format quota period — 已迁移至 $lib/constants.ts 的 quotaPeriodLabel。
+// 保留 re-export 以兼容现有 import 路径（逐步迁移后可删除）。
+export { quotaPeriodLabel as formatQuotaPeriod } from "$lib/constants";

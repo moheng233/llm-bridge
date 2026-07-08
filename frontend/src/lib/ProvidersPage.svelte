@@ -1,6 +1,14 @@
 <script lang="ts">
   import { getApi } from "$lib/api";
   import { auth } from "$lib/stores/auth.svelte";
+  import {
+    PROTOCOL_OPTIONS,
+    QUOTA_ADAPTER_OPTIONS,
+    QUOTA_ADAPTER_NONE,
+    quotaAdapterFromSelect,
+    quotaAdapterToSelect,
+    quotaAdapterLabel,
+  } from "$lib/constants";
   import { Button } from "$lib/components/ui/button/index.js";
   import { Input } from "$lib/components/ui/input/index.js";
   import { Label } from "$lib/components/ui/label/index.js";
@@ -16,6 +24,12 @@
     DialogTitle,
     DialogTrigger,
   } from "$lib/components/ui/dialog/index.js";
+  import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+  } from "$lib/components/ui/select/index.js";
   import { Plus, Trash2, ChevronDown, ChevronRight, Globe, Pencil, X, Cpu } from "@lucide/svelte";
   import type { ProviderResponse } from "$bindings/ProviderResponse";
   import type { ProviderModelResponse } from "$bindings/ProviderModelResponse";
@@ -26,35 +40,6 @@
   import type { ProviderQuotaAdapter } from "$bindings/ProviderQuotaAdapter";
 
   const api = getApi();
-
-  // 协议枚举选项（用于下拉框）
-  const PROTOCOL_OPTIONS: { value: ProviderCompatibility; label: string }[] = [
-    { value: "openAiChatCompletions", label: "OpenAI Chat Completions" },
-    { value: "openAiResponses", label: "OpenAI Responses" },
-    { value: "anthropicMessages", label: "Anthropic Messages" },
-  ];
-
-  // 额度适配器下拉选项（select value 用字符串，`"none"` 哨兵表示不配置）。
-  const QUOTA_ADAPTER_OPTIONS: { value: string; label: string }[] = [
-    { value: "none", label: "不查询上游额度" },
-    { value: "umans", label: "Umans" },
-  ];
-
-  // 将适配器下拉的字符串值映射为 ProviderQuotaAdapter | null
-  function quotaAdapterFromSelect(v: string): ProviderQuotaAdapter | null {
-    if (v === "umans") return "umans";
-    return null;
-  }
-
-  // 反向：ProviderQuotaAdapter | null → 下拉字符串值
-  function quotaAdapterToSelect(a: ProviderQuotaAdapter | null): string {
-    return a ?? "none";
-  }
-
-  // 额度适配器枚举 → 中文展示名
-  const QUOTA_ADAPTER_LABELS: Record<string, string> = {
-    umans: "Umans",
-  };
 
   // 创建一个空的 ProtocolInput（用于新增）
   function emptyProtocol(): ProtocolInput {
@@ -466,15 +451,20 @@
                 <p class="text-xs text-muted-foreground -mt-1">
                   声明该提供者使用的上游额度查询协议，用于在后台实时查询每个 API Key 的剩余额度。
                 </p>
-                <select
-                  class="h-9 rounded-md border border-input bg-background px-2 text-sm cursor-pointer"
+                <Select
+                  type="single"
                   value={quotaAdapterToSelect(newQuotaAdapter)}
-                  onchange={(e) => (newQuotaAdapter = quotaAdapterFromSelect((e.target as HTMLSelectElement).value))}
+                  onValueChange={(v) => (newQuotaAdapter = quotaAdapterFromSelect(v ?? QUOTA_ADAPTER_NONE))}
                 >
-                  {#each QUOTA_ADAPTER_OPTIONS as opt}
-                    <option value={opt.value}>{opt.label}</option>
-                  {/each}
-                </select>
+                  <SelectTrigger class="cursor-pointer">
+                    <span class="text-sm">{QUOTA_ADAPTER_OPTIONS.find((o) => o.value === quotaAdapterToSelect(newQuotaAdapter))?.label ?? "不查询上游额度"}</span>
+                  </SelectTrigger>
+                  <SelectContent>
+                    {#each QUOTA_ADAPTER_OPTIONS as opt}
+                      <SelectItem value={opt.value}>{opt.label}</SelectItem>
+                    {/each}
+                  </SelectContent>
+                </Select>
                 {#if newQuotaAdapter}
                   <div class="flex flex-col gap-2 pl-2 border-l-2 border-border">
                     <div class="flex flex-col gap-1">
@@ -557,15 +547,16 @@
                   </div>
                   <div class="flex flex-col gap-1">
                     <Label for="np-proto" class="text-xs">协议类型</Label>
-                    <select
-                      id="np-proto"
-                      class="h-9 rounded-md border border-input bg-background px-2 text-sm cursor-pointer"
-                      bind:value={draft.protocol}
-                    >
-                      {#each PROTOCOL_OPTIONS as opt}
-                        <option value={opt.value}>{opt.label}</option>
-                      {/each}
-                    </select>
+                    <Select type="single" value={draft.protocol} onValueChange={(v) => v && (draft.protocol = v as ProviderCompatibility)}>
+                      <SelectTrigger id="np-proto" class="cursor-pointer">
+                        <span class="text-sm">{PROTOCOL_OPTIONS.find((o) => o.value === draft.protocol)?.label ?? draft.protocol}</span>
+                      </SelectTrigger>
+                      <SelectContent>
+                        {#each PROTOCOL_OPTIONS as opt}
+                          <SelectItem value={opt.value}>{opt.label}</SelectItem>
+                        {/each}
+                      </SelectContent>
+                    </Select>
                   </div>
                   <div class="flex flex-col gap-1">
                     <Label for="np-url" class="text-xs">端点 URL</Label>
@@ -686,7 +677,7 @@
                 <span>优先级: {p.priority}</span>
                 {#if p.quotaAdapter}
                   <span class="text-foreground/70">
-                    额度适配器: {QUOTA_ADAPTER_LABELS[p.quotaAdapter] ?? p.quotaAdapter}
+                    额度适配器: {quotaAdapterLabel(p.quotaAdapter)}
                   </span>
                 {/if}
               </div>
@@ -718,7 +709,7 @@
                   <div class="rounded-md border border-border bg-muted/30 px-3 py-2 text-sm flex flex-col gap-1">
                     <div class="flex items-center gap-2">
                       <Badge variant="outline" class="text-xs font-mono shrink-0">
-                        {QUOTA_ADAPTER_LABELS[p.quotaAdapter] ?? p.quotaAdapter}
+                        {quotaAdapterLabel(p.quotaAdapter)}
                       </Badge>
                     </div>
                     {#if p.quotaAdapterConfig}
@@ -814,15 +805,16 @@
                     </div>
                     <div class="flex flex-col gap-1">
                       <Label for="ep-proto" class="text-xs">协议类型</Label>
-                      <select
-                        id="ep-proto"
-                        class="h-9 rounded-md border border-input bg-background px-2 text-sm cursor-pointer"
-                        bind:value={draft.protocol}
-                      >
-                        {#each PROTOCOL_OPTIONS as opt}
-                          <option value={opt.value}>{opt.label}</option>
-                        {/each}
-                      </select>
+                      <Select type="single" value={draft.protocol} onValueChange={(v) => v && (draft.protocol = v as ProviderCompatibility)}>
+                        <SelectTrigger id="ep-proto" class="cursor-pointer">
+                          <span class="text-sm">{PROTOCOL_OPTIONS.find((o) => o.value === draft.protocol)?.label ?? draft.protocol}</span>
+                        </SelectTrigger>
+                        <SelectContent>
+                          {#each PROTOCOL_OPTIONS as opt}
+                            <SelectItem value={opt.value}>{opt.label}</SelectItem>
+                          {/each}
+                        </SelectContent>
+                      </Select>
                     </div>
                     <div class="flex flex-col gap-1">
                       <Label for="ep-url" class="text-xs">端点 URL</Label>

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { getApi } from "$lib/api";
   import { auth } from "$lib/stores/auth.svelte";
+  import { SKELETON_ROWS } from "$lib/constants";
   import { Button } from "$lib/components/ui/button/index.js";
   import { Input } from "$lib/components/ui/input/index.js";
   import { Label } from "$lib/components/ui/label/index.js";
@@ -379,7 +380,7 @@
 
   {#if loading}
     <div class="flex flex-col gap-3">
-      {#each Array(4) as _}
+      {#each Array(SKELETON_ROWS.adminModels) as _}
         <Skeleton class="h-16 w-full rounded-lg" />
       {/each}
     </div>
