@@ -13,6 +13,7 @@
   import UsersPage from "./lib/UsersPage.svelte";
   import LoginPage from "./lib/LoginPage.svelte";
   import AdminModelsPage from "./lib/AdminModelsPage.svelte";
+  import UnauthorizedPage from "./lib/UnauthorizedPage.svelte";
   import { ConfirmHost } from "$lib/components/common/index.js";
   import { Cpu, Key, Globe, Users, LogOut, Sun, Moon, Boxes } from "@lucide/svelte";
 
@@ -48,6 +49,12 @@
   let showApp = $derived(!auth.loading);
   let isAuthenticated = $derived(auth.isAuthenticated);
   let isAdmin = $derived(auth.isAdmin);
+
+  // admin 路由守卫（决策⑥）：非 admin 访问 #/admin/* 时渲染 403 页，不改动 hash。
+  // 后端修复权限后刷新即可恢复。
+  const ADMIN_PATHS = ["/admin/models", "/providers", "/users"];
+  let isAdminRoute = $derived(ADMIN_PATHS.includes(currentPath));
+  let accessDenied = $derived(isAdminRoute && !isAdmin);
 
   const memberNavItems = [
     { path: "/models" as const, label: "模型目录", icon: Cpu },
@@ -183,7 +190,11 @@
         </span>
       </header>
       <main class="flex-1 min-h-0 overflow-hidden p-6 flex flex-col">
-        <Router {routes} />
+        {#if accessDenied}
+          <UnauthorizedPage />
+        {:else}
+          <Router {routes} />
+        {/if}
       </main>
     </Sidebar.Inset>
   </Sidebar.Provider>

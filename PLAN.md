@@ -297,7 +297,7 @@ pub struct ResolvedProviderRoute {
 | A7 | ✅ 完成 | 无全局 toast，操作成功/失败只在顶部 alert — 已接入 `svelte-sonner`，`App.svelte` 挂载 `<Toaster>`，提供 `toast`/`toastSuccess`/`toastError` | 全部 |
 | A8 | ⬜ 待做 | 启用/禁用、角色变更等无确认，与删除操作口径不一致 — 口径已定（决策⑦仅删除确认），待各页面接入 `useConfirm` | 多处 |
 | A9 | ⬜ 待做 | 模型目录表格行有 `cursor-pointer` + hover，但点击无反应，误导 — 阶段 1 移除误导 cursor，阶段 2 做 Drawer | `ModelsPage` |
-| A10 | ⬜ 待做 | 路由无守卫：非 admin 直接访问 `#/admin/models` 会看到空白页 | `App.svelte` |
+| A10 | ✅ 完成 | 路由无守卫：非 admin 直接访问 `#/admin/models` 会看到空白页 — `App.svelte` 加 `accessDenied` 派生守卫，非 admin 访问 `/admin/*` 渲染 `UnauthorizedPage`（403） | `App.svelte` |
 | A11 | ⬜ 待做 | 表格无分页/虚拟化，大数据量会卡 | `ModelsPage` |
 
 ### 8.2 代码结构
@@ -398,10 +398,12 @@ pub struct ResolvedProviderRoute {
 
 > **验证**：svelte-check 新增/修改文件全部类型干净；浏览器实测 toast 弹出与 `confirm()` promise resolve 链路正常。
 
-#### A.2 路由守卫（决策⑥）
+#### A.2 路由守卫（决策⑥）✅ 完成
 
-1. 新建 `UnauthorizedPage.svelte`：图标 + "无访问权限" + 返回首页按钮
-2. 在 `App.svelte` 路由层拦截：路由若为 `/admin/*` 且 `!auth.isAdmin` → 渲染 403 页（不改动 hash，便于后端修复权限后刷新即可恢复）
+1. 新建 `UnauthorizedPage.svelte`：图标 + "无访问权限" + 返回首页按钮 ✅
+2. 在 `App.svelte` 路由层拦截：路由若为 `/admin/*` 且 `!auth.isAdmin` → 渲染 403 页（不改动 hash，便于后端修复权限后刷新即可恢复） ✅
+
+> **验证**：mock `/auth/me` 返回 member 角色后访问 `/admin/models`，正确渲染 403 页（盾牌图标 + 说明 + 返回按钮）；点击返回按钮跳转 `/models`。admin 用户正常访问不受影响。
 
 #### A.3 各页面修补
 
@@ -503,7 +505,7 @@ pub struct ResolvedProviderRoute {
 ```
 第 1 周（Phase A — 快速胜利）
   Day 1   基础设施：svelte-sonner + formatApiError + 4 个展示组件 + useConfirm hook  ✅ 完成
-  Day 2   路由守卫 + 各页面修补（bug 修复 + select 统一 + toast 接入）+ 一致性收尾  ⬜ 待做
+  Day 2   路由守卫 + 各页面修补（bug 修复 + select 统一 + toast 接入）+ 一致性收尾  🔨 路由守卫✅、select 统一✅、枚举集中✅；各页面修补待做
 
 第 2 周（Phase B — 结构重构）
   Day 3-4 数据层 + 枚举集中化                          🔨 数据层 store 基类已就绪，待接入
@@ -530,6 +532,7 @@ pub struct ResolvedProviderRoute {
 |----|----------|--------|
 | A1 | 错误格式化 | `frontend/src/lib/utils/error.ts` — `formatApiError` / `toastError` |
 | A7 | 全局 toast | `frontend/src/lib/utils/toast.ts` + `App.svelte` 挂载 `<Toaster>` |
+| A10 | admin 路由守卫 | `frontend/src/lib/UnauthorizedPage.svelte` + `App.svelte` 的 `accessDenied` 派生守卫 |
 | B2 | 展示组件抽离 | `frontend/src/lib/components/common/` — `PageShell` / `SectionHeader` / `EmptyState` / `ErrorState` |
 | B3 | useConfirm hook | `frontend/src/lib/hooks/useConfirm.svelte.ts` + `frontend/src/lib/components/common/confirm-host.svelte` |
 | B4 | 数据层 store | `frontend/src/lib/stores/resource.svelte.ts` — `ResourceStore` / `MapResourceStore`（基于 `@tanstack/svelte-store`） |
