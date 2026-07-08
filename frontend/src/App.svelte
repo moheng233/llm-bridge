@@ -1,6 +1,7 @@
 <script lang="ts">
   import Router from "svelte-spa-router";
   import { push, router } from "svelte-spa-router";
+  import { Toaster } from "svelte-sonner";
   import * as Sidebar from "$lib/components/ui/sidebar/index.js";
   import { Button } from "$lib/components/ui/button/index.js";
   import { Spinner } from "$lib/components/ui/spinner/index.js";
@@ -12,6 +13,7 @@
   import UsersPage from "./lib/UsersPage.svelte";
   import LoginPage from "./lib/LoginPage.svelte";
   import AdminModelsPage from "./lib/AdminModelsPage.svelte";
+  import { ConfirmHost } from "$lib/components/common/index.js";
   import { Cpu, Key, Globe, Users, LogOut, Sun, Moon, Boxes } from "@lucide/svelte";
 
   type PagePath = "/models" | "/tokens" | "/providers" | "/users" | "/admin/models";
@@ -186,3 +188,18 @@
     </Sidebar.Inset>
   </Sidebar.Provider>
 {/if}
+
+<!-- 全局 toast 容器 — 任意状态下可见（含登录态） -->
+<Toaster
+  theme={theme.isDark ? "dark" : "light"}
+  position="top-right"
+  richColors
+  closeButton
+  toastOptions={{
+    style: "font-sans",
+    class: "font-sans",
+  }}
+/>
+
+<!-- 全局确认对话框宿主 — 由 useConfirm.svelte 驱动 -->
+<ConfirmHost />

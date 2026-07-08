@@ -11,8 +11,14 @@ export function getApi(): ApiClient {
       credentials: "include",
       getToken: async () => null, // Session cookie handles auth
       onError: (err) => {
+        // 401 由各页面自行处理（auth store 在 fetchMe 时也会感知）。
+        // 这里仅做兜底：避免重复刷新到 /auth/login 造成死循环 —
+        // 当 path 已经在 /auth/* 上时不再跳转。
         if (err.status === 401) {
-          window.location.href = "/auth/login";
+          const path = window.location.pathname + window.location.hash;
+          if (!path.startsWith("/auth/")) {
+            window.location.href = "/auth/login";
+          }
         }
       },
     });
