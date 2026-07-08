@@ -29,6 +29,26 @@ export function buildQuotaConfigString(
 }
 
 /**
+ * 解析后端返回的 `quotaAdapterConfig` JSON 字符串回到字段对象。
+ * 用于编辑对话框回填表单值。
+ */
+export function parseQuotaConfigString(s: string | null): {
+  baseUrl: string;
+  keyLabelFilter: string;
+} | null {
+  if (!s || !s.trim()) return null;
+  try {
+    const cfg = JSON.parse(s) as Record<string, string>;
+    return {
+      baseUrl: cfg.baseUrl ?? "",
+      keyLabelFilter: cfg.keyLabelFilter ?? "",
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * 将 ProtocolView（后端返回）转为 ProtocolInput（请求体）。
  * 用于编辑现有协议时回填表单，或全量替换协议列表时转换格式。
  */

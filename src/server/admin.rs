@@ -558,10 +558,31 @@ async fn update_provider(
 
     let display_name = if req.display_name.is_empty() { provider.display_name.clone() } else { req.display_name };
 
+    // 编辑模式下，前端传空 key 表示「保留原值」：同 label 的现有 key 被保留。
+    // 通过 label 匹配回填。完全新增的 key 才直接写入明文。
+    let merged_api_keys: Vec<ApiKeyEntry> = req.api_keys
+        .into_iter()
+        .map(|k| {
+            if k.key.is_empty() {
+                provider.api_keys
+                    .iter()
+                    .find(|existing| existing.label == k.label)
+                    .map(|existing| ApiKeyEntry {
+                        label: k.label.clone(),
+                        key: existing.key.clone(),
+                        weight: k.weight,
+                    })
+                    .unwrap_or(k)
+            } else {
+                k
+            }
+        })
+        .collect();
+
     let updated = state.store.update_provider_by_id(
         id,
         display_name,
-        req.api_keys,
+        merged_api_keys,
         req.enabled,
         req.priority,
         req.quota_adapter,

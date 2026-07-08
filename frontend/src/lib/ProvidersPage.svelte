@@ -17,6 +17,7 @@
   import { Globe } from "@lucide/svelte";
   import type { ProviderResponse } from "$bindings/ProviderResponse";
   import type { ProviderModelResponse } from "$bindings/ProviderModelResponse";
+  import { protocolViewToInput } from "$lib/utils/provider";
   import ProviderCreateDialog from "./providers/ProviderCreateDialog.svelte";
   import ProviderRow from "./providers/ProviderRow.svelte";
 
@@ -29,6 +30,20 @@
   let expandedId = $state<number | null>(null);
   let modelsCache = $state<Map<number, ProviderModelResponse[]>>(new Map());
   let modelsLoading = $state<Set<number>>(new Set());
+
+  // ── 编辑提供者状态 ──
+  let editingProvider = $state<ProviderResponse | null>(null);
+  let editDialogOpen = $state(false);
+
+  function openEditDialog(p: ProviderResponse) {
+    editingProvider = p;
+    editDialogOpen = true;
+  }
+
+  function closeEditDialog() {
+    editDialogOpen = false;
+    editingProvider = null;
+  }
 
   // ── 删除状态 ──
   let deleteDialogOpen = $state(false);
@@ -77,18 +92,14 @@
   async function handleToggle(p: ProviderResponse) {
     error = "";
     try {
-      const protocols = p.protocols.map((proto) => ({
-        id: proto.id,
-        protocol: proto.protocol,
-        baseUrl: proto.baseUrl,
-        compatSettings: proto.compatSettings,
-        enabled: proto.enabled,
-        priority: proto.priority,
-      }));
+      // 通过「重新打开编辑对话框」让用户修改启用状态，
+      // 但为了保持原有的快捷开/关体验，这里仍走 updateProvider 全量 PATCH。
+      const protocols = p.protocols.map(protocolViewToInput);
       await api.admin.updateProvider(String(p.id), {
         displayName: p.displayName,
         enabled: !p.enabled,
         priority: p.priority,
+        // 不修改 key：传回现有 apiKeys 的 label + 权重，key 字段留空让后端保留
         apiKeys: p.apiKeys.map((k: any) => ({
           label: k.label,
           key: "",
@@ -214,7 +225,7 @@
     </div>
   {:else}
     <div class="flex flex-col gap-2 overflow-auto">
-      {#each providers as p}
+      {#each providers as p (p.id)}
         <ProviderRow
           provider={p}
           expanded={expandedId === p.id}
@@ -222,18 +233,28 @@
           modelsLoading={modelsLoading.has(p.id)}
           onToggleExpand={() => toggleModels(p.id)}
           onToggleEnabled={() => handleToggle(p)}
+          onEdit={() => openEditDialog(p)}
           onDeleteProvider={() => openDeleteDialog("provider", p.id, p.displayName || p.providerId)}
           onToggleModel={(m) => handleToggleModel(p.id, m)}
           onDeleteModel={(m) => openDeleteDialog("model", p.id, p.displayName || p.providerId, m.id, m.modelName)}
-          onProtocolsChanged={loadProviders}
           onError={(e) => (error = e)}
         />
       {/each}
     </div>
   {/if}
 
+  <!-- 编辑提供者对话框（受控，单例） -->
+  {#if editingProvider}
+    <ProviderCreateDialog
+      provider={editingProvider}
+      bind:openExternal={editDialogOpen}
+      onUpdated={() => { loadProviders(); closeEditDialog(); }}
+      onError={(e) => (error = e)}
+    />
+  {/if}
+
   <!-- Delete confirmation dialog -->
-  <Dialog open={deleteDialogOpen} onOpenChange={(v) => (deleteDialogOpen = v)}>
+  <Dialog bind:open={openExternal}>
     <DialogContent class="sm:max-w-sm">
       <DialogHeader>
         <DialogTitle class="font-mono text-sm">确认删除</DialogTitle>
