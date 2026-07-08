@@ -1,7 +1,7 @@
 // Provider 相关共享工具 — 从 ProvidersPage 抽出，供创建对话框与列表展开共用。
 // 见 PLAN.md §10 Phase B B.3。
 
-import type { ProtocolInput } from "$bindings/ProtocolInput";
+import { type ProtocolInput } from "@bindings/ProtocolInput";
 
 /** 创建一个空的 ProtocolInput（用于新增） */
 export function emptyProtocol(): ProtocolInput {
@@ -17,10 +17,7 @@ export function emptyProtocol(): ProtocolInput {
  * 将适配器配置字段拼接为后端期望的 JSON 字符串。
  * 两个字段都为空时返回 null，表示该 Provider 不带适配器配置（使用内置默认值）。
  */
-export function buildQuotaConfigString(
-  baseUrl: string,
-  keyLabelFilter: string,
-): string | null {
+export function buildQuotaConfigString(baseUrl: string, keyLabelFilter: string): string | null {
   const cfg: Record<string, string> = {};
   if (baseUrl.trim()) cfg.baseUrl = baseUrl.trim();
   if (keyLabelFilter.trim()) cfg.keyLabelFilter = keyLabelFilter.trim();

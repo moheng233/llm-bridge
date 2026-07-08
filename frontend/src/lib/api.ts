@@ -1,6 +1,6 @@
 // API client — wraps auto-generated client with auth token from session.
-import { createApiClient } from "$bindings/client";
-import type { ApiClient } from "$bindings/client";
+import { createApiClient } from "@bindings/client";
+import { type ApiClient } from "@bindings/client";
 
 let _client: ApiClient | null = null;
 
@@ -51,4 +51,4 @@ export function formatTime(ts: number): string {
 
 // Utility: format quota period — 已迁移至 $lib/constants.ts 的 quotaPeriodLabel。
 // 保留 re-export 以兼容现有 import 路径（逐步迁移后可删除）。
-export { quotaPeriodLabel as formatQuotaPeriod } from "$lib/constants";
+export { quotaPeriodLabel as formatQuotaPeriod } from "~/lib/constants";

@@ -1,11 +1,27 @@
-import { mount } from "svelte";
-import "./app.css";
-// 导入 theme store 以注册系统偏好变化监听（DOM class 由 index.html 内联脚本预先应用）
-import "./lib/stores/theme.svelte";
-import App from "./App.svelte";
+import { createApp } from "vue";
+import { RouterLink, RouterView } from "vue-router";
+import { createPinia } from "pinia";
+import "./assets/main.css";
+import { initTheme } from "./theme";
+import App from "./App.vue";
+import { router } from "./router";
 
-const app = mount(App, {
-  target: document.getElementById("app")!,
-});
+const app = createApp(App);
 
-export default app;
+// 实验路由器需手动注册全局组件
+app.component("RouterLink", RouterLink);
+app.component("RouterView", RouterView);
+
+app.use(createPinia());
+app.use(router);
+app.mount("#app");
+
+// Pinia 初始化后注册 theme store（激活系统偏好监听）
+initTheme();
+
+// 注册路由器类型以获得类型化的 useRouter() / useRoute()
+declare module "vue-router" {
+  export interface TypesConfig {
+    Router: typeof router;
+  }
+}

@@ -1,8 +1,8 @@
 // 全站枚举与常量集中化 — 见 PLAN.md §10 Phase B B.2（解决 B7）。
 // 删除散落在各页面的 hardcode 中文映射，统一从此处导入。
 
-import type { ProviderCompatibility } from "$bindings/ProviderCompatibility";
-import type { ProviderQuotaAdapter } from "$bindings/ProviderQuotaAdapter";
+import { type ProviderCompatibility } from "@bindings/ProviderCompatibility";
+import { type ProviderQuotaAdapter } from "@bindings/ProviderQuotaAdapter";
 
 // ── 协议（ProviderCompatibility） ──
 

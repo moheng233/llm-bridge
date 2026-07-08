@@ -3,4 +3,9 @@
 /**
  * 编辑工具名称集合，序列化为字符串数组
  */
-export type EndpointEditToolName = { find_replace: boolean, multi_find_replace: boolean, apply_patch: boolean, code_rewrite: boolean, };
+export type EndpointEditToolName = {
+  find_replace: boolean;
+  multi_find_replace: boolean;
+  apply_patch: boolean;
+  code_rewrite: boolean;
+};

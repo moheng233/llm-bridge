@@ -3,4 +3,15 @@
 /**
  * Token 列表项（不含 token_hash）。
  */
-export type TokenListItem = { id: number, name: string, tokenPrefix: string, allowedModels: Array<string>, requestQuota: number, tokenQuota: number, quotaPeriod: string, active: boolean, createdAt: number, lastUsedAt: number | null, };
+export type TokenListItem = {
+  id: number;
+  name: string;
+  tokenPrefix: string;
+  allowedModels: Array<string>;
+  requestQuota: number;
+  tokenQuota: number;
+  quotaPeriod: string;
+  active: boolean;
+  createdAt: number;
+  lastUsedAt: number | null;
+};

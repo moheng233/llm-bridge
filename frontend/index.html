@@ -6,11 +6,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
     <title>LLM Bridge</title>
-    <!-- 主题预加载：在 SPA 渲染前同步应用，避免闪屏（FOUC）。
-         优先级：localStorage 'llm-bridge:theme' > 系统偏好 prefers-color-scheme。
-         必须内联且同步执行，否则首帧会以错误主题渲染。 -->
     <script>
       (function () {
         try {
@@ -19,13 +19,11 @@
             stored === "light" || stored === "dark"
               ? stored
               : window.matchMedia("(prefers-color-scheme: dark)").matches
-              ? "dark"
-              : "light";
+                ? "dark"
+                : "light";
           if (mode === "dark") document.documentElement.classList.add("dark");
           document.documentElement.style.colorScheme = mode;
-        } catch (_e) {
-          // 隐私模式或老浏览器 — 退化到亮色默认
-        }
+        } catch (_e) {}
       })();
     </script>
   </head>

@@ -1,2 +1,2 @@
-minimumReleaseAgeExclude:
-  - '@types/node@25.9.1'
+allowBuilds:
+  vue-demi: true

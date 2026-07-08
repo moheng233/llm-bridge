@@ -5,4 +5,15 @@
  *
  * `model_name` 为唯一标识（如 `"openai/gpt-4o"`）；其余字段为标称能力+描述+状态。
  */
-export type ModelInput = { modelName: string, displayName: string, description?: string | null, maxInputTokens: number, maxOutputTokens: number, toolCalling: boolean, vision: boolean, thinking: boolean, adaptiveThinking: boolean, status?: string | null, };
+export type ModelInput = {
+  modelName: string;
+  displayName: string;
+  description?: string | null;
+  maxInputTokens: number;
+  maxOutputTokens: number;
+  toolCalling: boolean;
+  vision: boolean;
+  thinking: boolean;
+  adaptiveThinking: boolean;
+  status?: string | null;
+};

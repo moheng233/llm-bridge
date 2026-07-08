@@ -3,4 +3,10 @@
 /**
  * 配额窗口类型 — 覆盖主流供应商的重置周期。
  */
-export type QuotaWindow = { "slidingSeconds": number } | { "slidingMinutes": number } | "calendarDaily" | "calendarWeekly" | "calendarMonthly" | "unknown";
+export type QuotaWindow =
+  | { slidingSeconds: number }
+  | { slidingMinutes: number }
+  | "calendarDaily"
+  | "calendarWeekly"
+  | "calendarMonthly"
+  | "unknown";

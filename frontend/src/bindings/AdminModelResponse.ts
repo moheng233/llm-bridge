@@ -3,8 +3,21 @@
 /**
  * LLMModel 响应（管理视角）— 标称能力 + 该模型下的所有 ModelProvider 连接。
  */
-export type AdminModelResponse = { id: number, modelName: string, displayName: string, description: string | null, maxInputTokens: number, maxOutputTokens: number, toolCalling: boolean, vision: boolean, thinking: boolean, adaptiveThinking: boolean, status: string | null, createdAt: number, 
-/**
- * 模型下的连接数（用于列表卡片快速概览）
- */
-providerCount: number, };
+export type AdminModelResponse = {
+  id: number;
+  modelName: string;
+  displayName: string;
+  description: string | null;
+  maxInputTokens: number;
+  maxOutputTokens: number;
+  toolCalling: boolean;
+  vision: boolean;
+  thinking: boolean;
+  adaptiveThinking: boolean;
+  status: string | null;
+  createdAt: number;
+  /**
+   * 模型下的连接数（用于列表卡片快速概览）
+   */
+  providerCount: number;
+};

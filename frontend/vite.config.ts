@@ -1,23 +1,49 @@
-import { defineConfig } from 'vite'
-import { svelte } from '@sveltejs/vite-plugin-svelte'
-import tailwindcss from '@tailwindcss/vite'
+import { defineConfig } from "vite";
+import vue from "@vitejs/plugin-vue";
+import tailwindcss from "@tailwindcss/vite";
+import path from "path";
+import AutoImport from "unplugin-auto-import/vite";
+import Components from "unplugin-vue-components/vite";
+import VueRouter from "vue-router/vite";
 
-import path from 'path'
-
+// https://vite.dev/config/
 export default defineConfig({
-  plugins: [tailwindcss(), svelte()],
+  plugins: [
+    tailwindcss(),
+    VueRouter({
+      dts: "./node_modules/.types/typed-router.d.ts",
+      experimental: {
+        paramParsers: {
+          dir: "src/params",
+        },
+      },
+    }),
+    vue(),
+    AutoImport({
+      dts: "./node_modules/.types/auto-imports.d.ts",
+      imports: ["vue", "vue-router", "pinia"],
+      dirs: ["./src/composables"],
+      vueTemplate: true,
+    }),
+    Components({
+      dts: "./node_modules/.types/components.d.ts",
+      dirs: ["./src/components/ui", "./src/components/common", "./src/components/providers"],
+      extensions: ["vue"],
+      deep: true,
+    }),
+  ],
   server: {
     proxy: {
-      '^/(api|auth|v1)(/.*)?$': {
-        target: 'http://127.0.0.1:3000',
+      "^/(api|auth|v1)(/.*)?$": {
+        target: "http://127.0.0.1:3000",
         changeOrigin: true,
       },
     },
   },
   resolve: {
     alias: {
-      $lib: path.resolve("./src/lib"),
-      $bindings: path.resolve("./src/bindings"),
+      "~": path.resolve("./src"),
+      "@bindings": path.resolve("./src/bindings"),
     },
   },
-})
+});
