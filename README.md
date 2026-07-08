@@ -1,7 +1,10 @@
 # LLM-Bridge
 
-> 一个自托管的 LLM 网关服务，统一路由多个上游 LLM 提供者的 API 请求。
-> 兼容 OpenAI 客户端协议，支持 OpenAI / Anthropic 等多种上游协议，内置 OIDC 登录、Token 配额、管理 UI。
+> 一个面向 **Homelab 与小型工作室** 的自托管 LLM 网关。
+> 统一路由多个上游 LLM 提供者的 API 请求，兼容 OpenAI 客户端协议，
+> 支持 OpenAI / Anthropic 等多种上游协议，内置 OIDC 登录、Token 配额、管理 UI。
+>
+> 🚧 **即将推出** VS Code Copilot 插件，可自动同步模型列表与参数，打通 IDE ↔ 网关的最后一公里。
 
 [![Rust](https://img.shields.io/badge/Rust-nightly-orange.svg)](./rust-toolchain.toml)
 [![Edition 2024](https://img.shields.io/badge/Edition-2024-blue.svg)](https://blog.rust-lang.org/2025/02/20/Rust-2024.html)
@@ -11,6 +14,7 @@
 
 ## 目录
 
+- [为什么选择 LLM-Bridge](#为什么选择-llm-bridge)
 - [简介](#简介)
 - [核心特性](#核心特性)
 - [系统架构](#系统架构)
@@ -25,18 +29,58 @@
 - [开发指南](#开发指南)
 - [示例](#示例)
 - [可观测性](#可观测性)
+- [VS Code Copilot 插件](#vs-code-copilot-插件规划中)
 - [项目状态](#项目状态)
+
+---
+
+## 为什么选择 LLM-Bridge
+
+如果你正在运行 Homelab 或管理一个小型工作室的 AI 工具，你很可能会遇到这些痛点：
+
+> [!IMPORTANT]
+> 😫 团队成员每人一个 ChatGPT/Claude 订阅，月底账单吓人一跳
+> 😫 想用 GitHub Copilot，但模型列表需要手动编辑 JSON，换个模型就得改一次配置
+> 😫 试过 LiteLLM 或 one-api，但 Python 依赖地狱、内存占用高、NAS 上跑不动
+> 😫 API Key 散落在各个配置文件里，有人离职就得全部轮换一遍
+
+**LLM-Bridge 就是为这些场景而生的。**
+
+| 对比维度 | LLM-Bridge | LiteLLM | one-api | OpenRouter |
+|:---------|:----------:|:-------:|:------:|:----------:|
+| **定位** | 🏠 Homelab / 小型工作室 | 企业级网关 | 多租户中台 | 商业 SaaS |
+| **运行时** | Rust 单二进制 ~15MB | Python + pip 依赖 | Go 二进制 ~30MB | SaaS 无需部署 |
+| **内存占用** | 💚 空闲 ~15-25MB | 🟡 ~150-300MB | 🟢 ~40-80MB | — |
+| **部署难度** | ⭐ 一条命令 | ⭐⭐⭐ Python 环境 | ⭐⭐ Docker Compose | — |
+| **VS Code 集成** | 🚧 插件同步模型列表 | ❌ | ❌ | ❌ |
+| **API Key 管理** | 多 Key 加权轮询 | 单 Key 轮询 | 多 Key 轮询 | 平台托管 |
+| **OIDC 登录** | ✅ 内置 | ✅ 需配置 | ❌ | ❌（自有账号） |
+| **配额管理** | ✅ 原生支持 | ❌ | ✅ 有限 | ✅ 需付费 |
+| **单文件部署** | ✅ embed-frontend | ❌ | ❌ | — |
+
+> 💡 **一句话总结**：LLM-Bridge 不是另一个大而全的企业网关。它是一块专为 Homelab 设计的"乐高积木"——轻得能在树莓派上跑，小得不需要 docker-compose，但功能刚好覆盖你管理全家/全工作室 LLM 访问所需的一切。
 
 ---
 
 ## 简介
 
-LLM-Bridge 是一个用 Rust 编写的 **LLM 网关**。它的目标类似于一个自托管的 OpenRouter：
+LLM-Bridge 是一个用 Rust 编写的 **LLM 网关**，它的目标类似于一个自托管的 OpenRouter——但更轻、更小、更专注于 Homelab 场景。
 
-- 对客户端暴露**统一的 OpenAI 兼容接口**（`/v1/models`、`/v1/chat/completions`），现有任何 OpenAI SDK 客户端无需改动即可接入；
-- 在网关内部，将请求**路由到多个上游 LLM 提供者**（OpenAI、Anthropic、其它兼容服务），并支持按优先级回退；
-- 每个提供者可声明**多种协议端点**（如一个 Provider 既能走 `OpenAIChatCompletions` 又能走 `AnthropicMessages`），多组 API Key 跨协议共享并加权轮询；
-- 提供 **OIDC 单点登录、API Token、配额管理**与一套**可视化管理界面**，让你像运维一个内部 API 平台一样管理 LLM 访问。
+**这个项目是怎么来的？** 在管理家庭和工作室的 AI 工具时，我发现现有方案要么太重（LiteLLM 要配 Python 环境），要么收费（OpenRouter 按 token 抽成），要么缺关键功能（one-api 没有 OIDC 和配额）。于是决定自己写一个——用 Rust 编译成单文件，丢到 NAS 上就能跑，内存占用不到一包薯片的份量。
+
+**适用场景：**
+- 🏠 **Homelab** — 在家里或 NAS 上跑一个轻量网关，统一管理你和家人朋友的 API Key，按配额分配使用
+- 🎨 **小型工作室** — 团队成员通过统一入口访问多个 LLM，管理员集中管控成本与权限，无需每人单独申请各家 API Key
+- 🔧 **VS Code / Copilot 用户** — 搭配即将推出的 VS Code 插件，编辑器内直接选择网关提供的模型，模型列表与参数自动同步
+
+核心能力：
+
+- 对客户端暴露**统一的 OpenAI 兼容接口**（`/v1/models`、`/v1/chat/completions`），现有任何 OpenAI SDK 客户端无需改动即可接入
+- 在网关内部，将请求**路由到多个上游 LLM 提供者**（OpenAI、Anthropic、其它兼容服务），并支持按优先级回退
+- 每个提供者可声明**多种协议端点**（如一个 Provider 既能走 `OpenAIChatCompletions` 又能走 `AnthropicMessages`），多组 API Key 跨协议共享并加权轮询
+- 提供 **OIDC 单点登录、API Token、配额管理**与一套**可视化管理界面**，让你像运维一个内部 API 平台一样管理 LLM 访问
+
+> 🌿 **资源占用**：空闲内存 ~15-25MB，满载也仅 ~60MB。单二进制约 15MB（不含前端）或 ~20MB（embed-frontend）。Rust 编译原生代码，无 GC 暂停，无运行时依赖。在树莓派 4（4GB）上也能流畅运行。
 
 项目目前处于 `0.1.0` 版本，核心路径与管理界面已落地，正在持续完善测试与文档。
 
@@ -44,20 +88,34 @@ LLM-Bridge 是一个用 Rust 编写的 **LLM 网关**。它的目标类似于一
 
 ## 核心特性
 
+### 🎯 统一入口
+
 | 能力 | 说明 |
 |------|------|
-| **OpenAI 兼容入口** | `GET /v1/models`、`POST /v1/chat/completions`，支持流式（SSE）与非流式响应，透传 `reasoning_content` |
-| **多协议上游适配** | 内置 OpenAI Chat Completions、OpenAI Responses、Anthropic Messages 三种协议适配器 |
-| **多协议架构** | 引入 `ProviderProtocol` 表，让一个 Provider 可同时承载多个协议端点，路由解析走四表关联 |
-| **优先级路由与回退** | 模型 → ModelProvider（按 `priority` 排序） → ProviderProtocol → Provider 四级解析，失败可回退 |
-| **加权 API Key 轮询** | 每个 Provider 持有多把 API Key，按 `weight` 加权轮询选择，跨协议共享 |
-| **OIDC 单点登录** | 任何兼容 OIDC 的 IdP 均可作为登录后端，首个登录用户自动成为 Admin |
-| **API Token 体系** | 用户可创建多个 `lb_` 前缀的 Token（bcrypt 哈希存储），每 Token 独立配额与模型权限范围 |
-| **配额管理** | 支持 daily / monthly / unlimited 三种周期，后台任务自动重置 |
-| **管理 UI** | Svelte 5 单页应用：模型目录、Token 管理、Provider/协议管理、用户角色管理 |
-| **可观测性** | OpenTelemetry traces + logs → OTLP，`#[instrument]` 追踪每个 Actor 消息 |
-| **类型安全** | `ts-rs` 生成 TypeScript 类型，`axfetchum` 生成 API 客户端，前后端类型零漂移 |
-| **单二进制部署** | `embed-frontend` feature 可把前端构建产物嵌入后端二进制 |
+| **OpenAI 兼容 API** | `GET /v1/models`、`POST /v1/chat/completions`，流式 SSE + 非流式，透传 `reasoning_content` |
+| **多协议上游适配** | 内置 OpenAI Chat / Responses、Anthropic Messages 三种适配器，支持自定义 base URL 与 headers |
+| **多协议架构** | `ProviderProtocol` 表让一个 Provider 承载多个协议端点，路由解析走四表关联 |
+| **优先级路由与回退** | LLMModel → ModelProvider → ProviderProtocol → Provider 四级解析，失败自动回退 |
+| **加权 API Key 轮询** | 每个 Provider 持有多把 Key，按 `weight` 加权轮询，跨协议共享 |
+
+### 🔐 多租户
+
+| 能力 | 说明 |
+|------|------|
+| **OIDC 单点登录** | 任何兼容 OIDC 的 IdP（Keycloak、Authentik、Google…）均可作为登录后端 |
+| **API Token 体系** | 用户可创建多个 `lb_` 前缀 Token，每 Token 独立配额与模型权限范围 |
+| **配额管理** | daily / monthly / unlimited 三种周期，后台任务自动重置，防止账单失控 |
+| **RBAC 管理 UI** | Svelte 5 单页应用：模型目录、Token 管理、Provider/协议管理、用户角色管理 |
+
+### 🚀 性能与运维
+
+| 能力 | 说明 |
+|------|------|
+| **极低资源占用** | 空闲 ~15-25MB 内存，单二进制 ~15MB，无 GC 暂停，树莓派 4 也能流畅运行 |
+| **单二进制部署** | `embed-frontend` feature 把前端嵌入二进制，一条命令即可在 NAS、VPS 上运行 |
+| **可观测性** | OpenTelemetry traces + logs → OTLP，每个 Actor 消息 `#[instrument]` 追踪 |
+| **类型安全** | `ts-rs` + `axfetchum` 自动生成前端类型与 API 客户端，前后端零漂移 |
+| **VS Code 插件** 🚧 | 即将推出的扩展，自动从网关同步模型列表与参数到编辑器 Copilot 配置 |
 
 ---
 
@@ -504,6 +562,31 @@ cargo build --features otel
 
 ---
 
+## VS Code Copilot 插件（规划中）🚧
+
+LLM-Bridge 将提供一款 VS Code 扩展，打通 **编辑器 ↔ 网关** 的最后一公里：
+
+```
+┌──────────────────┐      自动同步模型列表      ┌──────────────────┐
+│  VS Code         │ ◄──────────────────────► │  LLM-Bridge      │
+│  + 插件          │    /v1/models +          │  网关            │
+│                  │    参数配置               │                  │
+└──────────────────┘                          └──────────────────┘
+```
+
+**核心能力（规划）：**
+
+| 功能 | 说明 |
+|------|------|
+| **模型列表自动同步** | 插件定期拉取网关 `/v1/models`，自动填充 VS Code Copilot 的可用模型清单，无需手动编辑 JSON 配置 |
+| **参数一键同步** | 网关中配置的 `max_tokens`、`temperature` 等参数可直接同步到编辑器，或在插件 UI 中按模型微调 |
+| **多网关切换** | 支持配置多个 LLM-Bridge 实例，一键切换（如家庭网关 ↔ 工作室网关） |
+| **Token 管理集成** | 在编辑器内直接查看 Token 用量、配额剩余，无需打开管理页面 |
+
+> 插件将以 VS Code Extension 形式发布，兼容 VS Code Stable 与 Insiders，并计划支持 Cursor / Windsurf 等兼容编辑器。具体发布时间请关注本仓库 Release。
+
+---
+
 ## 项目状态
 
 LLM-Bridge 当前处于 `0.1.0`，核心路径与管理界面均已落地：
@@ -516,7 +599,8 @@ LLM-Bridge 当前处于 `0.1.0`，核心路径与管理界面均已落地：
 - ✅ Admin REST API（Provider / 协议 / 模型 / 用户）
 - ✅ Svelte 5 管理界面（5 个页面）
 - ✅ OpenTelemetry 可观测性
-- 🔄 测试套件与文档完善中
+- � VS Code Copilot 插件（规划中）
+- �🔄 测试套件与文档完善中
 
 详细进度与已知问题见 [`STATUS.md`](./STATUS.md)，架构演进计划见 [`PLAN.md`](./PLAN.md)。
 
