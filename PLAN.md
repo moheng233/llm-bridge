@@ -304,7 +304,7 @@ pub struct ResolvedProviderRoute {
 
 | # | 状态 | 问题 |
 |---|------|------|
-| B1 | ⬜ 待做 | 两个管理员页面单文件 900~1100 行，职责混杂（list + 多个 dialog + 内联表单 + 删除确认） |
+| B1 | ✅ 完成 | 两个管理员页面单文件 900~1100 行，职责混杂 — ProvidersPage 拆为 4 文件（980→~230行 orchestrator），AdminModelsPage 拆为 4 文件（857→~180行 orchestrator），共享 ProtocolEditForm 参数化复用 |
 | B2 | 🔨 部分完成 | 每个页面重复 header / loading / error / empty 模板，无抽象 — 已抽 `PageShell`/`SectionHeader`/`EmptyState`/`ErrorState` 4 个组件，待各页面接入替换 |
 | B3 | 🔨 部分完成 | 两个管理员页面都自己实现 `deleteDialogOpen + deleteTarget + confirmDelete`，重复 — 已抽 `useConfirm` hook + `ConfirmHost`，待两处删除对话框替换接入 |
 | B4 | ✅ 完成 | 状态管理分散（每页自己 `loading/error/data`），无统一数据层 — 已建 `ResourceStore`/`MapResourceStore` 基类 + 7 个资源 store，待各页面接入替换 |
@@ -454,25 +454,26 @@ pub struct ResolvedProviderRoute {
 - 删除散落 hardcode
 - 顺带集中 `SKELETON_ROWS` 常量（B8），五个页面 skeleton 接入
 
-#### B.3 拆分 `ProvidersPage`（1100 行 → 多文件）
+#### B.3 拆分 `ProvidersPage`（1100 行 → 多文件）✅ 完成
 
 | 文件 | 职责 |
 |------|------|
-| `ProvidersPage.svelte` | 容器 + list |
-| `ProviderCreateDialog.svelte` | 创建对话框（含协议配置子表单） |
-| `ProtocolEditForm.svelte` | 协议增改内联表单（复用于创建与编辑） |
-| `ProviderRow.svelte` | 单行展开内容 |
+| `lib/ProvidersPage.svelte` | 容器 + list + 删除对话框（~230 行） |
+| `lib/providers/ProviderCreateDialog.svelte` | 创建对话框（含协议配置子表单） |
+| `lib/providers/ProtocolEditForm.svelte` | 协议增改表单（复用于创建与编辑） |
+| `lib/providers/ProviderRow.svelte` | 单行展开内容 |
+| `lib/utils/provider.ts` | `emptyProtocol` / `buildQuotaConfigString` / `protocolViewToInput` 工具 |
 
-删除确认走 Phase A 的 `useConfirm` hook。
+删除确认留父组件（useConfirm 接入留后续 A.3）。
 
-#### B.4 拆分 `AdminModelsPage`（900 行 → 多文件）
+#### B.4 拆分 `AdminModelsPage`（900 行 → 多文件）✅ 完成
 
 | 文件 | 职责 |
 |------|------|
-| `AdminModelsPage.svelte` | 容器 |
-| `ModelFormDialog.svelte` | 模型增改 |
-| `ModelLinkEditForm.svelte` | 连接编辑（从内联变 Dialog，更清晰） |
-| `ModelRow.svelte` | 单行展开内容 |
+| `lib/AdminModelsPage.svelte` | 容器 + 删除对话框（~180 行） |
+| `lib/admin-models/ModelFormDialog.svelte` | 模型增改 |
+| `lib/admin-models/ModelLinkEditForm.svelte` | 连接编辑（含 parseNumOrNull + protocolsForSelectedProvider + currentModel 内化） |
+| `lib/admin-models/ModelRow.svelte` | 单行展开内容（内嵌 ModelLinkEditForm） |
 
 #### B.5 模型目录详情 Drawer（决策⑧第二步）
 
