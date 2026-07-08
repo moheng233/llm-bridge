@@ -254,7 +254,7 @@
   {/if}
 
   <!-- Delete confirmation dialog -->
-  <Dialog bind:open={openExternal}>
+  <Dialog open={deleteDialogOpen} onOpenChange={(v) => (deleteDialogOpen = v)}>
     <DialogContent class="sm:max-w-sm">
       <DialogHeader>
         <DialogTitle class="font-mono text-sm">确认删除</DialogTitle>
