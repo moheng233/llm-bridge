@@ -1,9 +1,10 @@
 <script setup lang="ts">
+import { type ModelProviderSummary } from "@bindings/ModelProviderSummary";
+import { type ModelResponse } from "@bindings/ModelResponse";
+import { Search, Cpu, Eye, Wrench, Brain } from "@lucide/vue";
+
 import { getApi, formatTokens, formatPrice } from "~/lib/api";
 import { SKELETON_ROWS } from "~/lib/constants";
-import { Search, Cpu, Eye, Wrench, Brain } from "@lucide/vue";
-import { type ModelResponse } from "@bindings/ModelResponse";
-import { type ModelProviderSummary } from "@bindings/ModelProviderSummary";
 
 const api = getApi();
 
@@ -80,23 +81,23 @@ function sortIndicator(field: typeof sortField.value): string {
   <div class="flex h-full min-h-0 flex-col gap-4">
     <div class="flex items-center justify-between">
       <div>
-        <h2 class="text-xl font-bold font-mono text-foreground">模型目录</h2>
-        <p class="text-sm text-muted-foreground mt-1">浏览可用模型的能力与定价</p>
+        <h2 class="font-mono text-xl font-bold text-foreground">模型目录</h2>
+        <p class="mt-1 text-sm text-muted-foreground">浏览可用模型的能力与定价</p>
       </div>
       <Badge variant="secondary" class="font-mono">{{ models.length }} 个模型</Badge>
     </div>
 
     <Alert v-if="error" class="border-destructive/30 bg-destructive/10">
-      <AlertDescription class="text-destructive text-sm">{{ error }}</AlertDescription>
+      <AlertDescription class="text-sm text-destructive">{{ error }}</AlertDescription>
     </Alert>
 
     <div class="flex items-center gap-3">
-      <div class="relative flex-1 max-w-md">
-        <Search class="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+      <div class="relative max-w-md flex-1">
+        <Search class="absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
         <Input v-model="search" class="pl-9" placeholder="搜索模型名称或描述..." />
       </div>
       <Label
-        class="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer whitespace-nowrap"
+        class="flex cursor-pointer items-center gap-2 text-sm whitespace-nowrap text-muted-foreground"
       >
         <Checkbox v-model:checked="onlyAvailable" class="cursor-pointer" /> 仅可用
       </Label>
@@ -105,24 +106,24 @@ function sortIndicator(field: typeof sortField.value): string {
     <div v-if="loading" class="flex flex-col gap-2">
       <Skeleton v-for="i in SKELETON_ROWS.models" :key="i" class="h-12 w-full rounded-lg" />
     </div>
-    <div v-else class="flex-1 min-h-0 overflow-auto rounded-lg border border-border">
+    <div v-else class="min-h-0 flex-1 overflow-auto rounded-lg border border-border">
       <table class="w-full text-sm">
-        <thead class="sticky top-0 bg-card border-b border-border">
+        <thead class="sticky top-0 border-b border-border bg-card">
           <tr>
             <th
-              class="px-4 py-3 text-left font-mono text-xs text-muted-foreground cursor-pointer hover:text-foreground"
+              class="cursor-pointer px-4 py-3 text-left font-mono text-xs text-muted-foreground hover:text-foreground"
               @click="toggleSort('name')"
             >
               模型名称{{ sortIndicator("name") }}
             </th>
             <th
-              class="px-4 py-3 text-right font-mono text-xs text-muted-foreground cursor-pointer hover:text-foreground"
+              class="cursor-pointer px-4 py-3 text-right font-mono text-xs text-muted-foreground hover:text-foreground"
               @click="toggleSort('maxInputTokens')"
             >
               输入{{ sortIndicator("maxInputTokens") }}
             </th>
             <th
-              class="px-4 py-3 text-right font-mono text-xs text-muted-foreground cursor-pointer hover:text-foreground"
+              class="cursor-pointer px-4 py-3 text-right font-mono text-xs text-muted-foreground hover:text-foreground"
               @click="toggleSort('maxOutputTokens')"
             >
               输出{{ sortIndicator("maxOutputTokens") }}
@@ -136,30 +137,30 @@ function sortIndicator(field: typeof sortField.value): string {
           <tr
             v-for="model in filteredModels"
             :key="model.modelName"
-            class="border-b border-border/50 hover:bg-accent/50 transition-colors cursor-pointer"
+            class="cursor-pointer border-b border-border/50 transition-colors hover:bg-accent/50"
           >
             <td class="px-4 py-3">
               <div class="flex flex-col gap-0.5">
                 <span class="font-mono font-medium text-foreground">{{ model.modelName }}</span>
-                <span v-if="model.description" class="text-xs text-muted-foreground line-clamp-1">{{
+                <span v-if="model.description" class="line-clamp-1 text-xs text-muted-foreground">{{
                   model.description
                 }}</span>
-                <div v-if="model.providers.length > 0" class="flex gap-1 mt-1 flex-wrap">
+                <div v-if="model.providers.length > 0" class="mt-1 flex flex-wrap gap-1">
                   <Badge
                     v-for="p in model.providers"
                     :key="p.providerModelId"
                     variant="outline"
-                    class="text-xs font-mono px-1.5 py-0"
+                    class="px-1.5 py-0 font-mono text-xs"
                     :title="p.providerModelId"
                     >{{ p.providerDisplayName }}</Badge
                   >
                 </div>
               </div>
             </td>
-            <td class="px-4 py-3 text-right font-mono tabular-nums text-foreground">
+            <td class="px-4 py-3 text-right font-mono text-foreground tabular-nums">
               {{ formatTokens(model.maxInputTokens) }}
             </td>
-            <td class="px-4 py-3 text-right font-mono tabular-nums text-foreground">
+            <td class="px-4 py-3 text-right font-mono text-foreground tabular-nums">
               {{ formatTokens(model.maxOutputTokens) }}
             </td>
             <td class="px-4 py-3">
@@ -173,10 +174,10 @@ function sortIndicator(field: typeof sortField.value): string {
                 <Brain v-if="model.thinking" class="h-3.5 w-3.5 text-[#22C55E]" title="推理" />
               </div>
             </td>
-            <td class="px-4 py-3 text-right font-mono tabular-nums text-foreground">
+            <td class="px-4 py-3 text-right font-mono text-foreground tabular-nums">
               {{ formatPrice(cheapestInputPrice(model.providers)) }}
             </td>
-            <td class="px-4 py-3 text-right font-mono tabular-nums text-foreground">
+            <td class="px-4 py-3 text-right font-mono text-foreground tabular-nums">
               {{ formatPrice(cheapestOutputPrice(model.providers)) }}
             </td>
           </tr>

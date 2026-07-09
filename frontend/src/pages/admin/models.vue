@@ -1,13 +1,14 @@
 <script setup lang="ts">
-import { getApi } from "~/lib/api";
-import { useAuthStore } from "~/stores/auth";
-import { SKELETON_ROWS } from "~/lib/constants";
-import { Plus, Cpu, ChevronDown, ChevronRight, Pencil, Trash2, Link2 } from "@lucide/vue";
-import ModelLinkEditForm from "~/components/providers/ModelLinkEditForm.vue";
 import { type AdminModelResponse } from "@bindings/AdminModelResponse";
-import { type ProviderResponse } from "@bindings/ProviderResponse";
-import { type ModelLinkView } from "@bindings/ModelLinkView";
 import { type ModelInput } from "@bindings/ModelInput";
+import { type ModelLinkView } from "@bindings/ModelLinkView";
+import { type ProviderResponse } from "@bindings/ProviderResponse";
+import { Plus, Cpu, ChevronDown, ChevronRight, Pencil, Trash2, Link2 } from "@lucide/vue";
+
+import ModelLinkEditForm from "~/components/providers/ModelLinkEditForm.vue";
+import { getApi } from "~/lib/api";
+import { SKELETON_ROWS } from "~/lib/constants";
+import { useAuthStore } from "~/stores/auth";
 
 const api = getApi();
 const authStore = useAuthStore();
@@ -223,18 +224,18 @@ function handleLinkSaved(modelId: number) {
   <div class="flex h-full min-h-0 flex-col gap-4">
     <div class="flex items-center justify-between">
       <div>
-        <h2 class="text-xl font-bold font-mono text-foreground">模型管理</h2>
-        <p class="text-sm text-muted-foreground mt-1">大语言模型标称能力 + 提供者连接</p>
+        <h2 class="font-mono text-xl font-bold text-foreground">模型管理</h2>
+        <p class="mt-1 text-sm text-muted-foreground">大语言模型标称能力 + 提供者连接</p>
       </div>
       <Button
-        class="bg-[#22C55E] hover:bg-[#16A34A] text-black font-medium gap-2 cursor-pointer"
+        class="cursor-pointer gap-2 bg-[#22C55E] font-medium text-black hover:bg-[#16A34A]"
         @click="openCreateDialog"
         ><Plus class="h-4 w-4" /> 添加模型</Button
       >
     </div>
 
     <Alert v-if="error" class="border-destructive/30 bg-destructive/10"
-      ><AlertDescription class="text-destructive text-sm">{{ error }}</AlertDescription></Alert
+      ><AlertDescription class="text-sm text-destructive">{{ error }}</AlertDescription></Alert
     >
 
     <div v-if="loading" class="flex flex-col gap-3">
@@ -252,38 +253,38 @@ function handleLinkSaved(modelId: number) {
     <div v-else class="flex flex-col gap-2 overflow-auto">
       <div v-for="m in models" :key="m.id" class="rounded-lg border border-border bg-card">
         <button
-          class="flex w-full items-center gap-3 px-4 py-3 text-left cursor-pointer hover:bg-accent/50 transition-colors"
+          class="flex w-full cursor-pointer items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-accent/50"
           @click="toggleLinks(m.id)"
         >
-          <ChevronDown v-if="expandedId === m.id" class="h-4 w-4 text-muted-foreground shrink-0" />
-          <ChevronRight v-else class="h-4 w-4 text-muted-foreground shrink-0" />
-          <div class="flex-1 min-w-0">
-            <div class="flex items-center gap-2 flex-wrap">
+          <ChevronDown v-if="expandedId === m.id" class="h-4 w-4 shrink-0 text-muted-foreground" />
+          <ChevronRight v-else class="h-4 w-4 shrink-0 text-muted-foreground" />
+          <div class="min-w-0 flex-1">
+            <div class="flex flex-wrap items-center gap-2">
               <span class="font-mono font-medium text-foreground">{{ m.modelName }}</span>
               <Badge v-if="m.status" variant="secondary" class="text-xs">{{ m.status }}</Badge>
               <Badge variant="outline" class="text-xs">{{ m.providerCount }} 个连接</Badge>
             </div>
-            <div class="flex gap-3 text-xs text-muted-foreground mt-0.5 flex-wrap">
+            <div class="mt-0.5 flex flex-wrap gap-3 text-xs text-muted-foreground">
               <span>{{ m.displayName }}</span>
               <span>↑{{ m.maxInputTokens.toLocaleString() }}</span>
               <span>↓{{ m.maxOutputTokens.toLocaleString() }}</span>
-              <Badge v-if="m.toolCalling" variant="outline" class="text-[10px] py-0">tools</Badge>
-              <Badge v-if="m.vision" variant="outline" class="text-[10px] py-0">vision</Badge>
-              <Badge v-if="m.thinking" variant="outline" class="text-[10px] py-0">thinking</Badge>
+              <Badge v-if="m.toolCalling" variant="outline" class="py-0 text-[10px]">tools</Badge>
+              <Badge v-if="m.vision" variant="outline" class="py-0 text-[10px]">vision</Badge>
+              <Badge v-if="m.thinking" variant="outline" class="py-0 text-[10px]">thinking</Badge>
             </div>
           </div>
           <div class="flex items-center gap-1">
             <Button
               size="icon"
               variant="ghost"
-              class="h-7 w-7 text-muted-foreground hover:text-foreground cursor-pointer"
+              class="h-7 w-7 cursor-pointer text-muted-foreground hover:text-foreground"
               @click.stop="openEditDialog(m)"
               ><Pencil class="h-3.5 w-3.5"
             /></Button>
             <Button
               size="icon"
               variant="ghost"
-              class="h-7 w-7 text-muted-foreground hover:text-destructive cursor-pointer"
+              class="h-7 w-7 cursor-pointer text-muted-foreground hover:text-destructive"
               @click.stop="confirmDelete({ type: 'model', modelId: m.id, name: m.modelName })"
               ><Trash2 class="h-3.5 w-3.5"
             /></Button>
@@ -291,18 +292,18 @@ function handleLinkSaved(modelId: number) {
         </button>
         <div
           v-if="expandedId === m.id"
-          class="border-t border-border px-4 py-3 flex flex-col gap-3"
+          class="flex flex-col gap-3 border-t border-border px-4 py-3"
         >
           <!-- Header: title + add link button -->
           <div class="flex items-center justify-between">
-            <span class="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+            <span class="text-xs font-medium tracking-wide text-muted-foreground uppercase">
               提供者连接
             </span>
             <Button
               v-if="editingLinkModelId !== m.id"
               size="sm"
               variant="outline"
-              class="h-7 gap-1 cursor-pointer"
+              class="h-7 cursor-pointer gap-1"
               @click="openCreateLink(m.id)"
             >
               <Link2 class="h-3 w-3" />
@@ -325,13 +326,13 @@ function handleLinkSaved(modelId: number) {
 
           <div
             v-if="linksLoading.has(m.id)"
-            class="flex items-center gap-2 text-sm text-muted-foreground py-2"
+            class="flex items-center gap-2 py-2 text-sm text-muted-foreground"
           >
             <Spinner class="h-4 w-4" /> 加载连接...
           </div>
           <div
             v-else-if="!linksCache.get(m.id)?.length"
-            class="flex items-center gap-2 text-sm text-muted-foreground py-2 italic"
+            class="flex items-center gap-2 py-2 text-sm text-muted-foreground italic"
           >
             <Link2 class="h-4 w-4" /> 暂无连接 — 该模型尚未关联任何提供者
           </div>
@@ -341,26 +342,26 @@ function handleLinkSaved(modelId: number) {
               :key="link.id"
               class="flex items-center justify-between rounded-md border border-border bg-muted/30 px-3 py-2 text-sm"
             >
-              <div class="flex items-center gap-2 min-w-0 flex-wrap">
-                <Badge variant="outline" class="text-xs font-mono shrink-0">{{
+              <div class="flex min-w-0 flex-wrap items-center gap-2">
+                <Badge variant="outline" class="shrink-0 font-mono text-xs">{{
                   link.protocol
                 }}</Badge>
-                <span class="font-mono text-foreground text-xs">{{
+                <span class="font-mono text-xs text-foreground">{{
                   link.providerDisplayName
                 }}</span>
-                <span class="text-muted-foreground text-xs"
+                <span class="text-xs text-muted-foreground"
                   >→ {{ link.providerModelId }} P{{ link.priority }}</span
                 >
                 <Badge v-if="!link.enabled" variant="secondary" class="text-xs">禁用</Badge>
-                <span v-if="link.inputPricePer1m !== null" class="text-muted-foreground text-xs"
+                <span v-if="link.inputPricePer1m !== null" class="text-xs text-muted-foreground"
                   >${{ link.inputPricePer1m }}/M</span
                 >
               </div>
-              <div class="flex items-center gap-1 shrink-0">
+              <div class="flex shrink-0 items-center gap-1">
                 <Button
                   size="icon"
                   variant="ghost"
-                  class="h-6 w-6 text-muted-foreground hover:text-foreground cursor-pointer"
+                  class="h-6 w-6 cursor-pointer text-muted-foreground hover:text-foreground"
                   @click="openEditLink(m.id, link)"
                   aria-label="编辑连接"
                   ><Pencil class="h-3 w-3"
@@ -368,7 +369,7 @@ function handleLinkSaved(modelId: number) {
                 <Button
                   size="icon"
                   variant="ghost"
-                  class="h-6 w-6 text-muted-foreground hover:text-destructive cursor-pointer"
+                  class="h-6 w-6 cursor-pointer text-muted-foreground hover:text-destructive"
                   @click="
                     confirmDelete({
                       type: 'link',
@@ -414,18 +415,18 @@ function handleLinkSaved(modelId: number) {
             </div>
           </div>
           <div class="flex flex-wrap gap-4">
-            <Label class="flex items-center gap-2 text-sm cursor-pointer"
+            <Label class="flex cursor-pointer items-center gap-2 text-sm"
               ><Checkbox v-model:checked="form.toolCalling" /> 工具调用</Label
             >
-            <Label class="flex items-center gap-2 text-sm cursor-pointer"
+            <Label class="flex cursor-pointer items-center gap-2 text-sm"
               ><Checkbox v-model:checked="form.vision" /> 视觉</Label
             >
-            <Label class="flex items-center gap-2 text-sm cursor-pointer"
+            <Label class="flex cursor-pointer items-center gap-2 text-sm"
               ><Checkbox v-model:checked="form.thinking" /> 推理</Label
             >
           </div>
           <Button
-            class="bg-[#22C55E] hover:bg-[#16A34A] text-black font-medium cursor-pointer"
+            class="cursor-pointer bg-[#22C55E] font-medium text-black hover:bg-[#16A34A]"
             @click="saveModel"
             :disabled="formSaving || !form.modelName.trim()"
             >{{ formSaving ? "保存中..." : editingModel ? "保存" : "创建" }}</Button

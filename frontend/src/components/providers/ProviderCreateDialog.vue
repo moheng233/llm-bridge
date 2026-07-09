@@ -1,4 +1,11 @@
 <script setup lang="ts">
+import { type ApiKeyEntry } from "@bindings/ApiKeyEntry";
+import { type ProtocolInput } from "@bindings/ProtocolInput";
+import { type ProviderQuotaAdapter } from "@bindings/ProviderQuotaAdapter";
+import { type ProviderResponse } from "@bindings/ProviderResponse";
+import { Plus } from "@lucide/vue";
+
+import ProviderForm from "./ProviderForm.vue";
 import { getApi } from "~/lib/api";
 import {
   emptyProtocol,
@@ -6,12 +13,6 @@ import {
   buildQuotaConfigString,
   parseQuotaConfigString,
 } from "~/lib/utils/provider";
-import { Plus } from "@lucide/vue";
-import { type ApiKeyEntry } from "@bindings/ApiKeyEntry";
-import { type ProviderResponse } from "@bindings/ProviderResponse";
-import { type ProtocolInput } from "@bindings/ProtocolInput";
-import { type ProviderQuotaAdapter } from "@bindings/ProviderQuotaAdapter";
-import ProviderForm from "./ProviderForm.vue";
 
 const api = getApi();
 
@@ -223,7 +224,7 @@ async function handleSubmit() {
   >
     <DialogTrigger as-child>
       <Button
-        class="bg-[#22C55E] hover:bg-[#16A34A] text-black font-medium gap-2 cursor-pointer"
+        class="cursor-pointer gap-2 bg-[#22C55E] font-medium text-black hover:bg-[#16A34A]"
         @click="
           resetForm();
           showCreate = true;

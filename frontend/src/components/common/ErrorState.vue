@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { cn } from "~/lib/utils";
 import { AlertCircle, RefreshCw } from "@lucide/vue";
+
+import { cn } from "~/lib/utils";
 import { formatApiError } from "~/lib/utils/error";
 
 const props = withDefaults(
@@ -36,12 +37,12 @@ const formatted = computed(() => formatApiError(props.error));
     "
   >
     <template v-if="inline">
-      <AlertCircle class="h-4 w-4 text-destructive shrink-0" />
-      <div class="flex flex-col gap-0.5 min-w-0">
+      <AlertCircle class="h-4 w-4 shrink-0 text-destructive" />
+      <div class="flex min-w-0 flex-col gap-0.5">
         <span class="text-sm font-medium text-destructive">{{ formatted.title }}</span>
         <span
           v-if="formatted.detail && formatted.detail !== formatted.title"
-          class="text-xs text-muted-foreground truncate"
+          class="truncate text-xs text-muted-foreground"
           :title="formatted.detail"
         >
           {{ formatted.detail }}
@@ -51,7 +52,7 @@ const formatted = computed(() => formatApiError(props.error));
         v-if="onRetry"
         variant="outline"
         size="sm"
-        class="ml-auto shrink-0 cursor-pointer text-xs h-7 gap-1"
+        class="ml-auto h-7 shrink-0 cursor-pointer gap-1 text-xs"
         @click="onRetry"
       >
         <RefreshCw class="h-3 w-3" />
@@ -64,7 +65,7 @@ const formatted = computed(() => formatApiError(props.error));
         <p class="text-sm font-medium">{{ formatted.title }}</p>
         <p
           v-if="formatted.detail && formatted.detail !== formatted.title"
-          class="text-xs text-muted-foreground max-w-xs text-center"
+          class="max-w-xs text-center text-xs text-muted-foreground"
         >
           {{ formatted.detail }}
         </p>

@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { Toaster } from "vue-sonner";
-import { useAuthStore } from "~/stores/auth";
-import { useThemeStore } from "~/stores/theme";
+
 import {
   Cpu,
   Key,
@@ -14,6 +13,9 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
 } from "@lucide/vue";
+
+import { useAuthStore } from "~/stores/auth";
+import { useThemeStore } from "~/stores/theme";
 
 const router = useRouter();
 const route = useRoute();
@@ -84,15 +86,15 @@ function handleLogout() {
     <!-- Sidebar -->
     <aside
       :class="[
-        'flex flex-col border-r border-border bg-sidebar transition-all duration-200 shrink-0',
+        'flex shrink-0 flex-col border-r border-border bg-sidebar transition-all duration-200',
         sidebarCollapsed ? 'w-[3.25rem]' : 'w-56',
       ]"
     >
       <!-- Header -->
-      <div class="flex items-center gap-2.5 px-3 py-3 border-b border-border/50">
+      <div class="flex items-center gap-2.5 border-b border-border/50 px-3 py-3">
         <div
           :class="[
-            'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#22C55E] text-black text-sm font-bold font-mono',
+            'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#22C55E] font-mono text-sm font-bold text-black',
             sidebarCollapsed ? 'mx-auto' : '',
           ]"
         >
@@ -100,15 +102,15 @@ function handleLogout() {
         </div>
         <span
           v-if="!sidebarCollapsed"
-          class="text-sm font-semibold font-mono whitespace-nowrap overflow-hidden"
+          class="overflow-hidden font-mono text-sm font-semibold whitespace-nowrap"
           >LLM Bridge</span
         >
       </div>
 
       <!-- Nav -->
       <nav class="flex-1 overflow-y-auto py-2">
-        <div class="px-2 mb-1">
-          <span v-if="!sidebarCollapsed" class="text-xs font-medium text-muted-foreground px-2"
+        <div class="mb-1 px-2">
+          <span v-if="!sidebarCollapsed" class="px-2 text-xs font-medium text-muted-foreground"
             >菜单</span
           >
         </div>
@@ -118,10 +120,10 @@ function handleLogout() {
           @click="navigate(item.path)"
           :title="sidebarCollapsed ? item.label : ''"
           :class="[
-            'flex items-center gap-2 w-full px-3 py-2 text-sm rounded-md transition-colors mb-0.5',
+            'mb-0.5 flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors',
             currentPath === item.path
-              ? 'bg-accent text-accent-foreground font-medium'
-              : 'text-muted-foreground hover:text-foreground hover:bg-accent/50',
+              ? 'bg-accent font-medium text-accent-foreground'
+              : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
             sidebarCollapsed ? 'justify-center' : '',
           ]"
         >
@@ -130,8 +132,8 @@ function handleLogout() {
         </button>
 
         <template v-if="isAdmin">
-          <div class="px-2 mt-4 mb-1">
-            <span v-if="!sidebarCollapsed" class="text-xs font-medium text-muted-foreground px-2"
+          <div class="mt-4 mb-1 px-2">
+            <span v-if="!sidebarCollapsed" class="px-2 text-xs font-medium text-muted-foreground"
               >管理</span
             >
           </div>
@@ -141,10 +143,10 @@ function handleLogout() {
             @click="navigate(item.path)"
             :title="sidebarCollapsed ? item.label : ''"
             :class="[
-              'flex items-center gap-2 w-full px-3 py-2 text-sm rounded-md transition-colors mb-0.5',
+              'mb-0.5 flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors',
               currentPath === item.path
-                ? 'bg-accent text-accent-foreground font-medium'
-                : 'text-muted-foreground hover:text-foreground hover:bg-accent/50',
+                ? 'bg-accent font-medium text-accent-foreground'
+                : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
               sidebarCollapsed ? 'justify-center' : '',
             ]"
           >
@@ -155,15 +157,15 @@ function handleLogout() {
       </nav>
 
       <!-- Footer -->
-      <div class="border-t border-border/50 p-2 flex flex-col gap-1">
+      <div class="flex flex-col gap-1 border-t border-border/50 p-2">
         <div v-if="user && !sidebarCollapsed" class="px-2">
-          <span class="text-xs text-muted-foreground font-mono">{{ user.name }}</span>
+          <span class="font-mono text-xs text-muted-foreground">{{ user.name }}</span>
         </div>
         <button
           @click="themeStore.toggle()"
           :title="themeStore.mode === 'dark' ? '切换到白天模式' : '切换到黑夜模式'"
           :class="[
-            'flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded-md text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors',
+            'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground',
             sidebarCollapsed ? 'justify-center' : '',
           ]"
         >
@@ -176,7 +178,7 @@ function handleLogout() {
         <button
           @click="handleLogout"
           :class="[
-            'flex items-center gap-2 w-full px-2 py-1.5 text-xs rounded-md text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors',
+            'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground',
             sidebarCollapsed ? 'justify-center' : '',
           ]"
         >
@@ -187,19 +189,19 @@ function handleLogout() {
     </aside>
 
     <!-- Main area -->
-    <div class="flex-1 flex flex-col min-w-0 overflow-hidden">
+    <div class="flex min-w-0 flex-1 flex-col overflow-hidden">
       <header class="flex h-12 shrink-0 items-center gap-2 border-b border-border px-4">
         <button
           @click="toggleSidebar"
-          class="p-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+          class="rounded-md p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
           aria-label="Toggle sidebar"
         >
           <PanelLeftOpen v-if="sidebarCollapsed" class="h-4 w-4" />
           <PanelLeftClose v-else class="h-4 w-4" />
         </button>
-        <span class="text-sm font-medium text-muted-foreground font-mono">{{ currentLabel }}</span>
+        <span class="font-mono text-sm font-medium text-muted-foreground">{{ currentLabel }}</span>
       </header>
-      <main class="flex-1 min-h-0 overflow-hidden p-6 flex flex-col">
+      <main class="flex min-h-0 flex-1 flex-col overflow-hidden p-6">
         <!-- Admin route guard -->
         <UnauthorizedPage v-if="accessDenied" />
         <router-view v-else />

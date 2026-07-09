@@ -8,7 +8,7 @@ onMounted(() => {
   <div class="flex items-center justify-center">
     <div class="text-center">
       <div
-        class="h-8 w-8 mx-auto mb-3 animate-spin rounded-full border-2 border-[#22C55E] border-t-transparent"
+        class="mx-auto mb-3 h-8 w-8 animate-spin rounded-full border-2 border-[#22C55E] border-t-transparent"
       />
       <p class="text-sm text-muted-foreground">正在跳转到登录页面...</p>
     </div>

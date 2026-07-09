@@ -1,4 +1,29 @@
 {
   "$schema": "./node_modules/oxfmt/configuration_schema.json",
-  "ignorePatterns": []
+  "ignorePatterns": [
+    "src/components/ui/**/**"
+  ],
+  "embeddedLanguageFormatting": "auto",
+  "sortImports": {
+    "customGroups": [
+      {
+        "groupName": "vue-libs",
+        "elementNamePattern": ["vue", "vue-**", "vue-**/**", "pinia"]
+      }
+    ],
+    "groups": [
+      "vue-libs",
+      { "newlinesBetween": true },
+      ["value-builtin", "value-external"],
+      ["value-internal", "value-parent", "value-sibling", "value-index"],
+      { "newlinesBetween": true },
+      "type-import",
+      "unknown"
+    ]
+  },
+  "sortTailwindcss": {
+    "stylesheet": "./src/assets/main.css",
+    "functions": ["clsx", "cn"],
+    "preserveWhitespace": true
+  }
 }

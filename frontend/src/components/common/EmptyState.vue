@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { cn } from "~/lib/utils";
 import { type Component } from "vue";
+
+import { cn } from "~/lib/utils";
 
 const props = withDefaults(
   defineProps<{
@@ -23,10 +24,10 @@ const Icon = props.icon;
     <div class="flex flex-col items-center gap-3">
       <component v-if="Icon" :is="Icon" class="h-12 w-12 opacity-30" />
       <p class="text-sm font-medium">{{ title }}</p>
-      <p v-if="description" class="text-xs text-muted-foreground max-w-xs text-center">
+      <p v-if="description" class="max-w-xs text-center text-xs text-muted-foreground">
         {{ description }}
       </p>
-      <div v-if="$slots.actions" class="flex items-center gap-2 mt-1">
+      <div v-if="$slots.actions" class="mt-1 flex items-center gap-2">
         <slot name="actions" />
       </div>
     </div>

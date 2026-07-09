@@ -1,10 +1,11 @@
 <script setup lang="ts">
+import { type CreateTokenResponse } from "@bindings/CreateTokenResponse";
+import { type TokenListItem } from "@bindings/TokenListItem";
+import { Plus, Trash2, Key, Copy, Check } from "@lucide/vue";
+
 import { getApi, formatTime } from "~/lib/api";
 import { QUOTA_PERIOD_OPTIONS, quotaPeriodLabel, SKELETON_ROWS } from "~/lib/constants";
 import { useAuthStore } from "~/stores/auth";
-import { Plus, Trash2, Key, Copy, Check } from "@lucide/vue";
-import { type TokenListItem } from "@bindings/TokenListItem";
-import { type CreateTokenResponse } from "@bindings/CreateTokenResponse";
 
 const api = getApi();
 const authStore = useAuthStore();
@@ -113,13 +114,13 @@ function quotaLabel(t: TokenListItem): string {
     <!-- Header -->
     <div class="flex items-center justify-between">
       <div>
-        <h2 class="text-xl font-bold font-mono text-foreground">API Token</h2>
-        <p class="text-sm text-muted-foreground mt-1">管理你的 API Token，用于调用 LLM 接口</p>
+        <h2 class="font-mono text-xl font-bold text-foreground">API Token</h2>
+        <p class="mt-1 text-sm text-muted-foreground">管理你的 API Token，用于调用 LLM 接口</p>
       </div>
       <Dialog :open="showCreate" @update:open="(v: boolean) => (showCreate = v)">
         <DialogTrigger as-child>
           <Button
-            class="bg-[#22C55E] hover:bg-[#16A34A] text-black font-medium gap-2 cursor-pointer"
+            class="cursor-pointer gap-2 bg-[#22C55E] font-medium text-black hover:bg-[#16A34A]"
             @click="showCreate = true"
           >
             <Plus class="h-4 w-4" /> 创建 Token
@@ -132,7 +133,7 @@ function quotaLabel(t: TokenListItem): string {
           <!-- Token created -->
           <div v-if="createdToken" class="flex flex-col gap-4">
             <Alert class="border-[#22C55E]/30 bg-[#22C55E]/10">
-              <AlertDescription class="text-[#22C55E] text-sm"
+              <AlertDescription class="text-sm text-[#22C55E]"
                 >Token 创建成功！请立即复制保存，此 Token 仅显示一次。</AlertDescription
               >
             </Alert>
@@ -143,7 +144,7 @@ function quotaLabel(t: TokenListItem): string {
               <Button
                 size="icon"
                 variant="outline"
-                class="cursor-pointer shrink-0"
+                class="shrink-0 cursor-pointer"
                 @click="copyToken"
               >
                 <Check v-if="tokenCopied" class="h-4 w-4 text-[#22C55E]" />
@@ -193,7 +194,7 @@ function quotaLabel(t: TokenListItem): string {
               </Select>
             </div>
             <Button
-              class="bg-[#22C55E] hover:bg-[#16A34A] text-black font-medium cursor-pointer"
+              class="cursor-pointer bg-[#22C55E] font-medium text-black hover:bg-[#16A34A]"
               @click="handleCreate"
               :disabled="!newName.trim()"
             >
@@ -205,7 +206,7 @@ function quotaLabel(t: TokenListItem): string {
     </div>
 
     <Alert v-if="error" class="border-destructive/30 bg-destructive/10">
-      <AlertDescription class="text-destructive text-sm">{{ error }}</AlertDescription>
+      <AlertDescription class="text-sm text-destructive">{{ error }}</AlertDescription>
     </Alert>
 
     <!-- Loading -->
@@ -228,10 +229,10 @@ function quotaLabel(t: TokenListItem): string {
         :key="t.id"
         class="flex items-center justify-between rounded-lg border border-border bg-card p-4 transition-colors hover:border-border/80"
       >
-        <div class="flex flex-col gap-1 min-w-0">
+        <div class="flex min-w-0 flex-col gap-1">
           <div class="flex items-center gap-2">
             <span class="font-mono font-semibold text-foreground">{{ t.name }}</span>
-            <code class="text-xs text-muted-foreground font-mono">{{ t.tokenPrefix }}</code>
+            <code class="font-mono text-xs text-muted-foreground">{{ t.tokenPrefix }}</code>
             <Badge :variant="t.active ? 'default' : 'secondary'" class="text-xs">{{
               t.active ? "启用" : "禁用"
             }}</Badge>
@@ -242,21 +243,21 @@ function quotaLabel(t: TokenListItem): string {
             <span>创建: {{ formatTime(t.createdAt) }}</span>
             <span v-if="t.lastUsedAt">最近使用: {{ formatTime(t.lastUsedAt) }}</span>
           </div>
-          <div v-if="t.allowedModels.length > 0" class="flex flex-wrap gap-1 mt-1">
+          <div v-if="t.allowedModels.length > 0" class="mt-1 flex flex-wrap gap-1">
             <Badge
               v-for="m in t.allowedModels"
               :key="m"
               variant="outline"
-              class="text-xs font-mono"
+              class="font-mono text-xs"
               >{{ m }}</Badge
             >
           </div>
         </div>
-        <div class="flex items-center gap-2 shrink-0">
+        <div class="flex shrink-0 items-center gap-2">
           <Button
             size="icon"
             variant="ghost"
-            class="cursor-pointer h-8 w-8"
+            class="h-8 w-8 cursor-pointer"
             @click="handleToggle(t)"
           >
             <Checkbox :checked="t.active" class="pointer-events-none" />
@@ -264,7 +265,7 @@ function quotaLabel(t: TokenListItem): string {
           <Button
             size="icon"
             variant="ghost"
-            class="cursor-pointer h-8 w-8 text-muted-foreground hover:text-destructive"
+            class="h-8 w-8 cursor-pointer text-muted-foreground hover:text-destructive"
             @click="handleDelete(t.id)"
           >
             <Trash2 class="h-4 w-4" />

@@ -1,10 +1,11 @@
-import { defineConfig } from "vite";
-import vue from "@vitejs/plugin-vue";
+import VueRouter from "vue-router/vite";
+
 import tailwindcss from "@tailwindcss/vite";
+import vue from "@vitejs/plugin-vue";
 import path from "path";
 import AutoImport from "unplugin-auto-import/vite";
 import Components from "unplugin-vue-components/vite";
-import VueRouter from "vue-router/vite";
+import { defineConfig } from "vite";
 
 // https://vite.dev/config/
 export default defineConfig({

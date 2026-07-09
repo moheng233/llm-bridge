@@ -14,8 +14,8 @@ function goHome() {
         <ShieldAlert class="h-8 w-8 text-destructive" />
       </div>
       <div class="flex flex-col gap-1">
-        <h2 class="text-xl font-bold font-mono text-foreground">无访问权限</h2>
-        <p class="text-sm text-muted-foreground max-w-sm">
+        <h2 class="font-mono text-xl font-bold text-foreground">无访问权限</h2>
+        <p class="max-w-sm text-sm text-muted-foreground">
           该页面需要管理员权限。如果你认为这是误判，请联系管理员调整你的账户角色。
         </p>
       </div>

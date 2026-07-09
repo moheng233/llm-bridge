@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { getApi } from "~/lib/api";
-import { useAuthStore } from "~/stores/auth";
-import { SKELETON_ROWS } from "~/lib/constants";
-import { Users, Shield } from "@lucide/vue";
 import { type UserResponse } from "@bindings/UserResponse";
+import { Users, Shield } from "@lucide/vue";
+
+import { getApi } from "~/lib/api";
+import { SKELETON_ROWS } from "~/lib/constants";
+import { useAuthStore } from "~/stores/auth";
 
 const api = getApi();
 const authStore = useAuthStore();
@@ -44,14 +45,14 @@ watchEffect(() => {
   <div class="flex h-full min-h-0 flex-col gap-4">
     <div class="flex items-center justify-between">
       <div>
-        <h2 class="text-xl font-bold font-mono text-foreground">用户管理</h2>
-        <p class="text-sm text-muted-foreground mt-1">管理团队成员账户与角色</p>
+        <h2 class="font-mono text-xl font-bold text-foreground">用户管理</h2>
+        <p class="mt-1 text-sm text-muted-foreground">管理团队成员账户与角色</p>
       </div>
       <Badge variant="secondary" class="font-mono">{{ users.length }} 个用户</Badge>
     </div>
 
     <Alert v-if="error" class="border-destructive/30 bg-destructive/10">
-      <AlertDescription class="text-destructive text-sm">{{ error }}</AlertDescription>
+      <AlertDescription class="text-sm text-destructive">{{ error }}</AlertDescription>
     </Alert>
 
     <div v-if="loading" class="flex flex-col gap-2">
@@ -74,32 +75,32 @@ watchEffect(() => {
         :key="u.id"
         class="flex items-center justify-between rounded-lg border border-border bg-card px-4 py-3"
       >
-        <div class="flex items-center gap-3 min-w-0">
-          <div class="flex h-9 w-9 items-center justify-center rounded-full bg-muted shrink-0">
+        <div class="flex min-w-0 items-center gap-3">
+          <div class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-muted">
             <span class="font-mono text-sm font-medium text-foreground">{{
               u.name.charAt(0).toUpperCase()
             }}</span>
           </div>
-          <div class="flex flex-col min-w-0">
+          <div class="flex min-w-0 flex-col">
             <div class="flex items-center gap-2">
               <span class="font-medium text-foreground">{{ u.name }}</span>
               <Badge
                 :variant="u.role === 'admin' ? 'default' : 'secondary'"
-                class="text-xs font-mono"
+                class="font-mono text-xs"
                 >{{ u.role }}</Badge
               >
               <Badge v-if="!u.active" variant="destructive" class="text-xs">已禁用</Badge>
             </div>
-            <span class="text-xs text-muted-foreground truncate">{{ u.email || u.oidcSub }}</span>
+            <span class="truncate text-xs text-muted-foreground">{{ u.email || u.oidcSub }}</span>
           </div>
         </div>
-        <div class="flex items-center gap-2 shrink-0">
+        <div class="flex shrink-0 items-center gap-2">
           <Shield class="h-4 w-4 text-muted-foreground" />
           <Select
             :model-value="u.role"
             @update:model-value="(v: unknown) => v && changeRole(u.id, v as string)"
           >
-            <SelectTrigger class="w-28 h-8 text-xs">
+            <SelectTrigger class="h-8 w-28 text-xs">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>

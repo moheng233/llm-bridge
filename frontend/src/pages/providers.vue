@@ -1,11 +1,12 @@
 <script setup lang="ts">
+import { type ProviderModelResponse } from "@bindings/ProviderModelResponse";
+import { type ProviderResponse } from "@bindings/ProviderResponse";
+import { Globe } from "@lucide/vue";
+
 import { getApi } from "~/lib/api";
-import { useAuthStore } from "~/stores/auth";
 import { SKELETON_ROWS } from "~/lib/constants";
 import { protocolViewToInput } from "~/lib/utils/provider";
-import { Globe } from "@lucide/vue";
-import { type ProviderResponse } from "@bindings/ProviderResponse";
-import { type ProviderModelResponse } from "@bindings/ProviderModelResponse";
+import { useAuthStore } from "~/stores/auth";
 
 const api = getApi();
 const authStore = useAuthStore();
@@ -187,14 +188,14 @@ async function confirmDelete() {
     <!-- Header -->
     <div class="flex items-center justify-between">
       <div>
-        <h2 class="text-xl font-bold font-mono text-foreground">提供者管理</h2>
-        <p class="text-sm text-muted-foreground mt-1">配置上游 LLM 提供者</p>
+        <h2 class="font-mono text-xl font-bold text-foreground">提供者管理</h2>
+        <p class="mt-1 text-sm text-muted-foreground">配置上游 LLM 提供者</p>
       </div>
       <ProviderCreateDialog @created="loadProviders" @error="(e: string) => (error = e)" />
     </div>
 
     <Alert v-if="error" class="border-destructive/30 bg-destructive/10">
-      <AlertDescription class="text-destructive text-sm">{{ error }}</AlertDescription>
+      <AlertDescription class="text-sm text-destructive">{{ error }}</AlertDescription>
     </Alert>
 
     <!-- Loading -->

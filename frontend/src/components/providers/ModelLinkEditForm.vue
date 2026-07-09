@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { ref, watch, computed } from "vue";
-import { getApi } from "~/lib/api";
+
+import { type AdminModelResponse } from "@bindings/AdminModelResponse";
+import { type ModelLinkView } from "@bindings/ModelLinkView";
+import { type ProviderResponse } from "@bindings/ProviderResponse";
 import { X } from "@lucide/vue";
-import type { ProviderResponse } from "@bindings/ProviderResponse";
-import type { ModelLinkView } from "@bindings/ModelLinkView";
-import type { AdminModelResponse } from "@bindings/AdminModelResponse";
+
+import { getApi } from "~/lib/api";
 
 const api = getApi();
 
@@ -145,12 +147,16 @@ async function saveLink() {
 </script>
 
 <template>
-  <div class="rounded-md border border-border bg-card p-3 flex flex-col gap-2">
+  <div class="flex flex-col gap-2 rounded-md border border-border bg-card p-3">
     <div class="flex items-center justify-between">
       <span class="text-xs font-medium">
         {{ editingLink ? "编辑连接" : "新建连接" }}
       </span>
-      <Button size="icon" variant="ghost" class="h-6 w-6 cursor-pointer" @click="emit('cancel')"
+      <Button
+        size="icon"
+        variant="ghost"
+        class="h-6 w-6 cursor-pointer"
+        @click="emit('cancel')"
         aria-label="取消"
         ><X class="h-3 w-3"
       /></Button>
@@ -160,7 +166,7 @@ async function saveLink() {
         <Label class="text-xs">提供者</Label>
         <select
           v-model="linkProviderId"
-          class="h-9 rounded-md border border-input bg-background px-2 text-sm cursor-pointer"
+          class="h-9 cursor-pointer rounded-md border border-input bg-background px-2 text-sm"
         >
           <option :value="null" disabled>选择提供者...</option>
           <option v-for="p in providers" :key="p.id" :value="p.id">
@@ -172,7 +178,7 @@ async function saveLink() {
         <Label class="text-xs">协议</Label>
         <select
           v-model="linkProtocolId"
-          class="h-9 rounded-md border border-input bg-background px-2 text-sm cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+          class="h-9 cursor-pointer rounded-md border border-input bg-background px-2 text-sm disabled:cursor-not-allowed disabled:opacity-50"
           :disabled="linkProviderId === null"
         >
           <option :value="null" disabled>
@@ -187,11 +193,15 @@ async function saveLink() {
     <div class="grid grid-cols-2 gap-2">
       <div class="flex flex-col gap-1">
         <Label class="text-xs">提供者侧模型 ID</Label>
-        <Input v-model="linkProviderModelId" placeholder="gpt-4o" class="h-9 text-sm font-mono" />
+        <Input v-model="linkProviderModelId" placeholder="gpt-4o" class="h-9 font-mono text-sm" />
       </div>
       <div class="flex flex-col gap-1">
         <Label class="text-xs">显示名</Label>
-        <Input v-model="linkDisplayName" placeholder="(可选) 默认用 provider_model_id" class="h-9 text-sm" />
+        <Input
+          v-model="linkDisplayName"
+          placeholder="(可选) 默认用 provider_model_id"
+          class="h-9 text-sm"
+        />
       </div>
     </div>
     <div class="grid grid-cols-3 gap-2">
@@ -251,73 +261,73 @@ async function saveLink() {
       </div>
     </div>
     <div class="flex flex-wrap gap-x-4 gap-y-1 text-xs">
-      <label class="flex items-center gap-1.5 cursor-pointer">
+      <label class="flex cursor-pointer items-center gap-1.5">
         <Checkbox
           :checked="linkToolCalling ?? false"
           @update:checked="linkToolCalling = toggleCheckbox(linkToolCalling, true)"
         />
         工具调用
-        <span v-if="currentModel" class="text-muted-foreground ml-0.5"
+        <span v-if="currentModel" class="ml-0.5 text-muted-foreground"
           >（标称：{{ currentModel.toolCalling ? "✓" : "✗" }}）</span
         >
         <button
           v-if="linkToolCalling !== null"
           type="button"
-          class="ml-1 text-muted-foreground hover:text-foreground underline"
+          class="ml-1 text-muted-foreground underline hover:text-foreground"
           @click="linkToolCalling = null"
         >
           清除
         </button>
       </label>
-      <label class="flex items-center gap-1.5 cursor-pointer">
+      <label class="flex cursor-pointer items-center gap-1.5">
         <Checkbox
           :checked="linkVision ?? false"
           @update:checked="linkVision = toggleCheckbox(linkVision, true)"
         />
         视觉
-        <span v-if="currentModel" class="text-muted-foreground ml-0.5"
+        <span v-if="currentModel" class="ml-0.5 text-muted-foreground"
           >（标称：{{ currentModel.vision ? "✓" : "✗" }}）</span
         >
         <button
           v-if="linkVision !== null"
           type="button"
-          class="ml-1 text-muted-foreground hover:text-foreground underline"
+          class="ml-1 text-muted-foreground underline hover:text-foreground"
           @click="linkVision = null"
         >
           清除
         </button>
       </label>
-      <label class="flex items-center gap-1.5 cursor-pointer">
+      <label class="flex cursor-pointer items-center gap-1.5">
         <Checkbox
           :checked="linkThinking ?? false"
           @update:checked="linkThinking = toggleCheckbox(linkThinking, true)"
         />
         思考
-        <span v-if="currentModel" class="text-muted-foreground ml-0.5"
+        <span v-if="currentModel" class="ml-0.5 text-muted-foreground"
           >（标称：{{ currentModel.thinking ? "✓" : "✗" }}）</span
         >
         <button
           v-if="linkThinking !== null"
           type="button"
-          class="ml-1 text-muted-foreground hover:text-foreground underline"
+          class="ml-1 text-muted-foreground underline hover:text-foreground"
           @click="linkThinking = null"
         >
           清除
         </button>
       </label>
-      <label class="flex items-center gap-1.5 cursor-pointer">
+      <label class="flex cursor-pointer items-center gap-1.5">
         <Checkbox
           :checked="linkAdaptive ?? false"
           @update:checked="linkAdaptive = toggleCheckbox(linkAdaptive, true)"
         />
         自适应思考
-        <span v-if="currentModel" class="text-muted-foreground ml-0.5"
+        <span v-if="currentModel" class="ml-0.5 text-muted-foreground"
           >（标称：{{ currentModel.adaptiveThinking ? "✓" : "✗" }}）</span
         >
         <button
           v-if="linkAdaptive !== null"
           type="button"
-          class="ml-1 text-muted-foreground hover:text-foreground underline"
+          class="ml-1 text-muted-foreground underline hover:text-foreground"
           @click="linkAdaptive = null"
         >
           清除
@@ -327,7 +337,7 @@ async function saveLink() {
     <div class="flex gap-2 pt-1">
       <Button variant="outline" class="flex-1 cursor-pointer" @click="emit('cancel')">取消</Button>
       <Button
-        class="flex-1 bg-[#22C55E] hover:bg-[#16A34A] text-black cursor-pointer"
+        class="flex-1 cursor-pointer bg-[#22C55E] text-black hover:bg-[#16A34A]"
         @click="saveLink"
       >
         {{ editingLink ? "更新" : "创建" }}
