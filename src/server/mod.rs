@@ -22,6 +22,7 @@ use axfetchum::ApiRouter;
 use tower_sessions::MemoryStore;
 use tower_sessions::SessionManagerLayer;
 use tracing::{info, instrument};
+use vite_rs_axum_0_8::ViteServe;
 
 use crate::actors::gateway_manager::GatewayManagerMessage;
 use crate::db;
@@ -29,6 +30,10 @@ use crate::store::Store;
 
 use crate::server::admin::{admin_crud_routes, model_browse_routes};
 use crate::server::auth::AuthState;
+
+#[derive(vite_rs::Embed)]
+#[root = "./frontend"]
+struct Frontend;
 
 /// Shared application state for HTTP handlers.
 #[derive(Clone)]
@@ -113,13 +118,19 @@ pub fn all_api_routes() -> ApiRouter<AppState> {
     )
 )]
 pub async fn start_server(state: AppState, host: &str, port: u16) -> Result<(), std::io::Error> {
+    #[cfg(debug_assertions)]
+    let _guard = Frontend::start_dev_server(true);
+
     let session_store = MemoryStore::default();
     let session_layer = SessionManagerLayer::new(session_store).with_secure(false);
 
     let oidc_configured = state.auth.is_some();
 
     let (router, _routes) = all_api_routes().build();
-    let app = router.with_state(state);
+    let app = router
+        .with_state(state)
+        .route_service("/", ViteServe::new(Frontend::boxed()))
+        .route_service("/{*path}", ViteServe::new(Frontend::boxed()));
     let mut app: axum::Router = app;
 
     if oidc_configured {
@@ -134,16 +145,6 @@ pub async fn start_server(state: AppState, host: &str, port: u16) -> Result<(), 
 
     let addr = format!("{}:{}", host, port);
     info!("Starting server on {}", addr);
-
-    // ── 嵌入前端静态文件（可选 feature） ──
-    #[cfg(feature = "embed-frontend")]
-    let app = {
-        app.fallback(axum::routing::get(
-            |req: axum::http::Request<axum::body::Body>| async move {
-                crate::embed::serve(req.uri().path()).await
-            },
-        ))
-    };
 
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     axum::serve(listener, app).await
