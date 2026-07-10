@@ -7,6 +7,6 @@
 //! - `quota`: 配额服务（Phase 2.2 ✅）
 
 pub mod oidc;
+pub mod quota;
 pub mod session;
 pub mod token;
-pub mod quota;

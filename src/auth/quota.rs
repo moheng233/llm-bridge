@@ -8,7 +8,10 @@
 use jiff::Zoned;
 use tracing::warn;
 
-use crate::db::{self, models::{Token, UsageRecord}};
+use crate::db::{
+    self,
+    models::{Token, UsageRecord},
+};
 
 /// 配额错误类型。
 #[derive(Debug, Clone)]
@@ -32,11 +35,25 @@ pub enum QuotaError {
 impl std::fmt::Display for QuotaError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            QuotaError::RequestQuotaExceeded { current, limit, period } => {
-                write!(f, "request quota exceeded: {current}/{limit} for period {period}")
+            QuotaError::RequestQuotaExceeded {
+                current,
+                limit,
+                period,
+            } => {
+                write!(
+                    f,
+                    "request quota exceeded: {current}/{limit} for period {period}"
+                )
             }
-            QuotaError::TokenQuotaExceeded { current, limit, period } => {
-                write!(f, "token quota exceeded: {current}/{limit} for period {period}")
+            QuotaError::TokenQuotaExceeded {
+                current,
+                limit,
+                period,
+            } => {
+                write!(
+                    f,
+                    "token quota exceeded: {current}/{limit} for period {period}"
+                )
             }
             QuotaError::Database(e) => write!(f, "database error: {e}"),
         }
@@ -71,8 +88,10 @@ pub async fn get_or_create_usage_record(
     period_key: &str,
 ) -> Result<UsageRecord, String> {
     let existing = UsageRecord::filter(
-        UsageRecord::fields().token_id().eq(token_id)
-            .and(UsageRecord::fields().period_key().eq(period_key))
+        UsageRecord::fields()
+            .token_id()
+            .eq(token_id)
+            .and(UsageRecord::fields().period_key().eq(period_key)),
     )
     .exec(&mut db.clone())
     .await

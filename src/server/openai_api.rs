@@ -2,7 +2,10 @@ use axum::{
     Json,
     extract::State,
     http::{HeaderMap, StatusCode},
-    response::{IntoResponse, Response, sse::{Event, Sse}},
+    response::{
+        IntoResponse, Response,
+        sse::{Event, Sse},
+    },
 };
 use futures_util::stream::Stream;
 use ractor::Actor;
@@ -11,10 +14,15 @@ use tokio_stream::StreamExt;
 use tracing::instrument;
 
 use crate::actors::provider::adapters::openai_chat_completions::flatten_thinking_value_for_sse;
-use crate::actors::provider::{ProviderActor, ProviderChatRequest, ProviderMessage, ProviderRuntimeConfig};
+use crate::actors::provider::{
+    ProviderActor, ProviderChatRequest, ProviderMessage, ProviderRuntimeConfig,
+};
 use crate::middleware::token_auth::TokenAuth;
 use crate::server::AppState;
-use crate::types::{LMResponsePart, LanguageModelChatMessage, LanguageModelChatMessageRole, LanguageModelInputPart, LanguageModelTextPart};
+use crate::types::{
+    LMResponsePart, LanguageModelChatMessage, LanguageModelChatMessageRole, LanguageModelInputPart,
+    LanguageModelTextPart,
+};
 
 // ── Auth ── (legacy — used by check_auth only)
 
@@ -32,7 +40,11 @@ fn check_auth(state: &AppState, headers: &HeaderMap) -> Result<(), Response> {
     if provided == Some(expected) {
         Ok(())
     } else {
-        Err((StatusCode::UNAUTHORIZED, Json(serde_json::json!({"error": "unauthorized"}))).into_response())
+        Err((
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({"error": "unauthorized"})),
+        )
+            .into_response())
     }
 }
 
@@ -100,23 +112,22 @@ pub async fn list_models(
     State(state): State<AppState>,
     TokenAuth(token): TokenAuth,
 ) -> Result<Json<OpenAiModelList>, Response> {
-    let all_models = state.store.list_available_models().await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({
-                    "error": {
-                        "message": e,
-                        "type": "internal_error",
-                        "code": "internal_error"
-                    }
-                })),
-            ).into_response()
-        })?;
+    let all_models = state.store.list_available_models().await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
+                "error": {
+                    "message": e,
+                    "type": "internal_error",
+                    "code": "internal_error"
+                }
+            })),
+        )
+            .into_response()
+    })?;
 
     // Filter models based on token's allowed_models
-    let allowed: Vec<String> =
-        serde_json::from_str(&token.allowed_models).unwrap_or_default();
+    let allowed: Vec<String> = serde_json::from_str(&token.allowed_models).unwrap_or_default();
 
     let data = all_models
         .into_iter()
@@ -128,26 +139,31 @@ pub async fn list_models(
             }
         })
         .map(|m| {
-            let owned_by = m.providers
+            let owned_by = m
+                .providers
                 .first()
                 .map(|p| p.provider_id.clone())
                 .unwrap_or_default();
 
-            let providers = m.providers.into_iter().map(|p| OpenAiModelProviderInfo {
-                provider_id: p.provider_id,
-                provider_display_name: p.provider_display_name,
-                max_input_tokens: p.max_input_tokens,
-                max_output_tokens: p.max_output_tokens,
-                tool_calling: p.tool_calling,
-                vision: p.vision,
-                thinking: p.thinking,
-                adaptive_thinking: p.adaptive_thinking,
-                input_price_per_1m: p.input_price_per_1m,
-                output_price_per_1m: p.output_price_per_1m,
-                cache_read_price_per_1m: p.cache_read_price_per_1m,
-                enabled: p.enabled,
-                priority: p.priority,
-            }).collect();
+            let providers = m
+                .providers
+                .into_iter()
+                .map(|p| OpenAiModelProviderInfo {
+                    provider_id: p.provider_id,
+                    provider_display_name: p.provider_display_name,
+                    max_input_tokens: p.max_input_tokens,
+                    max_output_tokens: p.max_output_tokens,
+                    tool_calling: p.tool_calling,
+                    vision: p.vision,
+                    thinking: p.thinking,
+                    adaptive_thinking: p.adaptive_thinking,
+                    input_price_per_1m: p.input_price_per_1m,
+                    output_price_per_1m: p.output_price_per_1m,
+                    cache_read_price_per_1m: p.cache_read_price_per_1m,
+                    enabled: p.enabled,
+                    priority: p.priority,
+                })
+                .collect();
 
             OpenAiModelEntry {
                 id: m.model_name,
@@ -213,9 +229,7 @@ impl Default for OpenAiContent {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum OpenAiContentPart {
     Text { text: String },
-    ImageUrl {
-        image_url: OpenAiImageUrl,
-    },
+    ImageUrl { image_url: OpenAiImageUrl },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -235,8 +249,7 @@ pub async fn chat_completions(
     Json(req): Json<ChatCompletionRequest>,
 ) -> Result<Response, Response> {
     // Check model access
-    let allowed: Vec<String> =
-        serde_json::from_str(&token.allowed_models).unwrap_or_default();
+    let allowed: Vec<String> = serde_json::from_str(&token.allowed_models).unwrap_or_default();
     if !allowed.is_empty() && !allowed.iter().any(|a| a == &req.model) {
         return Err((
             StatusCode::FORBIDDEN,
@@ -247,22 +260,23 @@ pub async fn chat_completions(
                     "code": "model_access_denied"
                 }
             })),
-        ).into_response());
+        )
+            .into_response());
     }
 
-    let routes = state.store.resolve_model(&req.model).await
-        .map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({
-                    "error": {
-                        "message": e,
-                        "type": "internal_error",
-                        "code": "internal_error"
-                    }
-                })),
-            ).into_response()
-        })?;
+    let routes = state.store.resolve_model(&req.model).await.map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
+                "error": {
+                    "message": e,
+                    "type": "internal_error",
+                    "code": "internal_error"
+                }
+            })),
+        )
+            .into_response()
+    })?;
     if routes.is_empty() {
         return Err((
             StatusCode::NOT_FOUND,
@@ -273,7 +287,8 @@ pub async fn chat_completions(
                     "code": "model_not_found"
                 }
             })),
-        ).into_response());
+        )
+            .into_response());
     }
 
     // Take the first (highest priority) route.
@@ -281,12 +296,8 @@ pub async fn chat_completions(
 
     // Phase 2: Quota check and deduct (before making upstream call)
     let estimated_tokens = estimate_token_count(&req.messages);
-    if let Err(quota_err) = crate::auth::quota::check_and_deduct(
-        &state.db,
-        &token,
-        estimated_tokens,
-    )
-    .await
+    if let Err(quota_err) =
+        crate::auth::quota::check_and_deduct(&state.db, &token, estimated_tokens).await
     {
         let msg = quota_err.to_string();
         return Err((
@@ -298,7 +309,8 @@ pub async fn chat_completions(
                     "code": "quota_exceeded"
                 }
             })),
-        ).into_response());
+        )
+            .into_response());
     }
 
     // Convert OpenAI messages to our internal format.
@@ -356,7 +368,7 @@ pub async fn chat_completions(
                     let text = crate::actors::provider::adapters::openai_chat_completions::flatten_thinking_value_for_sse(&t.value);
                     reasoning_content.push_str(&text);
                 }
-                Ok(_) => {},
+                Ok(_) => {}
                 Err(e) => {
                     cleanup_ref.stop(None);
                     let _ = cleanup_handle.await;
@@ -385,7 +397,8 @@ pub async fn chat_completions(
                 "message": message,
                 "finish_reason": "stop"
             }]
-        })).into_response())
+        }))
+        .into_response())
     }
 }
 
@@ -400,13 +413,19 @@ fn stream_to_sse(
 
                 let finish_reason = match &part {
                     LMResponsePart::Text(t) => {
-                        delta.insert("content".to_string(), serde_json::Value::String(t.value.clone()));
+                        delta.insert(
+                            "content".to_string(),
+                            serde_json::Value::String(t.value.clone()),
+                        );
                         None
                     }
                     LMResponsePart::Thinking(t) => {
                         // Reasoning/thinking content — exposed as `reasoning_content` per DeepSeek / OpenAI extended format.
                         let text = flatten_thinking_value_for_sse(&t.value);
-                        delta.insert("reasoning_content".to_string(), serde_json::Value::String(text));
+                        delta.insert(
+                            "reasoning_content".to_string(),
+                            serde_json::Value::String(text),
+                        );
                         None
                     }
                     LMResponsePart::ToolCall(_tc) => {
@@ -496,7 +515,8 @@ fn internal_error(msg: &str) -> Response {
                 "code": "internal_error"
             }
         })),
-    ).into_response()
+    )
+        .into_response()
 }
 
 /// Rough token count estimate for quota pre-check.
@@ -517,5 +537,3 @@ fn estimate_token_count(messages: &[OpenAiMessage]) -> i64 {
         .sum();
     (total_chars / 4) as i64
 }
-
-

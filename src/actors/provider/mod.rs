@@ -2,7 +2,7 @@ pub mod adapters;
 
 use std::pin::Pin;
 
-use crate::config::models::{ProviderCompatibility, CompatibilitySettings};
+use crate::config::models::{CompatibilitySettings, ProviderCompatibility};
 use crate::types::{LMResponsePart, LanguageModelChatMessage};
 use ractor::{Actor, ActorProcessingErr, ActorRef};
 use tokio::sync::mpsc;

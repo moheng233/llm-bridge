@@ -80,16 +80,26 @@ impl Actor for GatewayManagerActor {
             GatewayManagerMessage::GetAvailableModels(reply) => {
                 debug!("handling GetAvailableModels");
                 match state.store.list_available_models().await {
-                    Ok(models) => { let _ = reply.send(Ok(models)); }
-                    Err(e) => { let _ = reply.send(Err(e)); }
+                    Ok(models) => {
+                        let _ = reply.send(Ok(models));
+                    }
+                    Err(e) => {
+                        let _ = reply.send(Err(e));
+                    }
                 }
             }
             GatewayManagerMessage::ResolveModel(model_name, reply) => {
                 debug!(model = %model_name, "handling ResolveModel");
                 match state.store.resolve_model(&model_name).await {
-                    Ok(routes) if !routes.is_empty() => { let _ = reply.send(Ok(routes)); }
-                    Ok(_) => { let _ = reply.send(Err(format!("model '{}' is not available", model_name))); }
-                    Err(e) => { let _ = reply.send(Err(e)); }
+                    Ok(routes) if !routes.is_empty() => {
+                        let _ = reply.send(Ok(routes));
+                    }
+                    Ok(_) => {
+                        let _ = reply.send(Err(format!("model '{}' is not available", model_name)));
+                    }
+                    Err(e) => {
+                        let _ = reply.send(Err(e));
+                    }
                 }
             }
             GatewayManagerMessage::ResetQuota => {
@@ -108,8 +118,7 @@ fn spawn_quota_reset_loop(myself: ActorRef<GatewayManagerMessage>) {
     info!("quota reset loop started (hourly)");
     tokio::spawn(
         async move {
-            let mut interval =
-                tokio::time::interval(std::time::Duration::from_secs(3600));
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(3600));
             interval.tick().await;
             loop {
                 interval.tick().await;

@@ -3,7 +3,16 @@ import { type AdminModelResponse } from "@bindings/AdminModelResponse";
 import { type ModelInput } from "@bindings/ModelInput";
 import { type ModelLinkView } from "@bindings/ModelLinkView";
 import { type ProviderResponse } from "@bindings/ProviderResponse";
-import { Plus, Cpu, ChevronDown, ChevronRight, Pencil, Trash2, Link2 } from "@lucide/vue";
+import {
+  Plus,
+  Cpu,
+  ChevronDown,
+  ChevronRight,
+  Pencil,
+  Trash2,
+  Link2,
+  FlaskConical,
+} from "@lucide/vue";
 
 import ModelLinkEditForm from "~/components/providers/ModelLinkEditForm.vue";
 import { getApi } from "~/lib/api";
@@ -21,6 +30,10 @@ const error = ref("");
 const expandedId = ref<number | null>(null);
 const linksCache = ref<Map<number, ModelLinkView[]>>(new Map());
 const linksLoading = ref<Set<number>>(new Set());
+const linkTesting = ref<Set<number>>(new Set());
+const linkTestResults = ref<
+  Map<number, { success: boolean; latencyMs: number; error?: string; testedAt: number }>
+>(new Map());
 
 // Model form dialog
 const showModelDialog = ref(false);
@@ -218,6 +231,48 @@ function handleLinkSaved(modelId: number) {
   closeLinkForm();
   refreshLinks(modelId);
 }
+
+function getLinkTestResult(linkId: number) {
+  return linkTestResults.value.get(linkId) ?? null;
+}
+
+function formatLinkTestResult(linkId: number): string {
+  const result = getLinkTestResult(linkId);
+  if (!result) return "";
+  if (result.success) return `测试成功 · ${result.latencyMs}ms`;
+  return `测试失败 · ${result.error ?? "未知错误"}`;
+}
+
+async function handleTestLink(modelId: number, link: ModelLinkView) {
+  const loadingSet = new Set(linkTesting.value);
+  loadingSet.add(link.id);
+  linkTesting.value = loadingSet;
+
+  try {
+    const resp = await api.admin.testModelProviderReply(String(modelId), String(link.id), {});
+    const m = new Map(linkTestResults.value);
+    m.set(link.id, {
+      success: resp.success,
+      latencyMs: resp.latencyMs,
+      error: resp.error ?? undefined,
+      testedAt: Date.now(),
+    });
+    linkTestResults.value = m;
+  } catch (e: any) {
+    const m = new Map(linkTestResults.value);
+    m.set(link.id, {
+      success: false,
+      latencyMs: 0,
+      error: e.message || "请求失败",
+      testedAt: Date.now(),
+    });
+    linkTestResults.value = m;
+  } finally {
+    const doneSet = new Set(linkTesting.value);
+    doneSet.delete(link.id);
+    linkTesting.value = doneSet;
+  }
+}
 </script>
 
 <template>
@@ -356,8 +411,27 @@ function handleLinkSaved(modelId: number) {
                 <span v-if="link.inputPricePer1m !== null" class="text-xs text-muted-foreground"
                   >${{ link.inputPricePer1m }}/M</span
                 >
+                <span
+                  v-if="getLinkTestResult(link.id)"
+                  class="text-xs"
+                  :class="
+                    getLinkTestResult(link.id)?.success ? 'text-emerald-600' : 'text-destructive'
+                  "
+                  >{{ formatLinkTestResult(link.id) }}</span
+                >
               </div>
               <div class="flex shrink-0 items-center gap-1">
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  class="h-6 w-6 cursor-pointer text-muted-foreground hover:text-foreground"
+                  :disabled="linkTesting.has(link.id)"
+                  @click="handleTestLink(m.id, link)"
+                  aria-label="测试连接"
+                >
+                  <Spinner v-if="linkTesting.has(link.id)" class="h-3 w-3" />
+                  <FlaskConical v-else class="h-3 w-3" />
+                </Button>
                 <Button
                   size="icon"
                   variant="ghost"

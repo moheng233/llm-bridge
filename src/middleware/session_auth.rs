@@ -4,10 +4,10 @@
 //! 可选的 Admin 角色检查。
 
 use axum::{
+    Json,
     extract::FromRequestParts,
     http::{StatusCode, request::Parts},
     response::{IntoResponse, Response},
-    Json,
 };
 use tower_sessions::Session;
 
@@ -78,9 +78,17 @@ where
 }
 
 fn unauthorized(msg: impl Into<String>) -> Response {
-    (StatusCode::UNAUTHORIZED, Json(serde_json::json!({"error": msg.into()}))).into_response()
+    (
+        StatusCode::UNAUTHORIZED,
+        Json(serde_json::json!({"error": msg.into()})),
+    )
+        .into_response()
 }
 
 fn forbidden(msg: impl Into<String>) -> Response {
-    (StatusCode::FORBIDDEN, Json(serde_json::json!({"error": msg.into()}))).into_response()
+    (
+        StatusCode::FORBIDDEN,
+        Json(serde_json::json!({"error": msg.into()})),
+    )
+        .into_response()
 }

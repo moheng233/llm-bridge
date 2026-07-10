@@ -1,5 +1,5 @@
-use std::env;
 use std::collections::HashMap;
+use std::env;
 
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
@@ -67,10 +67,7 @@ impl OidcConfig {
             issuer_url,
             client_id: env_or_default("LLM_BRIDGE_OIDC_CLIENT_ID", ""),
             client_secret: env_or_default("LLM_BRIDGE_OIDC_CLIENT_SECRET", ""),
-            scopes: env_or_default(
-                "LLM_BRIDGE_OIDC_SCOPES",
-                "openid profile email",
-            ),
+            scopes: env_or_default("LLM_BRIDGE_OIDC_SCOPES", "openid profile email"),
             base_url: env_or_default("LLM_BRIDGE_BASE_URL", "http://localhost:3000"),
         }))
     }

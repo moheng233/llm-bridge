@@ -175,9 +175,7 @@ impl QuotaAdapter for UmansQuotaAdapter {
             .await?;
 
         let status = resp.status();
-        if status == reqwest::StatusCode::UNAUTHORIZED
-            || status == reqwest::StatusCode::FORBIDDEN
-        {
+        if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
             return Err(QuotaAdapterError::Unauthorized);
         }
         if !status.is_success() {
@@ -204,7 +202,10 @@ fn map_to_quota(resp: UmansUsageResponse) -> QuotaInfo {
 
     let limit = req_limit.as_ref().and_then(|l| l.limit).unwrap_or(0);
     let hard_cap = req_limit.as_ref().and_then(|l| l.hard_cap);
-    let window_seconds = req_limit.as_ref().and_then(|l| l.window_seconds).unwrap_or(0);
+    let window_seconds = req_limit
+        .as_ref()
+        .and_then(|l| l.window_seconds)
+        .unwrap_or(0);
     let window = if window_seconds > 0 {
         QuotaWindow::SlidingSeconds(window_seconds)
     } else {
@@ -241,7 +242,10 @@ fn map_to_quota(resp: UmansUsageResponse) -> QuotaInfo {
         extra.insert("requests_burst_pct".to_string(), serde_json::json!(burst));
     }
     if let Some(burst) = conc.as_ref().and_then(|c| c.burst_pct) {
-        extra.insert("concurrency_burst_pct".to_string(), serde_json::json!(burst));
+        extra.insert(
+            "concurrency_burst_pct".to_string(),
+            serde_json::json!(burst),
+        );
     }
     if let Some(hc) = conc.as_ref().and_then(|c| c.hard_cap) {
         extra.insert("concurrency_hard_cap".to_string(), Value::from(hc));

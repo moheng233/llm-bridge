@@ -33,16 +33,16 @@ pub async fn stream_chat(
 ) -> Result<(), String> {
     let payload = build_request_body(&request)?;
     let endpoint = build_endpoint(state);
-    
+
     let mut req_builder = state.client.post(&endpoint).bearer_auth(&state.api_key);
-    
+
     // Apply custom headers from compatibility settings
     if let Some(settings) = &state.compat_settings {
         for (key, value) in &settings.custom_headers {
             req_builder = req_builder.header(key, value);
         }
     }
-    
+
     let response = req_builder
         .json(&payload)
         .send()
@@ -249,7 +249,7 @@ fn build_endpoint(state: &ProviderState) -> String {
         .as_ref()
         .and_then(|s| s.path_suffix.as_deref())
         .unwrap_or("");
-    
+
     format!("{base}{path_suffix}/responses")
 }
 

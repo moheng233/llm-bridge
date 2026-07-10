@@ -15,6 +15,8 @@ import { type ProtocolView } from "./ProtocolView";
 import { type ProviderModelResponse } from "./ProviderModelResponse";
 import { type ProviderQuotaResponse } from "./ProviderQuotaResponse";
 import { type ProviderResponse } from "./ProviderResponse";
+import { type TestModelProviderRequest } from "./TestModelProviderRequest";
+import { type TestModelProviderResponse } from "./TestModelProviderResponse";
 import { type TokenListItem } from "./TokenListItem";
 import { type UpdateModelProviderRequest } from "./UpdateModelProviderRequest";
 import { type UpdateModelRequest } from "./UpdateModelRequest";
@@ -178,6 +180,12 @@ export function createApiClient(options: ApiClientOptions) {
       updateModelProvider: (id: string, link_id: string, body: UpdateModelProviderRequest) =>
         request<ModelLinkView>(`/api/v1/admin/models/${id}/providers/${link_id}`, {
           method: "PUT",
+          auth: true,
+          body,
+        }),
+      testModelProviderReply: (id: string, link_id: string, body: TestModelProviderRequest) =>
+        request<TestModelProviderResponse>(`/api/v1/admin/models/${id}/providers/${link_id}/test`, {
+          method: "POST",
           auth: true,
           body,
         }),

@@ -31,16 +31,16 @@ pub async fn stream_chat(
 ) -> Result<(), String> {
     let payload = build_request_body(&request)?;
     let endpoint = build_endpoint(state);
-    
+
     let mut req_builder = state.client.post(&endpoint).bearer_auth(&state.api_key);
-    
+
     // Apply custom headers from compatibility settings
     if let Some(settings) = &state.compat_settings {
         for (key, value) in &settings.custom_headers {
             req_builder = req_builder.header(key, value);
         }
     }
-    
+
     let response = req_builder
         .json(&payload)
         .send()
@@ -90,7 +90,7 @@ fn build_endpoint(state: &ProviderState) -> String {
         .as_ref()
         .and_then(|s| s.path_suffix.as_deref())
         .unwrap_or("");
-    
+
     format!("{base}{path_suffix}/chat/completions")
 }
 
@@ -103,9 +103,7 @@ fn build_request_body(request: &ProviderChatRequest) -> Result<Value, String> {
     .map_err(|error| format!("failed to serialize openai chat completions request body: {error}"))
 }
 
-fn build_messages(
-    messages: &[LanguageModelChatMessage],
-) -> Result<Vec<OpenAiChatMessage>, String> {
+fn build_messages(messages: &[LanguageModelChatMessage]) -> Result<Vec<OpenAiChatMessage>, String> {
     let mut result = Vec::new();
 
     for message in messages {
@@ -327,11 +325,12 @@ fn map_event(data: &str, state: &mut OpenAiChatStreamState) -> Result<Vec<LMResp
     for choice in &event.choices {
         if let Some(delta) = &choice.delta {
             if let Some(content) = &delta.content
-                && !content.is_empty() {
-                    parts.push(LMResponsePart::Text(LanguageModelTextPart {
-                        value: content.clone(),
-                    }));
-                }
+                && !content.is_empty()
+            {
+                parts.push(LMResponsePart::Text(LanguageModelTextPart {
+                    value: content.clone(),
+                }));
+            }
 
             if !delta.tool_calls.is_empty() {
                 for tc in &delta.tool_calls {
@@ -339,8 +338,8 @@ fn map_event(data: &str, state: &mut OpenAiChatStreamState) -> Result<Vec<LMResp
                         // New tool call
                         state.streamed_tool_call_ids.insert(tc.id.clone());
                         let arguments = tc.function.arguments.clone().unwrap_or_default();
-                        let input = serde_json::from_str(&arguments)
-                            .unwrap_or(Value::String(arguments));
+                        let input =
+                            serde_json::from_str(&arguments).unwrap_or(Value::String(arguments));
                         parts.push(LMResponsePart::ToolCall(LanguageModelToolCallPart {
                             call_id: tc.id.clone(),
                             name: name.clone(),
@@ -356,13 +355,14 @@ fn map_event(data: &str, state: &mut OpenAiChatStreamState) -> Result<Vec<LMResp
 
             // Handle reasoning_content if present (OpenAI o1/o3 models)
             if let Some(reasoning) = &delta.reasoning_content
-                && !reasoning.is_empty() {
-                    parts.push(LMResponsePart::Thinking(LanguageModelThinkingPart {
-                        value: LanguageModelThinkingValue::String(reasoning.clone()),
-                        id: None,
-                        metadata: None,
-                    }));
-                }
+                && !reasoning.is_empty()
+            {
+                parts.push(LMResponsePart::Thinking(LanguageModelThinkingPart {
+                    value: LanguageModelThinkingValue::String(reasoning.clone()),
+                    id: None,
+                    metadata: None,
+                }));
+            }
         }
     }
 

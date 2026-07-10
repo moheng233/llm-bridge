@@ -7,11 +7,17 @@
 //! - `list_all_models`: 列出所有模型（含未启用的）
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::config::models::{ApiKeyEntry, CompatibilitySettings, ProviderCompatibility};
-use crate::db::{self, models::{LLMModel as DbLLMModel, ModelProvider as DbModelProvider, Provider as DbProvider, ProviderProtocol as DbProviderProtocol}};
+use crate::db::{
+    self,
+    models::{
+        LLMModel as DbLLMModel, ModelProvider as DbModelProvider, Provider as DbProvider,
+        ProviderProtocol as DbProviderProtocol,
+    },
+};
 use crate::types::LMModelInfo;
 
 /// 解析后的提供者路由（传递给 ProviderActor）。
@@ -124,12 +130,10 @@ pub async fn resolve_model(
     model_name: &str,
 ) -> Result<Vec<ResolvedProviderRoute>, String> {
     // 查找模型
-    let models = DbLLMModel::filter(
-        DbLLMModel::fields().model_name().eq(model_name)
-    )
-    .exec(&mut db.clone())
-    .await
-    .map_err(|e| e.to_string())?;
+    let models = DbLLMModel::filter(DbLLMModel::fields().model_name().eq(model_name))
+        .exec(&mut db.clone())
+        .await
+        .map_err(|e| e.to_string())?;
 
     let model = match models.into_iter().next() {
         Some(m) => m,
@@ -138,8 +142,10 @@ pub async fn resolve_model(
 
     // 查找启用的 ModelProvider 关联，按 priority 排序
     let model_providers = DbModelProvider::filter(
-        DbModelProvider::fields().model_id().eq(model.id)
-            .and(DbModelProvider::fields().enabled().eq(true))
+        DbModelProvider::fields()
+            .model_id()
+            .eq(model.id)
+            .and(DbModelProvider::fields().enabled().eq(true)),
     )
     .exec(&mut db.clone())
     .await
@@ -192,8 +198,16 @@ pub async fn resolve_model(
             max_output_tokens: mp.max_output_tokens.unwrap_or(model.max_output_tokens) as u32,
             tool_calling: mp.tool_calling.unwrap_or(model.tool_calling),
             vision: mp.vision.unwrap_or(model.vision),
-            thinking: if mp.thinking.unwrap_or(model.thinking) { Some(true) } else { None },
-            adaptive_thinking: if mp.adaptive_thinking.unwrap_or(model.adaptive_thinking) { Some(true) } else { None },
+            thinking: if mp.thinking.unwrap_or(model.thinking) {
+                Some(true)
+            } else {
+                None
+            },
+            adaptive_thinking: if mp.adaptive_thinking.unwrap_or(model.adaptive_thinking) {
+                Some(true)
+            } else {
+                None
+            },
             edit_tools: crate::types::EndpointEditToolName::empty(),
         };
 
@@ -225,7 +239,10 @@ pub async fn list_all_models(db: &db::Db) -> Result<Vec<AvailableModel>, String>
 }
 
 /// 内部：列出模型及其提供者。
-async fn list_models_internal(db: &db::Db, only_enabled: bool) -> Result<Vec<AvailableModel>, String> {
+async fn list_models_internal(
+    db: &db::Db,
+    only_enabled: bool,
+) -> Result<Vec<AvailableModel>, String> {
     // 加载所有模型
     let all_models = DbLLMModel::all()
         .exec(&mut db.clone())
@@ -238,13 +255,13 @@ async fn list_models_internal(db: &db::Db, only_enabled: bool) -> Result<Vec<Ava
         // 查找该模型的所有 ModelProvider 关联
         let mp_filter = if only_enabled {
             DbModelProvider::filter(
-                DbModelProvider::fields().model_id().eq(model.id)
-                    .and(DbModelProvider::fields().enabled().eq(true))
+                DbModelProvider::fields()
+                    .model_id()
+                    .eq(model.id)
+                    .and(DbModelProvider::fields().enabled().eq(true)),
             )
         } else {
-            DbModelProvider::filter(
-                DbModelProvider::fields().model_id().eq(model.id)
-            )
+            DbModelProvider::filter(DbModelProvider::fields().model_id().eq(model.id))
         };
 
         let model_providers = mp_filter
@@ -269,10 +286,11 @@ async fn list_models_internal(db: &db::Db, only_enabled: bool) -> Result<Vec<Ava
             }
 
             // 从 ProviderProtocol 获取协议信息
-            let compatibility = match DbProviderProtocol::get_by_id(&mut db.clone(), &mp.protocol_id).await {
-                Ok(p) => p.protocol,
-                Err(_) => continue,
-            };
+            let compatibility =
+                match DbProviderProtocol::get_by_id(&mut db.clone(), &mp.protocol_id).await {
+                    Ok(p) => p.protocol,
+                    Err(_) => continue,
+                };
 
             provider_infos.push(ModelProviderInfo {
                 provider_id: provider.provider_id.clone(),
@@ -304,17 +322,24 @@ async fn list_models_internal(db: &db::Db, only_enabled: bool) -> Result<Vec<Ava
             tool_calling: model.tool_calling,
             vision: model.vision,
             thinking: if model.thinking { Some(true) } else { None },
-            adaptive_thinking: if model.adaptive_thinking { Some(true) } else { None },
+            adaptive_thinking: if model.adaptive_thinking {
+                Some(true)
+            } else {
+                None
+            },
             edit_tools: crate::types::EndpointEditToolName::empty(),
         };
 
-        result.insert(model.id, AvailableModel {
-            model_name: model.model_name,
-            display_name: model.display_name,
-            description: model.description,
-            nominal_capabilities,
-            providers: provider_infos,
-        });
+        result.insert(
+            model.id,
+            AvailableModel {
+                model_name: model.model_name,
+                display_name: model.display_name,
+                description: model.description,
+                nominal_capabilities,
+                providers: provider_infos,
+            },
+        );
     }
 
     Ok(result.into_values().collect())

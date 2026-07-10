@@ -13,8 +13,8 @@ use openidconnect::core::{
 };
 use openidconnect::reqwest;
 use openidconnect::{
-    AuthorizationCode, ClientId, ClientSecret, CsrfToken, IssuerUrl, Nonce,
-    RedirectUrl, Scope, TokenResponse,
+    AuthorizationCode, ClientId, ClientSecret, CsrfToken, IssuerUrl, Nonce, RedirectUrl, Scope,
+    TokenResponse,
 };
 
 use crate::config::models::OidcConfig;

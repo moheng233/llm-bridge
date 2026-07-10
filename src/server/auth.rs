@@ -117,9 +117,10 @@ pub async fn callback(
     session: Session,
     Query(query): Query<CallbackQuery>,
 ) -> Result<Response, Response> {
-    let auth = state.auth.as_ref().ok_or_else(|| {
-        (StatusCode::NOT_FOUND, "OIDC not configured").into_response()
-    })?;
+    let auth = state
+        .auth
+        .as_ref()
+        .ok_or_else(|| (StatusCode::NOT_FOUND, "OIDC not configured").into_response())?;
 
     // 验证 CSRF state
     let context: OidcContext = session
@@ -135,11 +136,7 @@ pub async fn callback(
         })?;
 
     if query.state != context.csrf_token {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            "CSRF state mismatch",
-        )
-            .into_response());
+        return Err((StatusCode::BAD_REQUEST, "CSRF state mismatch").into_response());
     }
 
     // OIDC 验证
@@ -153,16 +150,15 @@ pub async fn callback(
         })?;
 
     // 清理 OIDC 上下文
-    session
-        .remove::<OidcContext>("oidc_context")
-        .await
-        .ok();
+    session.remove::<OidcContext>("oidc_context").await.ok();
 
     // 查找或创建用户
-    let user = upsert_user_from_oidc(&auth.db, &oidc_user).await.map_err(|e| {
-        warn!(error = %e, "failed to upsert user");
-        internal_error("failed to create or update user")
-    })?;
+    let user = upsert_user_from_oidc(&auth.db, &oidc_user)
+        .await
+        .map_err(|e| {
+            warn!(error = %e, "failed to upsert user");
+            internal_error("failed to create or update user")
+        })?;
 
     // 写入 Session
     let session_user = SessionUser {
@@ -193,11 +189,11 @@ pub async fn callback(
 
 #[instrument(level = "debug", skip(session))]
 pub async fn me(session: Session) -> Result<Json<SessionUser>, Response> {
-    let user: SessionUser = session.get("user").await.map_err(|e| {
-        internal_error(&e.to_string())
-    })?.ok_or_else(|| {
-        (StatusCode::UNAUTHORIZED, "not authenticated").into_response()
-    })?;
+    let user: SessionUser = session
+        .get("user")
+        .await
+        .map_err(|e| internal_error(&e.to_string()))?
+        .ok_or_else(|| (StatusCode::UNAUTHORIZED, "not authenticated").into_response())?;
 
     Ok(Json(user))
 }
@@ -206,7 +202,10 @@ pub async fn me(session: Session) -> Result<Json<SessionUser>, Response> {
 
 #[instrument(level = "debug", skip(session))]
 pub async fn logout(session: Session) -> Result<Response, Response> {
-    session.flush().await.map_err(|e| internal_error(&e.to_string()))?;
+    session
+        .flush()
+        .await
+        .map_err(|e| internal_error(&e.to_string()))?;
     Ok((StatusCode::OK, "logged out").into_response())
 }
 
@@ -225,7 +224,10 @@ fn internal_error(msg: &str) -> Response {
 /// - 如果 `oidc_sub` 已存在 → 更新 name / email / avatar_url
 /// - 如果数据库中尚无任何用户 → 自动赋予 Admin 角色
 /// - 否则 → 赋予 Member 角色
-async fn upsert_user_from_oidc(db: &db::Db, oidc_user: &crate::auth::oidc::OidcUser) -> Result<User, String> {
+async fn upsert_user_from_oidc(
+    db: &db::Db,
+    oidc_user: &crate::auth::oidc::OidcUser,
+) -> Result<User, String> {
     // 查找是否已存在
     let existing = User::filter(User::fields().oidc_sub().eq(&oidc_user.sub))
         .exec(&mut db.clone())
@@ -257,7 +259,10 @@ async fn upsert_user_from_oidc(db: &db::Db, oidc_user: &crate::auth::oidc::OidcU
         Ok(user)
     } else {
         // 检查是否首个用户
-        let all_users = User::all().exec(&mut db.clone()).await.map_err(|e| e.to_string())?;
+        let all_users = User::all()
+            .exec(&mut db.clone())
+            .await
+            .map_err(|e| e.to_string())?;
         let is_first = all_users.is_empty();
 
         let role = if is_first {

@@ -22,7 +22,15 @@ pub type Db = toasty::Db;
 /// let db = db::init(db::all_models(), "sqlite::memory:").await?;
 /// ```
 pub fn all_models() -> toasty::ModelSet {
-    toasty::models!(models::User, models::Token, models::UsageRecord, models::LLMModel, models::Provider, models::ModelProvider, models::ProviderProtocol)
+    toasty::models!(
+        models::User,
+        models::Token,
+        models::UsageRecord,
+        models::LLMModel,
+        models::Provider,
+        models::ModelProvider,
+        models::ProviderProtocol
+    )
 }
 
 /// 通过连接 URL 初始化数据库并自动建表。
@@ -51,10 +59,7 @@ pub fn all_models() -> toasty::ModelSet {
 pub async fn init(models: toasty::ModelSet, url: &str) -> toasty::Result<Db> {
     info!(%url, "connecting to database");
 
-    let db = toasty::Db::builder()
-        .models(models)
-        .connect(url)
-        .await?;
+    let db = toasty::Db::builder().models(models).connect(url).await?;
 
     info!("applying schema...");
     // toasty 的 push_schema 使用 CREATE TABLE（非 IF NOT EXISTS），
@@ -80,18 +85,13 @@ pub async fn init(models: toasty::ModelSet, url: &str) -> toasty::Result<Db> {
 ///
 /// 等价于 `init(models, "sqlite:<store_path>/llm-bridge.db")`，
 /// 额外处理了目录创建。
-pub async fn init_sqlite(
-    models: toasty::ModelSet,
-    store_path: &Path,
-) -> toasty::Result<Db> {
-    tokio::fs::create_dir_all(store_path)
-        .await
-        .map_err(|e| {
-            toasty::Error::from_args(format_args!(
-                "failed to create store directory '{}': {e}",
-                store_path.display()
-            ))
-        })?;
+pub async fn init_sqlite(models: toasty::ModelSet, store_path: &Path) -> toasty::Result<Db> {
+    tokio::fs::create_dir_all(store_path).await.map_err(|e| {
+        toasty::Error::from_args(format_args!(
+            "failed to create store directory '{}': {e}",
+            store_path.display()
+        ))
+    })?;
 
     let db_path = store_path.join("llm-bridge.db");
     let url = format!("sqlite:{}", db_path.display());

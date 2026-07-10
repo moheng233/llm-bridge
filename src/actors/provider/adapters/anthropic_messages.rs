@@ -43,14 +43,14 @@ pub async fn stream_chat(
         .header("x-api-key", &state.api_key)
         .header("anthropic-version", ANTHROPIC_VERSION)
         .header("content-type", "application/json");
-    
+
     // Apply custom headers from compatibility settings
     if let Some(settings) = &state.compat_settings {
         for (key, value) in &settings.custom_headers {
             req_builder = req_builder.header(key, value);
         }
     }
-    
+
     let response = req_builder
         .json(&payload)
         .send()
@@ -135,10 +135,11 @@ fn build_messages(
         // Anthropic requires alternating user/assistant turns. When we see consecutive messages
         // with the same role, merge their content blocks into the previous message.
         if let Some(last) = anthropic_messages.last_mut()
-            && last.role == role {
-                last.content.extend(content);
-                continue;
-            }
+            && last.role == role
+        {
+            last.content.extend(content);
+            continue;
+        }
 
         anthropic_messages.push(AnthropicMessage {
             role: role.to_string(),
@@ -260,7 +261,7 @@ fn build_endpoint(state: &ProviderState) -> String {
         .as_ref()
         .and_then(|s| s.path_suffix.as_deref())
         .unwrap_or("");
-    
+
     format!("{base}{path_suffix}/messages")
 }
 
@@ -339,9 +340,10 @@ fn map_event(data: &str, state: &mut AnthropicStreamState) -> Result<Vec<LMRespo
             let event: MessageDeltaEvent = serde_json::from_value(event.payload)
                 .map_err(|e| format!("invalid message_delta: {e}"))?;
             if let Some(stop_reason) = &event.delta.stop_reason
-                && stop_reason == "max_tokens" {
-                    return Err("anthropic response stopped: max_tokens reached".to_string());
-                }
+                && stop_reason == "max_tokens"
+            {
+                return Err("anthropic response stopped: max_tokens reached".to_string());
+            }
             Ok(Vec::new())
         }
         "error" => {
@@ -424,16 +426,16 @@ fn on_content_block_stop(
     let block_type = state.block_types.remove(&event.index);
 
     if block_type.as_deref() == Some("tool_use")
-        && let Some(buf) = state.tool_input_buffers.remove(&event.index) {
-            let input = serde_json::from_str(&buf.json_delta)
-                .unwrap_or(Value::String(buf.json_delta));
+        && let Some(buf) = state.tool_input_buffers.remove(&event.index)
+    {
+        let input = serde_json::from_str(&buf.json_delta).unwrap_or(Value::String(buf.json_delta));
 
-            return Ok(vec![LMResponsePart::ToolCall(LanguageModelToolCallPart {
-                call_id: buf.id,
-                name: buf.name,
-                input,
-            })]);
-        }
+        return Ok(vec![LMResponsePart::ToolCall(LanguageModelToolCallPart {
+            call_id: buf.id,
+            name: buf.name,
+            input,
+        })]);
+    }
 
     Ok(Vec::new())
 }

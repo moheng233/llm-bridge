@@ -113,9 +113,7 @@ pub fn adapter_for(adapter: ProviderQuotaAdapter) -> Option<Arc<dyn QuotaAdapter
 /// 内部构造默认 `QuotaAdapterConfig`（当 DB 字段为 NULL 或解析失败时回退）。
 fn parse_config(raw: &Option<String>) -> QuotaAdapterConfig {
     match raw {
-        Some(s) if !s.trim().is_empty() => {
-            serde_json::from_str(s).unwrap_or_default()
-        }
+        Some(s) if !s.trim().is_empty() => serde_json::from_str(s).unwrap_or_default(),
         _ => QuotaAdapterConfig::default(),
     }
 }
@@ -149,7 +147,8 @@ pub async fn fetch_provider_quota(
     };
 
     // 用 Mutex 收集以保证顺序与线程安全；并发任务通过 join 拉起。
-    let collected: Arc<Mutex<Vec<KeyQuota>>> = Arc::new(Mutex::new(Vec::with_capacity(selected.len())));
+    let collected: Arc<Mutex<Vec<KeyQuota>>> =
+        Arc::new(Mutex::new(Vec::with_capacity(selected.len())));
 
     let mut tasks = Vec::new();
     for k in selected {

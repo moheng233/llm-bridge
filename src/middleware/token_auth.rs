@@ -5,10 +5,10 @@
 //! 检查模型权限和配额。
 
 use axum::{
+    Json,
     extract::FromRequestParts,
     http::{StatusCode, request::Parts},
     response::{IntoResponse, Response},
-    Json,
 };
 use tracing::warn;
 
@@ -46,9 +46,9 @@ impl FromRequestParts<AppState> for TokenAuth {
             .and_then(|v| v.to_str().ok())
             .ok_or_else(|| unauthorized("missing Authorization header"))?;
 
-        let token_str = header
-            .strip_prefix("Bearer ")
-            .ok_or_else(|| unauthorized("invalid Authorization format, expected 'Bearer <token>'"))?;
+        let token_str = header.strip_prefix("Bearer ").ok_or_else(|| {
+            unauthorized("invalid Authorization format, expected 'Bearer <token>'")
+        })?;
 
         // Look up token in database
         // Load all active tokens (small team assumption — 少量 token)

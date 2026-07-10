@@ -12,8 +12,8 @@ pub use router::{AvailableModel, ModelProviderInfo, ResolvedProviderRoute};
 
 use std::sync::Arc;
 
-use crate::db;
 use crate::config::models::{ApiKeyEntry, ProviderQuotaAdapter};
+use crate::db;
 
 use router::KeySelector;
 
@@ -75,7 +75,9 @@ impl Store {
         provider_id: &str,
     ) -> Result<Option<crate::db::models::Provider>, String> {
         let results = crate::db::models::Provider::filter(
-            crate::db::models::Provider::fields().provider_id().eq(provider_id),
+            crate::db::models::Provider::fields()
+                .provider_id()
+                .eq(provider_id),
         )
         .exec(&mut self.db.clone())
         .await
@@ -100,19 +102,17 @@ impl Store {
 
         if let Some(provider) = existing {
             let id = provider.id;
-            crate::db::models::Provider::filter(
-                crate::db::models::Provider::fields().id().eq(id),
-            )
-            .update()
-            .display_name(display_name)
-            .api_keys(api_keys)
-            .enabled(enabled)
-            .priority(priority)
-            .quota_adapter(quota_adapter)
-            .quota_adapter_config(quota_adapter_config)
-            .exec(&mut self.db.clone())
-            .await
-            .map_err(|e| e.to_string())?;
+            crate::db::models::Provider::filter(crate::db::models::Provider::fields().id().eq(id))
+                .update()
+                .display_name(display_name)
+                .api_keys(api_keys)
+                .enabled(enabled)
+                .priority(priority)
+                .quota_adapter(quota_adapter)
+                .quota_adapter_config(quota_adapter_config)
+                .exec(&mut self.db.clone())
+                .await
+                .map_err(|e| e.to_string())?;
 
             crate::db::models::Provider::get_by_id(&mut self.db.clone(), &id)
                 .await
@@ -146,7 +146,9 @@ impl Store {
 
         // 删除关联的 ModelProvider
         let links = crate::db::models::ModelProvider::filter(
-            crate::db::models::ModelProvider::fields().provider_id().eq(row_id),
+            crate::db::models::ModelProvider::fields()
+                .provider_id()
+                .eq(row_id),
         )
         .exec(&mut self.db.clone())
         .await
@@ -164,7 +166,9 @@ impl Store {
 
         // 删除关联的 ProviderProtocol
         let protocols = crate::db::models::ProviderProtocol::filter(
-            crate::db::models::ProviderProtocol::fields().provider_id().eq(row_id),
+            crate::db::models::ProviderProtocol::fields()
+                .provider_id()
+                .eq(row_id),
         )
         .exec(&mut self.db.clone())
         .await
@@ -172,7 +176,9 @@ impl Store {
 
         for proto in protocols {
             crate::db::models::ProviderProtocol::filter(
-                crate::db::models::ProviderProtocol::fields().id().eq(proto.id),
+                crate::db::models::ProviderProtocol::fields()
+                    .id()
+                    .eq(proto.id),
             )
             .delete()
             .exec(&mut self.db.clone())
@@ -180,13 +186,11 @@ impl Store {
             .map_err(|e| e.to_string())?;
         }
 
-        crate::db::models::Provider::filter(
-            crate::db::models::Provider::fields().id().eq(row_id),
-        )
-        .delete()
-        .exec(&mut self.db.clone())
-        .await
-        .map_err(|e| e.to_string())?;
+        crate::db::models::Provider::filter(crate::db::models::Provider::fields().id().eq(row_id))
+            .delete()
+            .exec(&mut self.db.clone())
+            .await
+            .map_err(|e| e.to_string())?;
 
         Ok(true)
     }
@@ -294,10 +298,8 @@ impl Store {
         inputs: Vec<ProtocolInput>,
     ) -> Result<Vec<crate::db::models::ProviderProtocol>, String> {
         let existing = self.list_provider_protocols(provider_id).await?;
-        let existing_ids: std::collections::HashSet<u64> =
-            existing.iter().map(|p| p.id).collect();
-        let kept_ids: std::collections::HashSet<u64> =
-            inputs.iter().filter_map(|i| i.id).collect();
+        let existing_ids: std::collections::HashSet<u64> = existing.iter().map(|p| p.id).collect();
+        let kept_ids: std::collections::HashSet<u64> = inputs.iter().filter_map(|i| i.id).collect();
 
         // 删除：存在但未保留
         for p in &existing {
@@ -384,23 +386,21 @@ impl Store {
         id: u64,
         input: ModelInput,
     ) -> Result<crate::db::models::LLMModel, String> {
-        crate::db::models::LLMModel::filter(
-            crate::db::models::LLMModel::fields().id().eq(id),
-        )
-        .update()
-        .model_name(input.model_name)
-        .display_name(input.display_name)
-        .description(input.description)
-        .max_input_tokens(input.max_input_tokens)
-        .max_output_tokens(input.max_output_tokens)
-        .tool_calling(input.tool_calling)
-        .vision(input.vision)
-        .thinking(input.thinking)
-        .adaptive_thinking(input.adaptive_thinking)
-        .status(input.status)
-        .exec(&mut self.db.clone())
-        .await
-        .map_err(|e| e.to_string())?;
+        crate::db::models::LLMModel::filter(crate::db::models::LLMModel::fields().id().eq(id))
+            .update()
+            .model_name(input.model_name)
+            .display_name(input.display_name)
+            .description(input.description)
+            .max_input_tokens(input.max_input_tokens)
+            .max_output_tokens(input.max_output_tokens)
+            .tool_calling(input.tool_calling)
+            .vision(input.vision)
+            .thinking(input.thinking)
+            .adaptive_thinking(input.adaptive_thinking)
+            .status(input.status)
+            .exec(&mut self.db.clone())
+            .await
+            .map_err(|e| e.to_string())?;
 
         crate::db::models::LLMModel::get_by_id(&mut self.db.clone(), &id)
             .await
@@ -432,13 +432,11 @@ impl Store {
             .map_err(|e| e.to_string())?;
         }
 
-        crate::db::models::LLMModel::filter(
-            crate::db::models::LLMModel::fields().id().eq(id),
-        )
-        .delete()
-        .exec(&mut self.db.clone())
-        .await
-        .map_err(|e| e.to_string())?;
+        crate::db::models::LLMModel::filter(crate::db::models::LLMModel::fields().id().eq(id))
+            .delete()
+            .exec(&mut self.db.clone())
+            .await
+            .map_err(|e| e.to_string())?;
         Ok(true)
     }
 
@@ -448,7 +446,9 @@ impl Store {
         model_id: u64,
     ) -> Result<Vec<crate::db::models::ModelProvider>, String> {
         let mut links = crate::db::models::ModelProvider::filter(
-            crate::db::models::ModelProvider::fields().model_id().eq(model_id),
+            crate::db::models::ModelProvider::fields()
+                .model_id()
+                .eq(model_id),
         )
         .exec(&mut self.db.clone())
         .await
@@ -500,17 +500,19 @@ impl Store {
         cache_read_price_per_1m: Option<f64>,
     ) -> Result<crate::db::models::ModelProvider, String> {
         // 查找或创建 Model
-        let model_id = self.ensure_model(
-            &model_name,
-            &display_name,
-            description.clone(),
-            max_input_tokens,
-            max_output_tokens,
-            tool_calling,
-            vision,
-            thinking,
-            adaptive_thinking,
-        ).await?;
+        let model_id = self
+            .ensure_model(
+                &model_name,
+                &display_name,
+                description.clone(),
+                max_input_tokens,
+                max_output_tokens,
+                tool_calling,
+                vision,
+                thinking,
+                adaptive_thinking,
+            )
+            .await?;
 
         let mp = toasty::create!(db::models::ModelProvider {
             model_id,
@@ -518,7 +520,7 @@ impl Store {
             provider_model_id,
             protocol_id,
             display_name,
-            max_input_tokens: None,  // 标称值已在 Model 中
+            max_input_tokens: None, // 标称值已在 Model 中
             max_output_tokens: None,
             tool_calling: None,
             vision: None,
@@ -553,7 +555,9 @@ impl Store {
     ) -> Result<u64, String> {
         // 先查找是否存在
         let existing = crate::db::models::LLMModel::filter(
-            crate::db::models::LLMModel::fields().model_name().eq(model_name),
+            crate::db::models::LLMModel::fields()
+                .model_name()
+                .eq(model_name),
         )
         .exec(&mut self.db.clone())
         .await
@@ -649,19 +653,17 @@ impl Store {
         quota_adapter: Option<ProviderQuotaAdapter>,
         quota_adapter_config: Option<String>,
     ) -> Result<crate::db::models::Provider, String> {
-        crate::db::models::Provider::filter(
-            crate::db::models::Provider::fields().id().eq(id),
-        )
-        .update()
-        .display_name(display_name)
-        .api_keys(api_keys)
-        .enabled(enabled)
-        .priority(priority)
-        .quota_adapter(quota_adapter)
-        .quota_adapter_config(quota_adapter_config)
-        .exec(&mut self.db.clone())
-        .await
-        .map_err(|e| e.to_string())?;
+        crate::db::models::Provider::filter(crate::db::models::Provider::fields().id().eq(id))
+            .update()
+            .display_name(display_name)
+            .api_keys(api_keys)
+            .enabled(enabled)
+            .priority(priority)
+            .quota_adapter(quota_adapter)
+            .quota_adapter_config(quota_adapter_config)
+            .exec(&mut self.db.clone())
+            .await
+            .map_err(|e| e.to_string())?;
 
         crate::db::models::Provider::get_by_id(&mut self.db.clone(), &id)
             .await
@@ -707,7 +709,9 @@ impl Store {
 
         for proto in protocols {
             crate::db::models::ProviderProtocol::filter(
-                crate::db::models::ProviderProtocol::fields().id().eq(proto.id),
+                crate::db::models::ProviderProtocol::fields()
+                    .id()
+                    .eq(proto.id),
             )
             .delete()
             .exec(&mut self.db.clone())
@@ -778,9 +782,7 @@ impl Store {
     // ── User management ──
 
     /// 列出所有用户。
-    pub async fn list_users(
-        &self,
-    ) -> Result<Vec<crate::db::models::User>, String> {
+    pub async fn list_users(&self) -> Result<Vec<crate::db::models::User>, String> {
         crate::db::models::User::all()
             .exec(&mut self.db.clone())
             .await
@@ -793,14 +795,12 @@ impl Store {
         user_id: u64,
         role: crate::db::models::UserRole,
     ) -> Result<(), String> {
-        crate::db::models::User::filter(
-            crate::db::models::User::fields().id().eq(user_id),
-        )
-        .update()
-        .role(role)
-        .exec(&mut self.db.clone())
-        .await
-        .map_err(|e| e.to_string())?;
+        crate::db::models::User::filter(crate::db::models::User::fields().id().eq(user_id))
+            .update()
+            .role(role)
+            .exec(&mut self.db.clone())
+            .await
+            .map_err(|e| e.to_string())?;
 
         Ok(())
     }
@@ -841,8 +841,12 @@ pub struct ProtocolInput {
     pub priority: i64,
 }
 
-fn default_protocol_enabled() -> bool { true }
-fn default_protocol_priority() -> i64 { 100 }
+fn default_protocol_enabled() -> bool {
+    true
+}
+fn default_protocol_priority() -> i64 {
+    100
+}
 
 /// LLMModel 输入（用于创建/更新标称能力）。
 ///
@@ -872,7 +876,9 @@ pub struct ModelInput {
     pub status: Option<String>,
 }
 
-fn default_model_tokens() -> i64 { 4096 }
+fn default_model_tokens() -> i64 {
+    4096
+}
 
 /// 隐藏 API Key 中间部分。
 pub fn mask_key(key: &str) -> String {

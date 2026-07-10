@@ -13,9 +13,7 @@ use ractor::Actor;
 use rustls::crypto::ring::default_provider;
 use tracing::{info, warn};
 
-use crate::actors::gateway_manager::{
-    GatewayManagerActor, GatewayManagerArgs,
-};
+use crate::actors::gateway_manager::{GatewayManagerActor, GatewayManagerArgs};
 use crate::config::models::RuntimeSettings;
 use crate::server::AppState;
 use crate::server::start_server;
@@ -42,9 +40,12 @@ async fn run_server() -> MainResult {
     let settings = load_runtime_settings()?;
 
     // Phase 3: Store 现在由 toasty Db 构建，不再用 JSON 文件
-    let db = db::init(db::all_models(), &format!("sqlite:{}/llm-bridge.db", settings.store_path))
-        .await
-        .map_err(|e| std::io::Error::other(e.to_string()))?;
+    let db = db::init(
+        db::all_models(),
+        &format!("sqlite:{}/llm-bridge.db", settings.store_path),
+    )
+    .await
+    .map_err(|e| std::io::Error::other(e.to_string()))?;
 
     let store = Arc::new(Store::new(db.clone()));
     info!(store_path = %settings.store_path, "store initialized");
@@ -54,7 +55,10 @@ async fn run_server() -> MainResult {
         match OidcService::discover(oidc_config).await {
             Ok(oidc) => {
                 info!("OIDC service initialized");
-                Some(AuthState { oidc, db: db.clone() })
+                Some(AuthState {
+                    oidc,
+                    db: db.clone(),
+                })
             }
             Err(e) => {
                 warn!(error = %e, "OIDC initialization failed — continuing without OIDC");

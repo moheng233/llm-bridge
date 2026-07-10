@@ -12,7 +12,10 @@ use rand::RngExt;
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
-use crate::db::{self, models::{Token, UsageRecord}};
+use crate::db::{
+    self,
+    models::{Token, UsageRecord},
+};
 
 /// Token 明文前缀。
 const TOKEN_PREFIX: &str = "lb_";
@@ -148,8 +151,8 @@ pub async fn create_token(
 
     let token_hash = hash(&plaintext, DEFAULT_COST).map_err(|e| e.to_string())?;
 
-    let allowed_models_json = serde_json::to_string(&req.allowed_models)
-        .map_err(|e| e.to_string())?;
+    let allowed_models_json =
+        serde_json::to_string(&req.allowed_models).map_err(|e| e.to_string())?;
 
     let token = toasty::create!(Token {
         user_id,
@@ -218,8 +221,7 @@ pub async fn update_token(
         token.name = name;
     }
     if let Some(allowed_models) = req.allowed_models {
-        token.allowed_models = serde_json::to_string(&allowed_models)
-            .map_err(|e| e.to_string())?;
+        token.allowed_models = serde_json::to_string(&allowed_models).map_err(|e| e.to_string())?;
     }
     if let Some(rq) = req.request_quota {
         token.request_quota = rq;
