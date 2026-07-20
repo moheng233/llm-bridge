@@ -1,6 +1,4 @@
 <script setup lang="ts">
-import { type Component } from "vue";
-
 import { cn } from "~/lib/utils";
 
 const props = withDefaults(
@@ -10,7 +8,7 @@ const props = withDefaults(
     description?: string;
     count?: number | null;
     countLabel?: string;
-    icon?: Component<{ class?: string }>;
+    icon?: any;
   }>(),
   {
     count: null,

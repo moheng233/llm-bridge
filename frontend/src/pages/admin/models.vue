@@ -270,35 +270,23 @@ async function handleTestLink(modelId: number, link: ModelLinkView) {
 </script>
 
 <template>
-  <div class="flex h-full min-h-0 flex-col gap-4">
-    <div class="flex items-center justify-between">
-      <div>
-        <h2 class="font-mono text-xl font-bold text-foreground">模型管理</h2>
-        <p class="mt-1 text-sm text-muted-foreground">大语言模型标称能力 + 提供者连接</p>
-      </div>
-      <Button
-        class="cursor-pointer gap-2 bg-cta font-medium text-black hover:bg-cta-hover"
-        @click="openCreateDialog"
-        ><Plus class="h-4 w-4" /> 添加模型</Button
-      >
-    </div>
+  <PageShell>
+    <SectionHeader title="模型管理" description="大语言模型标称能力 + 提供者连接" :icon="Cpu">
+      <template #actions>
+        <Button
+          class="cursor-pointer gap-2 bg-cta font-medium text-black hover:bg-cta-hover"
+          @click="openCreateDialog"
+          ><Plus class="h-4 w-4" /> 添加模型</Button
+        >
+      </template>
+    </SectionHeader>
 
-    <Alert v-if="error" class="border-destructive/30 bg-destructive/10"
-      ><AlertDescription class="text-sm text-destructive">{{ error }}</AlertDescription></Alert
-    >
+    <ErrorState v-if="error" :error="error" inline @retry="loadData" />
 
     <div v-if="loading" class="flex flex-col gap-3">
       <Skeleton v-for="i in SKELETON_ROWS.adminModels" :key="i" class="h-16 w-full rounded-lg" />
     </div>
-    <div
-      v-else-if="models.length === 0"
-      class="flex flex-1 items-center justify-center text-muted-foreground"
-    >
-      <div class="flex flex-col items-center gap-2">
-        <Cpu class="h-8 w-8 opacity-30" />
-        <p class="text-sm">暂无模型，点击上方按钮添加</p>
-      </div>
-    </div>
+    <EmptyState v-else-if="models.length === 0" :icon="Cpu" title="暂无模型，点击上方按钮添加" />
     <div v-else class="flex flex-col gap-2 overflow-auto">
       <div v-for="m in models" :key="m.id" class="rounded-lg border border-border bg-card">
         <button
@@ -521,7 +509,7 @@ async function handleTestLink(modelId: number, link: ModelLinkView) {
       @saved="handleLinkSaved(editingLinkModelId!)"
       @error="(msg: string) => (error = msg)"
     />
-  </div>
+  </PageShell>
 </template>
 <route lang="json">
 {

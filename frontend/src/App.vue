@@ -204,7 +204,13 @@ function handleLogout() {
       <main class="flex min-h-0 flex-1 flex-col overflow-hidden p-6">
         <!-- Admin route guard -->
         <UnauthorizedPage v-if="accessDenied" />
-        <router-view v-else />
+        <router-view v-else v-slot="{ Component, route }">
+          <Transition name="page" mode="out-in">
+            <div class="mx-auto w-full max-w-5xl" :key="route.path">
+              <component :is="Component" />
+            </div>
+          </Transition>
+        </router-view>
       </main>
     </div>
   </div>

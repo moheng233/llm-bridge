@@ -135,3 +135,18 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* ── 页面过渡动画 ── */
+.page-enter-active {
+  transition: opacity 0.15s ease-out, transform 0.15s ease-out;
+}
+.page-leave-active {
+  transition: opacity 0.1s ease-in;
+}
+.page-enter-from {
+  opacity: 0;
+  transform: translateY(4px);
+}
+.page-leave-to {
+  opacity: 0;
+}

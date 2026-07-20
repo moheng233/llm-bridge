@@ -104,22 +104,18 @@ function quotaLabel(t: TokenListItem): string {
 </script>
 
 <template>
-  <div class="flex h-full min-h-0 flex-col gap-4">
-    <!-- Header -->
-    <div class="flex items-center justify-between">
-      <div>
-        <h2 class="font-mono text-xl font-bold text-foreground">API Token</h2>
-        <p class="mt-1 text-sm text-muted-foreground">管理你的 API Token，用于调用 LLM 接口</p>
-      </div>
-      <Dialog :open="showCreate" @update:open="(v: boolean) => (showCreate = v)">
-        <DialogTrigger as-child>
-          <Button
-            class="cursor-pointer gap-2 bg-cta font-medium text-black hover:bg-cta-hover"
-            @click="showCreate = true"
-          >
-            <Plus class="h-4 w-4" /> 创建 Token
-          </Button>
-        </DialogTrigger>
+  <PageShell>
+    <SectionHeader title="API Token" description="管理你的 API Token，用于调用 LLM 接口" :icon="Key">
+      <template #actions>
+        <Dialog :open="showCreate" @update:open="(v: boolean) => (showCreate = v)">
+          <DialogTrigger as-child>
+            <Button
+              class="cursor-pointer gap-2 bg-cta font-medium text-black hover:bg-cta-hover"
+              @click="showCreate = true"
+            >
+              <Plus class="h-4 w-4" /> 创建 Token
+            </Button>
+          </DialogTrigger>
         <DialogContent class="sm:max-w-md">
           <DialogHeader>
             <DialogTitle class="font-mono">创建新 Token</DialogTitle>
@@ -197,11 +193,10 @@ function quotaLabel(t: TokenListItem): string {
           </div>
         </DialogContent>
       </Dialog>
-    </div>
+    </template>
+    </SectionHeader>
 
-    <Alert v-if="error" class="border-destructive/30 bg-destructive/10">
-      <AlertDescription class="text-sm text-destructive">{{ error }}</AlertDescription>
-    </Alert>
+    <ErrorState v-if="error" :error="error" inline @retry="loadTokens" />
 
     <!-- Loading -->
     <div v-if="loading" class="flex flex-col gap-3">
@@ -209,12 +204,7 @@ function quotaLabel(t: TokenListItem): string {
     </div>
 
     <!-- Empty -->
-    <div v-else-if="tokens.length === 0" class="flex flex-1 items-center justify-center">
-      <div class="flex flex-col items-center gap-3 text-muted-foreground">
-        <Key class="h-12 w-12 opacity-30" />
-        <p class="text-sm">暂无 Token，点击上方按钮创建</p>
-      </div>
-    </div>
+    <EmptyState v-else-if="tokens.length === 0" :icon="Key" title="暂无 Token，点击上方按钮创建" />
 
     <!-- List -->
     <div v-else class="flex flex-col gap-3 overflow-auto">
@@ -267,5 +257,5 @@ function quotaLabel(t: TokenListItem): string {
         </div>
       </div>
     </div>
-  </div>
+  </PageShell>
 </template>

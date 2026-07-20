@@ -1,12 +1,10 @@
 <script setup lang="ts">
-import { type Component } from "vue";
-
 import { cn } from "~/lib/utils";
 
 const props = withDefaults(
   defineProps<{
     class?: string;
-    icon?: Component<{ class?: string }>;
+    icon?: any;
     title: string;
     description?: string;
   }>(),

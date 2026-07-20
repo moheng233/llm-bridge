@@ -2,6 +2,10 @@
 // 重定向到 /models
 </script>
 
+<template>
+  <div />
+</template>
+
 <route lang="json">
 {
   "redirect": "/models"

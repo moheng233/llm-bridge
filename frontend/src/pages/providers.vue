@@ -167,19 +167,14 @@ async function confirmDelete() {
 </script>
 
 <template>
-  <div class="flex h-full min-h-0 flex-col gap-4">
-    <!-- Header -->
-    <div class="flex items-center justify-between">
-      <div>
-        <h2 class="font-mono text-xl font-bold text-foreground">提供者管理</h2>
-        <p class="mt-1 text-sm text-muted-foreground">配置上游 LLM 提供者</p>
-      </div>
-      <ProviderCreateDialog @created="loadProviders" @error="(e: string) => (error = e)" />
-    </div>
+  <PageShell>
+    <SectionHeader title="提供者管理" description="配置上游 LLM 提供者" :icon="Globe">
+      <template #actions>
+        <ProviderCreateDialog @created="loadProviders" @error="(e: string) => (error = e)" />
+      </template>
+    </SectionHeader>
 
-    <Alert v-if="error" class="border-destructive/30 bg-destructive/10">
-      <AlertDescription class="text-sm text-destructive">{{ error }}</AlertDescription>
-    </Alert>
+    <ErrorState v-if="error" :error="error" inline @retry="loadProviders" />
 
     <!-- Loading -->
     <div v-if="loading" class="flex flex-col gap-3">
@@ -187,15 +182,7 @@ async function confirmDelete() {
     </div>
 
     <!-- Empty -->
-    <div
-      v-else-if="providers.length === 0"
-      class="flex flex-1 items-center justify-center text-muted-foreground"
-    >
-      <div class="flex flex-col items-center gap-2">
-        <Globe class="h-8 w-8 opacity-30" />
-        <p class="text-sm">暂无提供者，点击上方按钮添加</p>
-      </div>
-    </div>
+    <EmptyState v-else-if="providers.length === 0" :icon="Globe" title="暂无提供者，点击上方按钮添加" />
 
     <!-- List -->
     <div v-else class="flex flex-col gap-2 overflow-auto">
@@ -265,7 +252,7 @@ async function confirmDelete() {
         </div>
       </DialogContent>
     </Dialog>
-  </div>
+  </PageShell>
 </template>
 
 <route lang="json">

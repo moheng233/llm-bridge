@@ -187,21 +187,10 @@ function sortedProviders(providers: ModelProviderSummary[]): ModelProviderSummar
 </script>
 
 <template>
-  <div class="flex h-full min-h-0 flex-col gap-4">
-    <!-- 页眉 -->
-    <div class="flex items-center justify-between">
-      <div>
-        <h2 class="font-mono text-xl font-bold text-foreground">模型目录</h2>
-        <p class="mt-1 text-sm text-muted-foreground">
-          浏览可用模型的能力、上下文与定价 · 支持多 Provider 路由
-        </p>
-      </div>
-      <Badge variant="secondary" class="font-mono">{{ models.length }} 个模型</Badge>
-    </div>
+  <PageShell>
+    <SectionHeader title="模型目录" description="浏览可用模型的能力、上下文与定价 · 支持多 Provider 路由" :count="models.length" count-label="个模型" :icon="Cpu" />
 
-    <Alert v-if="error" class="border-destructive/30 bg-destructive/10">
-      <AlertDescription class="text-sm text-destructive">{{ error }}</AlertDescription>
-    </Alert>
+    <ErrorState v-if="error" :error="error" inline @retry="load" />
 
     <!-- 过滤栏 -->
     <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
@@ -560,15 +549,15 @@ function sortedProviders(providers: ModelProviderSummary[]): ModelProviderSummar
                 <div class="mt-1.5 flex flex-wrap gap-1 text-[10px]">
                   <span
                     v-if="p.toolCalling"
-                    class="rounded bg-[#22C55E]/10 px-1 py-0 text-[#22C55E]">工具</span
+                    class="rounded bg-cta/10 px-1 py-0 text-cta">工具</span
                   >
                   <span
                     v-if="p.vision"
-                    class="rounded bg-[#22C55E]/10 px-1 py-0 text-[#22C55E]">视觉</span
+                    class="rounded bg-cta/10 px-1 py-0 text-cta">视觉</span
                   >
                   <span
                     v-if="p.thinking"
-                    class="rounded bg-[#22C55E]/10 px-1 py-0 text-[#22C55E]">推理</span
+                    class="rounded bg-cta/10 px-1 py-0 text-cta">推理</span
                   >
                 </div>
               </div>
@@ -577,5 +566,5 @@ function sortedProviders(providers: ModelProviderSummary[]): ModelProviderSummar
         </div>
       </SheetContent>
     </Sheet>
-  </div>
+  </PageShell>
 </template>

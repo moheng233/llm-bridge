@@ -36,32 +36,16 @@ watchEffect(() => {
 </script>
 
 <template>
-  <div class="flex h-full min-h-0 flex-col gap-4">
-    <div class="flex items-center justify-between">
-      <div>
-        <h2 class="font-mono text-xl font-bold text-foreground">用户管理</h2>
-        <p class="mt-1 text-sm text-muted-foreground">管理团队成员账户与角色</p>
-      </div>
-      <Badge variant="secondary" class="font-mono">{{ users.length }} 个用户</Badge>
-    </div>
+  <PageShell>
+    <SectionHeader title="用户管理" description="管理团队成员账户与角色" :count="users.length" count-label="个用户" :icon="Users" />
 
-    <Alert v-if="error" class="border-destructive/30 bg-destructive/10">
-      <AlertDescription class="text-sm text-destructive">{{ error }}</AlertDescription>
-    </Alert>
+    <ErrorState v-if="error" :error="error" inline @retry="loadUsers" />
 
     <div v-if="loading" class="flex flex-col gap-2">
       <Skeleton v-for="i in SKELETON_ROWS.users" :key="i" class="h-16 w-full rounded-lg" />
     </div>
 
-    <div
-      v-else-if="users.length === 0"
-      class="flex flex-1 items-center justify-center text-muted-foreground"
-    >
-      <div class="flex flex-col items-center gap-2">
-        <Users class="h-8 w-8 opacity-30" />
-        <p class="text-sm">暂无用户</p>
-      </div>
-    </div>
+    <EmptyState v-else-if="users.length === 0" :icon="Users" title="暂无用户" />
 
     <div v-else class="flex flex-col gap-2 overflow-auto">
       <div
@@ -105,7 +89,7 @@ watchEffect(() => {
         </div>
       </div>
     </div>
-  </div>
+  </PageShell>
 </template>
 <route lang="json">
 {
