@@ -260,7 +260,7 @@ function quotaLabel(t: TokenListItem): string {
             class="h-8 w-8 cursor-pointer"
             @click="handleToggle(t)"
           >
-            <Checkbox :checked="t.active" class="pointer-events-none" />
+            <Checkbox :model-value="t.active" class="pointer-events-none" />
           </Button>
           <Button
             size="icon"

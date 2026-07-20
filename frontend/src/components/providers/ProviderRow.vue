@@ -57,7 +57,7 @@ const emit = defineEmits<{
           @keydown.enter="emit('toggleEnabled')"
           @click.stop="emit('toggleEnabled')"
         >
-          <Checkbox :checked="provider.enabled" class="pointer-events-none" />
+          <Checkbox :model-value="provider.enabled" class="pointer-events-none" />
         </span>
         <Button
           size="icon"
@@ -195,7 +195,7 @@ const emit = defineEmits<{
                 @keydown.enter="emit('toggleModel', m)"
                 @click="emit('toggleModel', m)"
               >
-                <Checkbox :checked="m.enabled" class="pointer-events-none h-4 w-4" />
+                <Checkbox :model-value="m.enabled" class="pointer-events-none h-4 w-4" />
               </span>
               <Button
                 size="icon"

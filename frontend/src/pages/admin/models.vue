@@ -192,6 +192,7 @@ async function doDelete() {
 // ── Link editing ──
 const editingLinkModelId = ref<number | null>(null);
 const editingLink = ref<ModelLinkView | null>(null); // null = 新建
+const linkDialogOpen = ref(false);
 
 async function refreshLinks(modelId: number) {
   const s = new Set(linksLoading.value);
@@ -215,22 +216,35 @@ async function refreshLinks(modelId: number) {
 function openCreateLink(modelId: number) {
   editingLinkModelId.value = modelId;
   editingLink.value = null;
+  linkDialogOpen.value = true;
 }
 
 function openEditLink(modelId: number, link: ModelLinkView) {
   editingLinkModelId.value = modelId;
   editingLink.value = link;
-}
-
-function closeLinkForm() {
-  editingLinkModelId.value = null;
-  editingLink.value = null;
+  linkDialogOpen.value = true;
 }
 
 function handleLinkSaved(modelId: number) {
-  closeLinkForm();
+  // 不在此处清空 editingLinkModelId——保持组件挂载，让弹窗通过 v-model:open 自行关闭。
+  // 仅刷新数据；清空状态在弹窗关闭后处理。
   refreshLinks(modelId);
 }
+
+// 弹窗关闭后清空编辑状态（延迟一帧，避免与 saved → open=false 流程竞争）。
+watch(linkDialogOpen, (v) => {
+  if (!v) {
+    const id = editingLinkModelId.value;
+    if (id !== null) {
+      nextTick(() => {
+        if (!linkDialogOpen.value) {
+          editingLinkModelId.value = null;
+          editingLink.value = null;
+        }
+      });
+    }
+  }
+});
 
 function getLinkTestResult(linkId: number) {
   return linkTestResults.value.get(linkId) ?? null;
@@ -249,7 +263,9 @@ async function handleTestLink(modelId: number, link: ModelLinkView) {
   linkTesting.value = loadingSet;
 
   try {
-    const resp = await api.admin.testModelProviderReply(String(modelId), String(link.id), {});
+    const resp = await api.admin.testModelProviderReply(String(modelId), String(link.id), {
+      prompt: null,
+    });
     const m = new Map(linkTestResults.value);
     m.set(link.id, {
       success: resp.success,
@@ -355,7 +371,6 @@ async function handleTestLink(modelId: number, link: ModelLinkView) {
               提供者连接
             </span>
             <Button
-              v-if="editingLinkModelId !== m.id"
               size="sm"
               variant="outline"
               class="h-7 cursor-pointer gap-1"
@@ -365,19 +380,6 @@ async function handleTestLink(modelId: number, link: ModelLinkView) {
               添加连接
             </Button>
           </div>
-
-          <!-- Inline link form -->
-          <ModelLinkEditForm
-            v-if="editingLinkModelId === m.id"
-            :model-id="m.id"
-            :model-name="m.modelName"
-            :providers="providers"
-            :current-model="m"
-            :editing-link="editingLink"
-            @saved="handleLinkSaved(m.id)"
-            @cancel="closeLinkForm()"
-            @error="(msg: string) => (error = msg)"
-          />
 
           <div
             v-if="linksLoading.has(m.id)"
@@ -490,13 +492,13 @@ async function handleTestLink(modelId: number, link: ModelLinkView) {
           </div>
           <div class="flex flex-wrap gap-4">
             <Label class="flex cursor-pointer items-center gap-2 text-sm"
-              ><Checkbox v-model:checked="form.toolCalling" /> 工具调用</Label
+              ><Checkbox v-model="form.toolCalling" /> 工具调用</Label
             >
             <Label class="flex cursor-pointer items-center gap-2 text-sm"
-              ><Checkbox v-model:checked="form.vision" /> 视觉</Label
+              ><Checkbox v-model="form.vision" /> 视觉</Label
             >
             <Label class="flex cursor-pointer items-center gap-2 text-sm"
-              ><Checkbox v-model:checked="form.thinking" /> 推理</Label
+              ><Checkbox v-model="form.thinking" /> 推理</Label
             >
           </div>
           <Button
@@ -528,6 +530,19 @@ async function handleTestLink(modelId: number, link: ModelLinkView) {
         </div>
       </DialogContent>
     </Dialog>
+
+    <!-- Model Link (Add / Edit) Dialog -->
+    <ModelLinkEditForm
+      v-if="editingLinkModelId !== null"
+      :model-id="editingLinkModelId"
+      :model-name="models.find((m) => m.id === editingLinkModelId)?.modelName ?? ''"
+      :providers="providers"
+      :current-model="models.find((m) => m.id === editingLinkModelId) ?? null"
+      :editing-link="editingLink"
+      v-model:open="linkDialogOpen"
+      @saved="handleLinkSaved(editingLinkModelId!)"
+      @error="(msg: string) => (error = msg)"
+    />
   </div>
 </template>
 <route lang="json">
