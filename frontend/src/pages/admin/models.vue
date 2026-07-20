@@ -17,6 +17,8 @@ import {
 import ModelLinkEditForm from "~/components/providers/ModelLinkEditForm.vue";
 import { getApi } from "~/lib/api";
 import { SKELETON_ROWS } from "~/lib/constants";
+import { useApiCall } from "~/composables/useApiCall";
+import { useReactiveMap, useReactiveSet } from "~/composables/useReactiveCollections";
 import { useAuthStore } from "~/stores/auth";
 
 const api = getApi();
@@ -25,15 +27,14 @@ const { isAdmin } = storeToRefs(authStore);
 
 const models = ref<AdminModelResponse[]>([]);
 const providers = ref<ProviderResponse[]>([]);
-const loading = ref(true);
-const error = ref("");
 const expandedId = ref<number | null>(null);
-const linksCache = ref<Map<number, ModelLinkView[]>>(new Map());
-const linksLoading = ref<Set<number>>(new Set());
-const linkTesting = ref<Set<number>>(new Set());
-const linkTestResults = ref<
-  Map<number, { success: boolean; latencyMs: number; error?: string; testedAt: number }>
->(new Map());
+const linksCache = useReactiveMap<number, ModelLinkView[]>();
+const linksLoading = useReactiveSet<number>();
+const linkTesting = useReactiveSet<number>();
+const linkTestResults = useReactiveMap<
+  number,
+  { success: boolean; latencyMs: number; error?: string; testedAt: number }
+>();
 
 // Model form dialog
 const showModelDialog = ref(false);
@@ -58,18 +59,15 @@ const deleteTarget = ref<{ type: string; modelId: number; name: string; linkId?:
   null,
 );
 
+const { loading, error, execute: fetchData } = useApiCall(() =>
+  Promise.all([api.admin.listAdminModels(), api.admin.listProviders()]),
+);
+
 async function loadData() {
-  loading.value = true;
-  error.value = "";
-  try {
-    [models.value, providers.value] = await Promise.all([
-      api.admin.listAdminModels(),
-      api.admin.listProviders(),
-    ]);
-  } catch (e: any) {
-    error.value = e.message;
-  } finally {
-    loading.value = false;
+  const result = await fetchData();
+  if (result) {
+    models.value = result[0];
+    providers.value = result[1];
   }
 }
 
@@ -83,21 +81,15 @@ async function toggleLinks(modelId: number) {
     return;
   }
   expandedId.value = modelId;
-  if (!linksCache.value.has(modelId)) {
-    const s = new Set(linksLoading.value);
-    s.add(modelId);
-    linksLoading.value = s;
+  if (!linksCache.has(modelId)) {
+    linksLoading.add(modelId);
     try {
       const links = await api.admin.listModelProviders(String(modelId));
-      const m = new Map(linksCache.value);
-      m.set(modelId, links);
-      linksCache.value = m;
+      linksCache.set(modelId, links);
     } catch (e: any) {
       error.value = e.message;
     } finally {
-      const s = new Set(linksLoading.value);
-      s.delete(modelId);
-      linksLoading.value = s;
+      linksLoading.delete(modelId);
     }
   }
 }
@@ -178,10 +170,10 @@ async function doDelete() {
   try {
     if (t.type === "model") {
       await api.admin.deleteAdminModel(String(t.modelId));
-      linksCache.value.delete(t.modelId);
+      linksCache.delete(t.modelId);
     } else if (t.linkId) {
       await api.admin.deleteModelProvider(String(t.modelId), String(t.linkId));
-      linksCache.value.delete(t.modelId);
+      linksCache.delete(t.modelId);
     }
     loadData();
   } catch (e: any) {
@@ -195,21 +187,15 @@ const editingLink = ref<ModelLinkView | null>(null); // null = 新建
 const linkDialogOpen = ref(false);
 
 async function refreshLinks(modelId: number) {
-  const s = new Set(linksLoading.value);
-  s.add(modelId);
-  linksLoading.value = s;
+  linksLoading.add(modelId);
   try {
     const links = await api.admin.listModelProviders(String(modelId));
-    const m = new Map(linksCache.value);
-    m.set(modelId, links);
-    linksCache.value = m;
+    linksCache.set(modelId, links);
     loadData();
   } catch (e: any) {
     error.value = e.message;
   } finally {
-    const s2 = new Set(linksLoading.value);
-    s2.delete(modelId);
-    linksLoading.value = s2;
+    linksLoading.delete(modelId);
   }
 }
 
@@ -247,7 +233,7 @@ watch(linkDialogOpen, (v) => {
 });
 
 function getLinkTestResult(linkId: number) {
-  return linkTestResults.value.get(linkId) ?? null;
+  return linkTestResults.get(linkId) ?? null;
 }
 
 function formatLinkTestResult(linkId: number): string {
@@ -258,35 +244,27 @@ function formatLinkTestResult(linkId: number): string {
 }
 
 async function handleTestLink(modelId: number, link: ModelLinkView) {
-  const loadingSet = new Set(linkTesting.value);
-  loadingSet.add(link.id);
-  linkTesting.value = loadingSet;
+  linkTesting.add(link.id);
 
   try {
     const resp = await api.admin.testModelProviderReply(String(modelId), String(link.id), {
       prompt: null,
     });
-    const m = new Map(linkTestResults.value);
-    m.set(link.id, {
+    linkTestResults.set(link.id, {
       success: resp.success,
       latencyMs: resp.latencyMs,
       error: resp.error ?? undefined,
       testedAt: Date.now(),
     });
-    linkTestResults.value = m;
   } catch (e: any) {
-    const m = new Map(linkTestResults.value);
-    m.set(link.id, {
+    linkTestResults.set(link.id, {
       success: false,
       latencyMs: 0,
       error: e.message || "请求失败",
       testedAt: Date.now(),
     });
-    linkTestResults.value = m;
   } finally {
-    const doneSet = new Set(linkTesting.value);
-    doneSet.delete(link.id);
-    linkTesting.value = doneSet;
+    linkTesting.delete(link.id);
   }
 }
 </script>
@@ -299,7 +277,7 @@ async function handleTestLink(modelId: number, link: ModelLinkView) {
         <p class="mt-1 text-sm text-muted-foreground">大语言模型标称能力 + 提供者连接</p>
       </div>
       <Button
-        class="cursor-pointer gap-2 bg-[#22C55E] font-medium text-black hover:bg-[#16A34A]"
+        class="cursor-pointer gap-2 bg-cta font-medium text-black hover:bg-cta-hover"
         @click="openCreateDialog"
         ><Plus class="h-4 w-4" /> 添加模型</Button
       >
@@ -417,7 +395,7 @@ async function handleTestLink(modelId: number, link: ModelLinkView) {
                   v-if="getLinkTestResult(link.id)"
                   class="text-xs"
                   :class="
-                    getLinkTestResult(link.id)?.success ? 'text-emerald-600' : 'text-destructive'
+                    getLinkTestResult(link.id)?.success ? 'text-cta' : 'text-destructive'
                   "
                   >{{ formatLinkTestResult(link.id) }}</span
                 >
@@ -502,7 +480,7 @@ async function handleTestLink(modelId: number, link: ModelLinkView) {
             >
           </div>
           <Button
-            class="cursor-pointer bg-[#22C55E] font-medium text-black hover:bg-[#16A34A]"
+            class="cursor-pointer bg-cta font-medium text-black hover:bg-cta-hover"
             @click="saveModel"
             :disabled="formSaving || !form.modelName.trim()"
             >{{ formSaving ? "保存中..." : editingModel ? "保存" : "创建" }}</Button

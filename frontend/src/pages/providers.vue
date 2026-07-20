@@ -6,6 +6,8 @@ import { Globe } from "@lucide/vue";
 import { getApi } from "~/lib/api";
 import { SKELETON_ROWS } from "~/lib/constants";
 import { protocolViewToInput } from "~/lib/utils/provider";
+import { useApiCall } from "~/composables/useApiCall";
+import { useReactiveMap, useReactiveSet } from "~/composables/useReactiveCollections";
 import { useAuthStore } from "~/stores/auth";
 
 const api = getApi();
@@ -13,11 +15,9 @@ const authStore = useAuthStore();
 const { isAdmin } = storeToRefs(authStore);
 
 const providers = ref<ProviderResponse[]>([]);
-const loading = ref(true);
-const error = ref("");
 const expandedId = ref<number | null>(null);
-const modelsCache = ref<Map<number, ProviderModelResponse[]>>(new Map());
-const modelsLoading = ref<Set<number>>(new Set());
+const modelsCache = useReactiveMap<number, ProviderModelResponse[]>();
+const modelsLoading = useReactiveSet<number>();
 
 // Edit dialog
 const editingProvider = ref<ProviderResponse | null>(null);
@@ -33,16 +33,13 @@ const deleteTarget = ref<{
   modelName?: string;
 } | null>(null);
 
+const { loading, error, execute: fetchProviders } = useApiCall(() =>
+  api.admin.listProviders(),
+);
+
 async function loadProviders() {
-  loading.value = true;
-  error.value = "";
-  try {
-    providers.value = await api.admin.listProviders();
-  } catch (e: any) {
-    error.value = e.message;
-  } finally {
-    loading.value = false;
-  }
+  const result = await fetchProviders();
+  if (result) providers.value = result;
 }
 
 watchEffect(() => {
@@ -56,21 +53,15 @@ async function toggleModels(providerId: number) {
     return;
   }
   expandedId.value = providerId;
-  if (!modelsCache.value.has(providerId)) {
-    const s = new Set(modelsLoading.value);
-    s.add(providerId);
-    modelsLoading.value = s;
+  if (!modelsCache.has(providerId)) {
+    modelsLoading.add(providerId);
     try {
       const models = await api.admin.listProviderModels(String(providerId));
-      const m = new Map(modelsCache.value);
-      m.set(providerId, models);
-      modelsCache.value = m;
+      modelsCache.set(providerId, models);
     } catch (e: any) {
       error.value = e.message;
     } finally {
-      const s2 = new Set(modelsLoading.value);
-      s2.delete(providerId);
-      modelsLoading.value = s2;
+      modelsLoading.delete(providerId);
     }
   }
 }
@@ -115,22 +106,15 @@ async function handleToggleModel(providerId: number, m: ProviderModelResponse) {
       enabled: !m.enabled,
     });
     if (expandedId.value === providerId) {
-      modelsCache.value.delete(providerId);
-      modelsCache.value = new Map(modelsCache.value);
-      const s = new Set(modelsLoading.value);
-      s.add(providerId);
-      modelsLoading.value = s;
+      modelsCache.delete(providerId);
+      modelsLoading.add(providerId);
       try {
         const models = await api.admin.listProviderModels(String(providerId));
-        const m2 = new Map(modelsCache.value);
-        m2.set(providerId, models);
-        modelsCache.value = m2;
+        modelsCache.set(providerId, models);
       } catch (_: any) {
         /* ignore */
       } finally {
-        const s2 = new Set(modelsLoading.value);
-        s2.delete(providerId);
-        modelsLoading.value = s2;
+        modelsLoading.delete(providerId);
       }
     }
   } catch (e: any) {
@@ -173,8 +157,7 @@ async function confirmDelete() {
     } else if (t.type === "model" && t.modelId !== undefined) {
       await api.admin.deleteProviderModel(String(t.providerId), String(t.modelId));
       expandedId.value = t.providerId;
-      modelsCache.value.delete(t.providerId);
-      modelsCache.value = new Map(modelsCache.value);
+      modelsCache.delete(t.providerId);
       toggleModels(t.providerId);
     }
   } catch (e: any) {

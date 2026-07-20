@@ -15,6 +15,7 @@ import {
 
 import { getApi, formatTokens, formatPrice } from "~/lib/api";
 import { SKELETON_ROWS } from "~/lib/constants";
+import { useApiCall } from "~/composables/useApiCall";
 
 const api = getApi();
 
@@ -54,25 +55,18 @@ function availableProviderCount(providers: ModelProviderSummary[]): number {
 // ── 数据加载 ──
 
 const models = ref<ModelResponse[]>([]);
-const loading = ref(true);
-const error = ref("");
 const search = ref("");
 const onlyAvailable = ref(false);
 const sortField = ref<"name" | "maxInputTokens" | "maxOutputTokens" | "inputPrice">("name");
 const sortDir = ref<"asc" | "desc">("asc");
 
+const { loading, error, execute: fetchModels } = useApiCall(() =>
+  onlyAvailable.value ? api.models.listAvailableModels() : api.models.listAllModels(),
+);
+
 async function load() {
-  loading.value = true;
-  error.value = "";
-  try {
-    models.value = onlyAvailable.value
-      ? await api.models.listAvailableModels()
-      : await api.models.listAllModels();
-  } catch (e: any) {
-    error.value = e.message;
-  } finally {
-    loading.value = false;
-  }
+  const result = await fetchModels();
+  if (result) models.value = result;
 }
 
 watchEffect(() => {
@@ -223,7 +217,7 @@ function sortedProviders(providers: ModelProviderSummary[]): ModelProviderSummar
           class="flex cursor-pointer items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors"
           :class="
             chip.active
-              ? 'border-[#22C55E]/40 bg-[#22C55E]/10 text-[#22C55E]'
+              ? 'border-cta/40 bg-cta/10 text-cta'
               : 'border-border bg-transparent text-muted-foreground hover:bg-accent hover:text-foreground'
           "
           @click="toggleCapability(chip.key)"
@@ -319,13 +313,13 @@ function sortedProviders(providers: ModelProviderSummary[]): ModelProviderSummar
               <div class="flex items-center justify-center gap-1.5">
                 <Wrench
                   v-if="model.toolCalling"
-                  class="h-3.5 w-3.5 text-[#22C55E]"
+                  class="h-3.5 w-3.5 text-cta"
                   title="工具调用"
                 />
-                <Eye v-if="model.vision" class="h-3.5 w-3.5 text-[#22C55E]" title="视觉" />
+                <Eye v-if="model.vision" class="h-3.5 w-3.5 text-cta" title="视觉" />
                 <Brain
                   v-if="model.thinking || model.adaptiveThinking"
-                  class="h-3.5 w-3.5 text-[#22C55E]"
+                  class="h-3.5 w-3.5 text-cta"
                   title="推理"
                 />
                 <span
@@ -384,19 +378,19 @@ function sortedProviders(providers: ModelProviderSummary[]): ModelProviderSummar
           }}</span>
           <span
             v-if="model.toolCalling"
-            class="inline-flex items-center gap-0.5 rounded bg-[#22C55E]/10 px-1.5 py-0.5 text-[#22C55E]"
+            class="inline-flex items-center gap-0.5 rounded bg-cta/10 px-1.5 py-0.5 text-cta"
           >
             <Wrench class="h-3 w-3" /> 工具
           </span>
           <span
             v-if="model.vision"
-            class="inline-flex items-center gap-0.5 rounded bg-[#22C55E]/10 px-1.5 py-0.5 text-[#22C55E]"
+            class="inline-flex items-center gap-0.5 rounded bg-cta/10 px-1.5 py-0.5 text-cta"
           >
             <Eye class="h-3 w-3" /> 视觉
           </span>
           <span
             v-if="model.thinking || model.adaptiveThinking"
-            class="inline-flex items-center gap-0.5 rounded bg-[#22C55E]/10 px-1.5 py-0.5 text-[#22C55E]"
+            class="inline-flex items-center gap-0.5 rounded bg-cta/10 px-1.5 py-0.5 text-cta"
           >
             <Brain class="h-3 w-3" /> 推理
           </span>
@@ -430,7 +424,7 @@ function sortedProviders(providers: ModelProviderSummary[]): ModelProviderSummar
       <SheetContent side="right" class="flex w-full flex-col gap-0 p-0 sm:max-w-lg">
         <SheetHeader class="flex flex-col gap-2 border-b border-border p-4 pr-10">
           <div class="flex items-center gap-2">
-            <Sparkles class="h-4 w-4 text-[#22C55E]" />
+            <Sparkles class="h-4 w-4 text-cta" />
             <SheetTitle class="font-mono text-lg font-bold">{{
               selectedModel?.modelName
             }}</SheetTitle>
@@ -448,7 +442,7 @@ function sortedProviders(providers: ModelProviderSummary[]): ModelProviderSummar
               :key="cap.label"
               :variant="cap.active ? 'default' : 'outline'"
               class="gap-1 text-[10px]"
-              :class="cap.active && 'bg-[#22C55E]/15 text-[#22C55E] hover:bg-[#22C55E]/20'"
+              :class="cap.active && 'bg-cta/15 text-cta hover:bg-cta/20'"
             >
               <component :is="cap.icon" class="h-3 w-3" />
               {{ cap.label }}
@@ -528,7 +522,7 @@ function sortedProviders(providers: ModelProviderSummary[]): ModelProviderSummar
                       }}</span>
                       <span
                         v-if="p.enabled"
-                        class="inline-flex items-center gap-0.5 rounded bg-[#22C55E]/15 px-1.5 py-0 text-[9px] font-medium text-[#22C55E]"
+                        class="inline-flex items-center gap-0.5 rounded bg-cta/15 px-1.5 py-0 text-[9px] font-medium text-cta"
                         >可用</span
                       >
                       <span

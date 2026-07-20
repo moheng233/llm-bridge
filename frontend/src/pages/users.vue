@@ -4,6 +4,7 @@ import { Users, Shield } from "@lucide/vue";
 
 import { getApi } from "~/lib/api";
 import { SKELETON_ROWS } from "~/lib/constants";
+import { useApiCall } from "~/composables/useApiCall";
 import { useAuthStore } from "~/stores/auth";
 
 const api = getApi();
@@ -11,19 +12,12 @@ const authStore = useAuthStore();
 const { isAdmin } = storeToRefs(authStore);
 
 const users = ref<UserResponse[]>([]);
-const loading = ref(true);
-const error = ref("");
+
+const { loading, error, execute: fetchUsers } = useApiCall(() => api.admin.listUsers());
 
 async function loadUsers() {
-  loading.value = true;
-  error.value = "";
-  try {
-    users.value = await api.admin.listUsers();
-  } catch (e: any) {
-    error.value = e.message;
-  } finally {
-    loading.value = false;
-  }
+  const result = await fetchUsers();
+  if (result) users.value = result;
 }
 
 async function changeRole(userId: number, role: string) {

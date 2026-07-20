@@ -5,6 +5,7 @@ import { Plus, Trash2, Key, Copy, Check } from "@lucide/vue";
 
 import { getApi, formatTime } from "~/lib/api";
 import { QUOTA_PERIOD_OPTIONS, quotaPeriodLabel, SKELETON_ROWS } from "~/lib/constants";
+import { useApiCall } from "~/composables/useApiCall";
 import { useAuthStore } from "~/stores/auth";
 
 const api = getApi();
@@ -12,8 +13,6 @@ const authStore = useAuthStore();
 const { isAuthenticated } = storeToRefs(authStore);
 
 const tokens = ref<TokenListItem[]>([]);
-const loading = ref(true);
-const error = ref("");
 const showCreate = ref(false);
 const newName = ref("");
 const newRequestQuota = ref(0);
@@ -22,16 +21,11 @@ const newQuotaPeriod = ref("unlimited");
 const createdToken = ref<CreateTokenResponse | null>(null);
 const tokenCopied = ref(false);
 
+const { loading, error, execute: fetchTokens } = useApiCall(() => api.tokens.listTokens());
+
 async function loadTokens() {
-  loading.value = true;
-  error.value = "";
-  try {
-    tokens.value = await api.tokens.listTokens();
-  } catch (e: any) {
-    error.value = e.message;
-  } finally {
-    loading.value = false;
-  }
+  const result = await fetchTokens();
+  if (result) tokens.value = result;
 }
 
 watchEffect(() => {
@@ -120,7 +114,7 @@ function quotaLabel(t: TokenListItem): string {
       <Dialog :open="showCreate" @update:open="(v: boolean) => (showCreate = v)">
         <DialogTrigger as-child>
           <Button
-            class="cursor-pointer gap-2 bg-[#22C55E] font-medium text-black hover:bg-[#16A34A]"
+            class="cursor-pointer gap-2 bg-cta font-medium text-black hover:bg-cta-hover"
             @click="showCreate = true"
           >
             <Plus class="h-4 w-4" /> 创建 Token
@@ -132,8 +126,8 @@ function quotaLabel(t: TokenListItem): string {
           </DialogHeader>
           <!-- Token created -->
           <div v-if="createdToken" class="flex flex-col gap-4">
-            <Alert class="border-[#22C55E]/30 bg-[#22C55E]/10">
-              <AlertDescription class="text-sm text-[#22C55E]"
+            <Alert class="border-cta/30 bg-cta/10">
+              <AlertDescription class="text-sm text-cta"
                 >Token 创建成功！请立即复制保存，此 Token 仅显示一次。</AlertDescription
               >
             </Alert>
@@ -147,7 +141,7 @@ function quotaLabel(t: TokenListItem): string {
                 class="shrink-0 cursor-pointer"
                 @click="copyToken"
               >
-                <Check v-if="tokenCopied" class="h-4 w-4 text-[#22C55E]" />
+                <Check v-if="tokenCopied" class="h-4 w-4 text-cta" />
                 <Copy v-else class="h-4 w-4" />
               </Button>
             </div>
@@ -194,7 +188,7 @@ function quotaLabel(t: TokenListItem): string {
               </Select>
             </div>
             <Button
-              class="cursor-pointer bg-[#22C55E] font-medium text-black hover:bg-[#16A34A]"
+              class="cursor-pointer bg-cta font-medium text-black hover:bg-cta-hover"
               @click="handleCreate"
               :disabled="!newName.trim()"
             >
