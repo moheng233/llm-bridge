@@ -262,7 +262,7 @@ function sortedProviders(providers: ModelProviderSummary[]): ModelProviderSummar
           <tr
             v-for="model in filteredModels"
             :key="model.modelName"
-            class="cursor-pointer border-b border-border/50 transition-colors hover:bg-accent/50"
+            class="cursor-pointer border-b border-border/50 transition-all duration-150 hover:bg-accent/60 hover:shadow-sm"
             @click="openDetail(model)"
           >
             <td class="px-4 py-3">

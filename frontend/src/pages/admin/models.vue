@@ -15,7 +15,7 @@ import {
 } from "@lucide/vue";
 
 import ModelLinkEditForm from "~/components/providers/ModelLinkEditForm.vue";
-import { getApi } from "~/lib/api";
+import { getApi, formatTokens, parseTokens } from "~/lib/api";
 import { SKELETON_ROWS } from "~/lib/constants";
 import { useApiCall } from "~/composables/useApiCall";
 import { useReactiveMap, useReactiveSet } from "~/composables/useReactiveCollections";
@@ -43,8 +43,8 @@ const form = ref({
   modelName: "",
   displayName: "",
   description: "",
-  maxInput: 4096,
-  maxOutput: 4096,
+  maxInput: "4K",
+  maxOutput: "4K",
   toolCalling: false,
   vision: false,
   thinking: false,
@@ -100,8 +100,8 @@ function openCreateDialog() {
     modelName: "",
     displayName: "",
     description: "",
-    maxInput: 4096,
-    maxOutput: 4096,
+    maxInput: "4K",
+    maxOutput: "4K",
     toolCalling: false,
     vision: false,
     thinking: false,
@@ -116,8 +116,8 @@ function openEditDialog(m: AdminModelResponse) {
     modelName: m.modelName,
     displayName: m.displayName,
     description: m.description ?? "",
-    maxInput: m.maxInputTokens,
-    maxOutput: m.maxOutputTokens,
+    maxInput: formatTokens(m.maxInputTokens),
+    maxOutput: formatTokens(m.maxOutputTokens),
     toolCalling: m.toolCalling,
     vision: m.vision,
     thinking: m.thinking,
@@ -137,8 +137,8 @@ async function saveModel() {
     modelName: form.value.modelName.trim(),
     displayName: form.value.displayName.trim() || form.value.modelName.trim(),
     description: form.value.description.trim() || null,
-    maxInputTokens: form.value.maxInput,
-    maxOutputTokens: form.value.maxOutput,
+    maxInputTokens: parseTokens(form.value.maxInput) ?? 0,
+    maxOutputTokens: parseTokens(form.value.maxOutput) ?? 0,
     toolCalling: form.value.toolCalling,
     vision: form.value.vision,
     thinking: form.value.thinking,
@@ -290,7 +290,7 @@ async function handleTestLink(modelId: number, link: ModelLinkView) {
     <div v-else class="flex flex-col gap-2 overflow-auto">
       <div v-for="m in models" :key="m.id" class="rounded-lg border border-border bg-card">
         <button
-          class="flex w-full cursor-pointer items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-accent/50"
+          class="flex w-full cursor-pointer items-center gap-3 px-4 py-3 text-left transition-all duration-150 hover:bg-accent/60 hover:shadow-sm"
           @click="toggleLinks(m.id)"
         >
           <ChevronDown v-if="expandedId === m.id" class="h-4 w-4 shrink-0 text-muted-foreground" />
@@ -303,8 +303,8 @@ async function handleTestLink(modelId: number, link: ModelLinkView) {
             </div>
             <div class="mt-0.5 flex flex-wrap gap-3 text-xs text-muted-foreground">
               <span>{{ m.displayName }}</span>
-              <span>↑{{ m.maxInputTokens.toLocaleString() }}</span>
-              <span>↓{{ m.maxOutputTokens.toLocaleString() }}</span>
+              <span>↑{{ formatTokens(m.maxInputTokens) }}</span>
+              <span>↓{{ formatTokens(m.maxOutputTokens) }}</span>
               <Badge v-if="m.toolCalling" variant="outline" class="py-0 text-[10px]">tools</Badge>
               <Badge v-if="m.vision" variant="outline" class="py-0 text-[10px]">vision</Badge>
               <Badge v-if="m.thinking" variant="outline" class="py-0 text-[10px]">thinking</Badge>
@@ -450,22 +450,27 @@ async function handleTestLink(modelId: number, link: ModelLinkView) {
           </div>
           <div class="grid grid-cols-2 gap-3">
             <div class="flex flex-col gap-2">
-              <Label>最大输入 tokens</Label><Input v-model.number="form.maxInput" type="number" />
+              <Label>最大输入</Label>
+              <Input v-model="form.maxInput" placeholder="如 1M / 256K" />
             </div>
             <div class="flex flex-col gap-2">
-              <Label>最大输出 tokens</Label><Input v-model.number="form.maxOutput" type="number" />
+              <Label>最大输出</Label>
+              <Input v-model="form.maxOutput" placeholder="如 1M / 256K" />
             </div>
           </div>
-          <div class="flex flex-wrap gap-4">
-            <Label class="flex cursor-pointer items-center gap-2 text-sm"
-              ><Checkbox v-model="form.toolCalling" /> 工具调用</Label
-            >
-            <Label class="flex cursor-pointer items-center gap-2 text-sm"
-              ><Checkbox v-model="form.vision" /> 视觉</Label
-            >
-            <Label class="flex cursor-pointer items-center gap-2 text-sm"
-              ><Checkbox v-model="form.thinking" /> 推理</Label
-            >
+          <div class="flex flex-col gap-2">
+            <Label>模型能力</Label>
+            <div class="flex flex-wrap gap-4">
+              <Label class="flex cursor-pointer items-center gap-2 text-sm"
+                ><Checkbox v-model="form.toolCalling" /> 工具调用</Label
+              >
+              <Label class="flex cursor-pointer items-center gap-2 text-sm"
+                ><Checkbox v-model="form.vision" /> 视觉</Label
+              >
+              <Label class="flex cursor-pointer items-center gap-2 text-sm"
+                ><Checkbox v-model="form.thinking" /> 推理</Label
+              >
+            </div>
           </div>
           <Button
             class="cursor-pointer bg-cta font-medium text-black hover:bg-cta-hover"

@@ -33,6 +33,25 @@ export function formatTokens(n: number): string {
   return n.toString();
 }
 
+/**
+ * 解析带单位的 token 数量输入。
+ * 支持：1048576、1M、1m、1K、1k、1.5M、256K 等。
+ * 返回 null 表示无法解析。
+ */
+export function parseTokens(input: string | number): number | null {
+  if (typeof input === "number") return Number.isFinite(input) && input >= 0 ? Math.floor(input) : null;
+  const s = input.trim();
+  if (s === "") return null;
+  const m = s.match(/^([\d.]+)\s*([MmKk])?$/);
+  if (!m) return null;
+  const n = parseFloat(m[1]);
+  if (!Number.isFinite(n) || n < 0) return null;
+  const unit = (m[2] ?? "").toUpperCase();
+  if (unit === "M") return Math.floor(n * 1_000_000);
+  if (unit === "K") return Math.floor(n * 1_000);
+  return Math.floor(n);
+}
+
 // Utility: format price per 1M tokens
 export function formatPrice(price: number | null | undefined): string {
   if (price == null) return "—";
