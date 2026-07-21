@@ -16,7 +16,7 @@ use tracing::instrument;
 use crate::actors::provider::adapters::openai_chat_completions::flatten_thinking_value_for_sse;
 use crate::actors::provider::{
     ProviderActor, ProviderChatRequest, ProviderMessage, ProviderResponseMetadata,
-    ProviderRuntimeConfig,
+    ProviderRuntimeConfig, ProviderStartSignal,
 };
 use crate::middleware::token_auth::TokenAuth;
 use crate::server::AppState;
@@ -222,6 +222,21 @@ pub struct ChatCompletionRequest {
     /// OpenRouter 扩展推理配置：{"effort":...} | {"max_tokens":...} | {"enabled":true} | {"exclude":...}
     #[serde(default)]
     pub reasoning: Option<OpenAiReasoning>,
+    /// 确定性采样种子
+    #[serde(default)]
+    pub seed: Option<i64>,
+    /// 频率惩罚（-2.0 ~ 2.0）
+    #[serde(default)]
+    pub frequency_penalty: Option<f64>,
+    /// 存在惩罚（-2.0 ~ 2.0）
+    #[serde(default)]
+    pub presence_penalty: Option<f64>,
+    /// token logit 偏置：{"token_id": bias}
+    #[serde(default)]
+    pub logit_bias: Option<std::collections::HashMap<String, f64>>,
+    /// 推理模型的最大补全 token 数（含 reasoning tokens）
+    #[serde(default)]
+    pub max_completion_tokens: Option<u32>,
 }
 
 /// `response_format` 仅支持 OpenAI 官方两种形态；`text` 视为缺省不单独处理。
@@ -426,7 +441,7 @@ pub async fn chat_completions(
     }
 
     // Convert OpenAI messages to our internal format.
-    let messages = convert_messages(&req.messages)?;
+    let messages = convert_messages(&req.messages).await?;
 
     let provider_config = ProviderRuntimeConfig {
         id: route.provider_name.clone(),
@@ -451,6 +466,11 @@ pub async fn chat_completions(
         stop: req.stop.clone(),
         response_format: req.response_format.clone().map(Into::into),
         reasoning,
+        seed: req.seed,
+        frequency_penalty: req.frequency_penalty,
+        presence_penalty: req.presence_penalty,
+        logit_bias: req.logit_bias.clone(),
+        max_completion_tokens: req.max_completion_tokens,
     };
 
     // Spawn provider actor and get stream.
@@ -460,10 +480,14 @@ pub async fn chat_completions(
 
     let (metadata_tx, metadata_rx) =
         tokio::sync::oneshot::channel::<ProviderResponseMetadata>();
+    let (started_tx, started_rx) =
+        tokio::sync::oneshot::channel::<ProviderStartSignal>();
 
     let stream = ractor::call_t!(
         provider_ref,
-        |reply| ProviderMessage::ChatRequest(provider_request, reply, metadata_tx),
+        |reply| {
+            ProviderMessage::ChatRequest(provider_request, reply, metadata_tx, started_tx)
+        },
         30_000
     )
     .map_err(|e| internal_error(&e.to_string()))?
@@ -472,6 +496,38 @@ pub async fn chat_completions(
     // Clean up provider actor when stream ends.
     let cleanup_handle = provider_handle;
     let cleanup_ref = provider_ref;
+
+    // #13：等待启动阶段信号——上游非 2xx 或请求未发出时，直接返回对应状态码而非 500。
+    match started_rx.await {
+        Ok(Ok(status)) if (200..300).contains(&(status as usize)) => {}
+        Ok(Ok(status)) => {
+            // 上游非 2xx：错误体会以 Err 进入流内；这里先取出再返回透传响应。
+            let mut stream = stream;
+            let mut message = format!("upstream returned status {status}");
+            let mut code: Option<String> = None;
+            while let Some(item) = stream.next().await {
+                match item {
+                    Err(e) => {
+                        message = e;
+                        break;
+                    }
+                    Ok(_) => continue,
+                }
+            }
+            cleanup_ref.stop(None);
+            let _ = cleanup_handle.await;
+            return Err(upstream_error_response(status, code.take(), &message));
+        }
+        Ok(Err(err)) => {
+            // 请求未成功发出（网络错误等）：502 Bad Gateway
+            cleanup_ref.stop(None);
+            let _ = cleanup_handle.await;
+            return Err(upstream_error_response(502, err.code.clone(), &err.message));
+        }
+        Err(_) => {
+            // started_tx 被 drop（理论上不该发生）：回退按流内错误处理
+        }
+    }
 
     if req.stream {
         let usage_handle = UsageHandle::default();
@@ -777,6 +833,9 @@ async fn map_part_to_sse(
                     None
                 }
                 LMResponsePart::ToolCall(tc) => {
+                    // 语义基准：ToolCall 累积完整后一次性发射（含完整 arguments）。
+                    // finish_reason 不由此处标注——上游 Usage part 会携带真实的
+                    // "tool_calls" finish_reason 单独成 chunk。
                     delta.insert(
                         "tool_calls".to_string(),
                         serde_json::json!([{
@@ -790,7 +849,7 @@ async fn map_part_to_sse(
                             }
                         }]),
                     );
-                    Some("tool_calls")
+                    None
                 }
                 LMResponsePart::Usage(u) => {
                     // 聚合供流后结算
@@ -854,10 +913,12 @@ async fn map_part_to_sse(
             Ok(Event::default().data(serde_json::to_string(&chunk).unwrap_or_default()))
         }
         Err(e) => {
+            // #13：流式错误 chunk 携带 code 字段（P3 #18 错误格式部分）
             let error_chunk = serde_json::json!({
                 "error": {
                     "message": e,
-                    "type": "provider_error"
+                    "type": "provider_error",
+                    "code": "provider_error"
                 }
             });
             Ok(Event::default().data(serde_json::to_string(&error_chunk).unwrap_or_default()))
@@ -865,70 +926,200 @@ async fn map_part_to_sse(
     }
 }
 
+/// #11：单张图片抓取上限 10 MiB，每条消息最多 8 个图片 part。
+const MAX_IMAGE_BYTES: usize = 10 * 1024 * 1024;
+const MAX_IMAGE_PARTS_PER_MESSAGE: usize = 8;
+
+async fn convert_messages(
+    messages: &[OpenAiMessage],
+) -> Result<Vec<LanguageModelChatMessage>, Response> {
+    let mut out = Vec::with_capacity(messages.len());
+    for msg in messages {
+        out.push(convert_single_message(msg).await?);
+    }
+    Ok(out)
+}
+
 #[allow(clippy::result_large_err)]
-fn convert_messages(messages: &[OpenAiMessage]) -> Result<Vec<LanguageModelChatMessage>, Response> {
-    messages
-        .iter()
-        .map(|msg| {
-            let role = match msg.role.as_str() {
-                "user" => LanguageModelChatMessageRole::User,
-                "assistant" => LanguageModelChatMessageRole::Assistant,
-                "system" => LanguageModelChatMessageRole::System,
-                "developer" => LanguageModelChatMessageRole::Developer,
-                _ => LanguageModelChatMessageRole::User,
-            };
+async fn convert_single_message(msg: &OpenAiMessage) -> Result<LanguageModelChatMessage, Response> {
+    let role = match msg.role.as_str() {
+        "user" => LanguageModelChatMessageRole::User,
+        "assistant" => LanguageModelChatMessageRole::Assistant,
+        "system" => LanguageModelChatMessageRole::System,
+        "developer" => LanguageModelChatMessageRole::Developer,
+        _ => LanguageModelChatMessageRole::User,
+    };
 
-            // role=tool → ToolResult part
-            if msg.role == "tool" {
-                let call_id = msg.tool_call_id.clone().unwrap_or_default();
-                let text = content_to_text(&msg.content);
-                return Ok(LanguageModelChatMessage {
-                    role: LanguageModelChatMessageRole::User,
-                    content: vec![LanguageModelInputPart::ToolResult(
-                        LanguageModelToolResultPart {
-                            call_id,
-                            content: vec![LanguageModelToolResultContent::Text(
-                                LanguageModelTextPart { value: text },
-                            )],
-                        },
+    // role=tool → ToolResult part
+    if msg.role == "tool" {
+        let call_id = msg.tool_call_id.clone().unwrap_or_default();
+        let text = content_to_text(&msg.content);
+        return Ok(LanguageModelChatMessage {
+            role: LanguageModelChatMessageRole::User,
+            content: vec![LanguageModelInputPart::ToolResult(
+                LanguageModelToolResultPart {
+                    call_id,
+                    content: vec![LanguageModelToolResultContent::Text(
+                        LanguageModelTextPart { value: text },
                     )],
-                    name: msg.name.clone(),
-                });
-            }
+                },
+            )],
+            name: msg.name.clone(),
+        });
+    }
 
-            let mut parts: Vec<LanguageModelInputPart> = Vec::new();
+    let mut parts: Vec<LanguageModelInputPart> = Vec::new();
 
-            // assistant 携带 tool_calls → ToolCall parts
-            if let Some(tool_calls) = &msg.tool_calls {
-                for tc in tool_calls {
-                    let input = serde_json::from_str(&tc.function.arguments)
-                        .unwrap_or(serde_json::Value::String(tc.function.arguments.clone()));
-                    parts.push(LanguageModelInputPart::ToolCall(
-                        LanguageModelToolCallPart {
-                            call_id: tc.id.clone(),
-                            name: tc.function.name.clone(),
-                            input,
-                        },
-                    ));
-                }
-            }
+    // assistant 携带 tool_calls → ToolCall parts
+    if let Some(tool_calls) = &msg.tool_calls {
+        for tc in tool_calls {
+            let input = serde_json::from_str(&tc.function.arguments)
+                .unwrap_or(serde_json::Value::String(tc.function.arguments.clone()));
+            parts.push(LanguageModelInputPart::ToolCall(
+                LanguageModelToolCallPart {
+                    call_id: tc.id.clone(),
+                    name: tc.function.name.clone(),
+                    input,
+                },
+            ));
+        }
+    }
 
-            // 文本/多模态内容
-            let text = content_to_text(&msg.content);
-            if !text.is_empty() || parts.is_empty() {
+    // 文本 + 多模态图片 part（保持原始顺序：先文本再图片会丢序，因此改为按 part 顺序展开）
+    match &msg.content {
+        OpenAiContent::String(s) => {
+            if !s.is_empty() || parts.is_empty() {
                 parts.insert(
                     0,
-                    LanguageModelInputPart::Text(LanguageModelTextPart { value: text }),
+                    LanguageModelInputPart::Text(LanguageModelTextPart { value: s.clone() }),
                 );
             }
+        }
+        OpenAiContent::Array(content_parts) => {
+            let mut image_count = 0usize;
+            for part in content_parts {
+                match part {
+                    OpenAiContentPart::Text { text } => {
+                        parts.push(LanguageModelInputPart::Text(LanguageModelTextPart {
+                            value: text.clone(),
+                        }));
+                    }
+                    OpenAiContentPart::ImageUrl { image_url } => {
+                        image_count += 1;
+                        if image_count > MAX_IMAGE_PARTS_PER_MESSAGE {
+                            return Err(bad_request(&format!(
+                                "too many image parts in one message (max {MAX_IMAGE_PARTS_PER_MESSAGE})"
+                            )));
+                        }
+                        let data_part = resolve_image_url(&image_url.url).await?;
+                        parts.push(LanguageModelInputPart::Data(data_part));
+                    }
+                }
+            }
+            if parts.is_empty() {
+                parts.push(LanguageModelInputPart::Text(LanguageModelTextPart {
+                    value: String::new(),
+                }));
+            }
+        }
+    }
 
-            Ok(LanguageModelChatMessage {
-                role,
-                content: parts,
-                name: msg.name.clone(),
-            })
-        })
-        .collect()
+    Ok(LanguageModelChatMessage {
+        role,
+        content: parts,
+        name: msg.name.clone(),
+    })
+}
+
+/// #11：将 OpenAI image_url 解析为内部 LanguageModelDataPart。
+/// 支持 `data:<mime>;base64,<data>` 与 http(s) URL（抓取字节流）。
+async fn resolve_image_url(url: &str) -> Result<crate::types::LanguageModelDataPart, Response> {
+    use base64::Engine;
+    use base64::engine::general_purpose::STANDARD as BASE64;
+
+    if let Some(data_uri) = url.strip_prefix("data:") {
+        // data:<mime>;base64,<payload>
+        let (meta, payload) = data_uri
+            .split_once(',')
+            .ok_or_else(|| bad_request("invalid data URI for image_url"))?;
+        let mime_type = meta
+            .strip_suffix(";base64")
+            .unwrap_or(meta)
+            .to_string();
+        if !mime_type.starts_with("image/") {
+            return Err(bad_request(&format!(
+                "unsupported data URI mime type for image_url: {mime_type}"
+            )));
+        }
+        let data = BASE64
+            .decode(payload.trim())
+            .map_err(|e| bad_request(&format!("invalid base64 in image_url data URI: {e}")))?;
+        if data.len() > MAX_IMAGE_BYTES {
+            return Err(bad_request(&format!(
+                "image exceeds {} MiB limit",
+                MAX_IMAGE_BYTES / 1024 / 1024
+            )));
+        }
+        return Ok(crate::types::LanguageModelDataPart { mime_type, data });
+    }
+
+    if url.starts_with("http://") || url.starts_with("https://") {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(10))
+            .user_agent(concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION")))
+            .build()
+            .map_err(|e| internal_error(&format!("failed to build http client: {e}")))?;
+        let response = client
+            .get(url)
+            .send()
+            .await
+            .map_err(|e| bad_request(&format!("failed to fetch image_url: {e}")))?;
+        if !response.status().is_success() {
+            return Err(bad_request(&format!(
+                "failed to fetch image_url: HTTP {}",
+                response.status()
+            )));
+        }
+        let mime_type = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.split(';').next().unwrap_or(s).trim().to_string())
+            .filter(|s| s.starts_with("image/"))
+            .unwrap_or_else(|| "image/png".to_string());
+        let data = response
+            .bytes()
+            .await
+            .map_err(|e| bad_request(&format!("failed to read image_url body: {e}")))?;
+        if data.len() > MAX_IMAGE_BYTES {
+            return Err(bad_request(&format!(
+                "image exceeds {} MiB limit",
+                MAX_IMAGE_BYTES / 1024 / 1024
+            )));
+        }
+        return Ok(crate::types::LanguageModelDataPart {
+            mime_type,
+            data: data.to_vec(),
+        });
+    }
+
+    Err(bad_request(
+        "unsupported image_url scheme (expected data: or http(s):)",
+    ))
+}
+
+fn bad_request(msg: &str) -> Response {
+    (
+        StatusCode::BAD_REQUEST,
+        Json(serde_json::json!({
+            "error": {
+                "message": msg,
+                "type": "invalid_request_error",
+                "code": "invalid_request_error"
+            }
+        })),
+    )
+        .into_response()
 }
 
 fn content_to_text(content: &OpenAiContent) -> String {
@@ -953,6 +1144,29 @@ fn internal_error(msg: &str) -> Response {
                 "message": msg,
                 "type": "internal_error",
                 "code": "internal_error"
+            }
+        })),
+    )
+        .into_response()
+}
+
+/// #13：构造透传上游语义状态码的错误响应。
+fn upstream_error_response(status: u16, code: Option<String>, message: &str) -> Response {
+    let status_code = StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY);
+    let error_type = match status {
+        401 => "authentication_error",
+        402 => "billing_error",
+        429 => "rate_limit_exceeded",
+        s if s >= 500 => "upstream_error",
+        _ => "invalid_request_error",
+    };
+    (
+        status_code,
+        Json(serde_json::json!({
+            "error": {
+                "message": message,
+                "type": error_type,
+                "code": code.unwrap_or_else(|| error_type.to_string()),
             }
         })),
     )
@@ -988,4 +1202,74 @@ fn estimate_token_count(messages: &[OpenAiMessage], tools: Option<&[OpenAiTool]>
         })
         .unwrap_or(0);
     ((message_chars + tool_chars) / 4) as i64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use base64::Engine;
+    use base64::engine::general_purpose::STANDARD as BASE64;
+
+    #[tokio::test]
+    async fn resolve_image_url_decodes_data_uri() {
+        let raw = b"\x89PNG\r\n\x1a\n";
+        let url = format!("data:image/png;base64,{}", BASE64.encode(raw));
+        let part = resolve_image_url(&url).await.unwrap();
+        assert_eq!(part.mime_type, "image/png");
+        assert_eq!(part.data, raw);
+    }
+
+    #[tokio::test]
+    async fn resolve_image_url_rejects_non_image_data_uri() {
+        let url = format!("data:text/html;base64,{}", BASE64.encode(b"<html>"));
+        let result = resolve_image_url(&url).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn resolve_image_url_rejects_bad_base64() {
+        let result = resolve_image_url("data:image/png;base64,!!!not-base64!!!").await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn resolve_image_url_rejects_unknown_scheme() {
+        let result = resolve_image_url("file:///etc/passwd").await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn convert_messages_maps_image_url_part() {
+        let raw = b"fake-image";
+        let messages = vec![OpenAiMessage {
+            role: "user".to_string(),
+            content: OpenAiContent::Array(vec![
+                OpenAiContentPart::Text {
+                    text: "describe this".to_string(),
+                },
+                OpenAiContentPart::ImageUrl {
+                    image_url: OpenAiImageUrl {
+                        url: format!("data:image/jpeg;base64,{}", BASE64.encode(raw)),
+                    },
+                },
+            ]),
+            name: None,
+            tool_calls: None,
+            tool_call_id: None,
+        }];
+        let converted = convert_messages(&messages).await.unwrap();
+        assert_eq!(converted.len(), 1);
+        assert_eq!(converted[0].content.len(), 2);
+        assert!(matches!(
+            &converted[0].content[0],
+            LanguageModelInputPart::Text(t) if t.value == "describe this"
+        ));
+        match &converted[0].content[1] {
+            LanguageModelInputPart::Data(d) => {
+                assert_eq!(d.mime_type, "image/jpeg");
+                assert_eq!(d.data, raw);
+            }
+            other => panic!("expected Data part, got {other:?}"),
+        }
+    }
 }

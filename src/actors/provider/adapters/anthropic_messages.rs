@@ -15,7 +15,8 @@ use crate::types::{
 };
 
 use super::super::{
-    ProviderChatRequest, ProviderResponseMetadata, ProviderResponseSender, ProviderState,
+    ProviderChatRequest, ProviderError, ProviderResponseMetadata, ProviderResponseSender,
+    ProviderStartSignal, ProviderState,
 };
 
 const DEFAULT_ANTHROPIC_BASE_URL: &str = "https://api.anthropic.com/v1";
@@ -36,8 +37,23 @@ pub async fn stream_chat(
     request: ProviderChatRequest,
     tx: ProviderResponseSender,
     metadata_tx: tokio::sync::oneshot::Sender<ProviderResponseMetadata>,
+    started_tx: tokio::sync::oneshot::Sender<ProviderStartSignal>,
 ) -> Result<(), String> {
+    let mut started_tx = Some(started_tx);
+    // Anthropic 不支持的 OpenAI 参数：warn 并忽略。
+    if request.seed.is_some() {
+        tracing::warn!("anthropic adapter: seed parameter is not supported and will be ignored");
+    }
+    if request.frequency_penalty.is_some() || request.presence_penalty.is_some() {
+        tracing::warn!("anthropic adapter: frequency_penalty/presence_penalty are not supported and will be ignored");
+    }
+    if request.logit_bias.is_some() {
+        tracing::warn!("anthropic adapter: logit_bias is not supported and will be ignored");
+    }
+
     let (system, messages) = build_messages(&request.messages)?;
+    // max_completion_tokens 优先于 max_tokens（OpenAI 推理模型语义 → Anthropic max_tokens）
+    let max_tokens = request.max_completion_tokens.or(request.max_tokens);
     let payload = build_request_body(
         &request.model,
         system,
@@ -45,7 +61,7 @@ pub async fn stream_chat(
         request.tools.as_deref(),
         request.tool_choice.as_ref(),
         request.temperature,
-        request.max_tokens,
+        max_tokens,
         request.top_p,
         request.stop.as_deref(),
         request.response_format.as_ref(),
@@ -67,23 +83,31 @@ pub async fn stream_chat(
         }
     }
 
-    let response = req_builder
-        .json(&payload)
-        .send()
-        .await
-        .map_err(|error| format!("anthropic messages request failed: {error}"))?;
+    let response = match req_builder.json(&payload).send().await {
+        Ok(response) => response,
+        Err(error) => {
+            let err =
+                ProviderError::plain(format!("anthropic messages request failed: {error}"));
+            if let Some(tx) = started_tx.take() {
+                let _ = tx.send(Err(err.clone()));
+            }
+            return Err(err.message);
+        }
+    };
 
     let status = response.status();
+    if let Some(tx) = started_tx.take() {
+        let _ = tx.send(Ok(status.as_u16()));
+    }
     if !status.is_success() {
         let body = response
             .text()
             .await
             .map_err(|error| format!("anthropic error response read failed: {error}"))?;
-        return Err(format!(
-            "anthropic messages request failed (status {}): {}",
-            status.as_u16(),
-            parse_error_message(&body)
-        ));
+        let (code, message) = parse_error_body(&body);
+        let err = ProviderError::upstream(status.as_u16(), code, message);
+        let _ = tx.send(Err(err.message.clone())).await;
+        return Err(err.message);
     }
 
     let mut stream_state = AnthropicStreamState::default();
@@ -443,7 +467,8 @@ fn resolve_base_url(base_url: Option<&str>) -> String {
         .to_string()
 }
 
-fn parse_error_message(body: &str) -> String {
+/// 解析 Anthropic 错误体为 (error_type, message)。
+fn parse_error_body(body: &str) -> (Option<String>, String) {
     #[derive(Deserialize)]
     struct ErrorWrapper {
         error: Option<ErrorBody>,
@@ -459,13 +484,16 @@ fn parse_error_message(body: &str) -> String {
     serde_json::from_str::<ErrorWrapper>(body)
         .ok()
         .and_then(|wrapper| wrapper.error)
-        .map(|error| match (error.error_type, error.message) {
-            (Some(t), Some(m)) => format!("{t}: {m}"),
-            (_, Some(m)) => m,
-            (Some(t), None) => t,
-            (None, None) => body.to_string(),
+        .map(|error| {
+            let message = match (&error.error_type, error.message) {
+                (Some(t), Some(m)) => format!("{t}: {m}"),
+                (_, Some(m)) => m,
+                (Some(t), None) => t.clone(),
+                (None, None) => body.to_string(),
+            };
+            (error.error_type, message)
         })
-        .unwrap_or_else(|| body.to_string())
+        .unwrap_or_else(|| (None, body.to_string()))
 }
 
 // ---------------------------------------------------------------------------

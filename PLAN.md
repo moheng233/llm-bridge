@@ -106,11 +106,11 @@ Provider 多协议架构已落地：Provider → ProviderProtocol（协议 + bas
 
 | # | 方向 | 位置 | 问题 |
 |---|------|------|------|
-| 10 | 南 | `convert_messages` | `system` 角色被降级为 `user`（Anthropic 适配器本支持独立 system prompt，入口永远收不到）；不支持 `developer` 角色 |
-| 11 | 南 | `content_to_text` / `OpenAiContentPart` | 多模态 `image_url` part 被丢弃（内部 `LanguageModelDataPart` 与适配器图片映射已就绪，入口未接）；`input_audio` / `video_url` / `file` 不支持 |
-| 12 | 南+北 | `ChatCompletionRequest` + 适配器 | `seed` / `frequency_penalty` / `presence_penalty` / `logit_bias` / `max_completion_tokens` 未反序列化、无通路 |
-| 13 | 北+南 | `chat_completions` 错误处理 | 上游错误统一包装为 500 + `provider_error`，429 / 402 / 400 等语义状态码不透传，客户端无法做针对性重试 |
-| 14 | 北 | `openai_chat_completions.rs` `map_event` | 增量 tool_call arguments 续传分支为空（`// For simplicity...`），非完整 OpenAI 增量语义；Anthropic / Responses 适配器已按缓冲累积处理 |
+| 10 | 南 | `convert_messages` | ~~`system` 角色被降级为 `user`；不支持 `developer` 角色~~ ✅ 2026-07-21（随 P1 批次） |
+| 11 | 南 | `content_to_text` / `OpenAiContentPart` | ~~多模态 `image_url` part 被丢弃~~ ✅ 2026-07-21（`data:` URI 解码 + http(s) 抓取，10 MiB/图、8 图/消息上限）；`input_audio` / `video_url` / `file` 仍不支持 |
+| 12 | 南+北 | `ChatCompletionRequest` + 适配器 | ~~`seed` / `frequency_penalty` / `presence_penalty` / `logit_bias` / `max_completion_tokens` 未反序列化、无通路~~ ✅ 2026-07-21（OpenAI 系原生透传；Anthropic/Responses 仅映射 `max_completion_tokens`，其余 warn 忽略） |
+| 13 | 北+南 | `chat_completions` 错误处理 | ~~上游错误统一包装为 500 + `provider_error`，语义状态码不透传~~ ✅ 2026-07-21（`ProviderError` + 启动信号，429/402/400 等真实状态码透传；流式错误 chunk 补 `code` 字段） |
+| 14 | 北 | `openai_chat_completions.rs` `map_event` | ~~增量 tool_call arguments 续传分支为空~~ ✅ 2026-07-21（按 index 缓冲累积，finish/EOF 一次性发射完整 ToolCall，对齐 §4 语义基准 A2） |
 
 ### P3 — 按需（低频 / OpenRouter 特有）
 
@@ -130,10 +130,56 @@ Provider 多协议架构已落地：Provider → ProviderProtocol（协议 + bas
 
 ---
 
-## 4. 不在本计划范围
+## 4. 协议无关 WebSocket RPC 接口 `/v1/ws`
 
-- 后端 API 形态变更
+> 设计定稿：2026-07-21。目标：提供与 OpenAI 兼容 HTTP 接口并列的第二种传输绑定，直接以 vscode `LanguageModelChatResponse` 的同构类型（`LMResponsePart`）收发，便于 vscode 插件接入。`docs/architecture.md` §5–6.1 的旧 `/ws` + `GatewayEnvelope` 草稿作废，以本节为准。
+
+### 语义基准（最高原则）
+
+`LMResponsePart` 的流式语义对齐 vscode `LanguageModelChatResponse`，冲突时优先修复实现而非文档化残缺：
+
+- Text / Thinking：增量 append。
+- ToolCall：参数增量累积完整后**一次性发完整 part**（`input` 必须是完整 JSON 对象），无增量 tool call 帧。`anthropic_messages`、`openai_responses` 已是此语义。
+
+### 协议要点
+
+- **端点**：`GET /v1/ws`（Upgrade），握手阶段 `TokenAuth`（Bearer）鉴权，失败 401 不升级；subprotocol `lm-bridge.v1` 可选。
+- **帧格式**：全 JSON text frame；信封含客户端生成的 `id`，服务端以 `result` / `chunk` / `done` / `error` 四者之一回显同一 `id`。
+- **方法**：`chat`（流式，`chunk: LMResponsePart` 原样透传 × N → `done{finishReason}`）、`listModels`（→ `LMModelInfo[]`）、`cancel`（按 `targetId` 精确终止，补发 `done{cancelled}` 并按已产生 usage 结算）。
+- **错误码**：`invalid_request` / `model_not_found` / `model_not_allowed` / `quota_exceeded` / `provider_error` / `request_not_found` / `internal_error`。
+- **会话**：单连接多路复用（并发上限 8）；断连自动终止全部进行中请求并按实际 usage 多退少补；服务端 30s Ping 保活；出站 mpsc(64) 背压，慢消费关连接（1008）。
+
+### 实施阶段
+
+| # | 阶段 | 内容 | 依赖 |
+|---|------|------|------|
+| A | 协议类型 + TS 导出 | `src/types.rs`：为 `LMResponsePart` / `LanguageModelChatMessage` 等 15 个既有类型补 `#[derive(TS)]`（现状仅 3 个有）；新增 `WsChatParams` / `WsClientMessage`（`#[serde(tag="method")]`）/ `WsServerMessage`（result\|chunk\|done\|error）/ `WsErrorBody` / `WsErrorCode` / `WsChatDone` / `WsListModelsResult`；`cargo test generate_ts_client` 再生成绑定（含 untagged union 与 serde 判别行为的一致性断言测试） | — |
+| A2 | ToolCall 流式语义修复 | `openai_chat_completions.rs` 适配器对齐语义基准：流状态改按 index 累积 `arguments`，`finish_reason: "tool_calls"` 或 EOF 时冲刷发射完整 ToolCall part；配单元测试（参照 `anthropic_messages.rs` 的 `tool_use_lifecycle_produces_tool_call`）。SSE 客户端收到完整 tool_call 的时机从流早期变为末尾（此前 arguments 本为空），属有意修正 | —（可与 A 并行） |
+| B | 配额/usage 逻辑抽取 | 新建 `src/server/chat_common.rs`：从 `openai_api.rs` 抽出 `UsageAccumulator` / `settle_quota_with_actual_usage` / `estimate_token_count`，新增 `prepare_chat_request`（resolve_model → 白名单 → 预扣 → spawn ProviderActor → 取 stream，错误用结构化 `ChatPrepareError` 由两 handler 各自映射）；纯移动无行为变更 | A |
+| C | WS handler | 新建 `src/server/ws.rs`：`ws_handler(State, TokenAuth, WebSocketUpgrade)` → 读写任务分离；chat 消费任务把 `ProviderStream` map 为信封帧，连接级 `HashMap<request_id, AbortHandle>` 支撑 cancel 与断连清理（含 provider 层 channel 关闭时中止上游请求的验证）；`server/mod.rs` 注册路由（已核实 axfetchum 0.1.4 `get()` 兼容 WS upgrade handler）。**契约测试** `tests/ws_chat_contract.rs`：mock provider 覆盖 chunk 序列 / 并发归属 / cancel 结算 / 401 / 坏帧 / 慢消费 | A + A2 + B |
+| D | 文档与示例 | 重写 `docs/architecture.md` §6.1（删旧草稿与 ConnectionActor 时序）；新增面向插件开发者的 `docs/ws-api.md`；`examples/ws_chat_client.rs` 最小客户端（dev-dependencies 加 `tokio-tungstenite`） | C |
+
+### 复用（不改动）
+
+- `ProviderStream = Stream<Item = Result<LMResponsePart, String>>`（`src/actors/provider/mod.rs`）——与传输协议解耦，WS 只是新的消费端。
+- `TokenAuth`（`src/middleware/token_auth.rs`）、`check_and_deduct` / `TokenQuotaContext::from_token` / `adjust_usage`（`src/auth/quota.rs`）。
+
+### 明确否决
+
+- 不落旧稿的 ConnectionActor / GatewayManager 转发层——WS handler 与 `openai_api` 同构，直接编排 store + ProviderActor，避免两套调用链漂移。
+- 一请求一连接（无多路复用）方案；session cookie 双模式鉴权（session 用户无配额体系）；服务端非流式 chat（WS 上一切皆流，聚合是客户端的事）。
+
+### 记录待办（不阻塞本节）
+
+- Thinking part 目前三适配器均增量 append，vscode 侧为完整块语义；append 对渲染等价且 OpenAI/Anthropic 官方客户端均如此消费，保持现状，未来 vscode 侧有要求再按语义基准对齐。
+- `LanguageModelDataPart.data` 数字数组冗余；连接存续期 token 吊销不踢人（首版接受，`ws-api.md` 注明）。
+
+---
+
+## 5. 不在本计划范围
+
+- 既有 REST Admin API 与 `/v1/chat/completions` 的请求/响应形态变更（`/v1/ws` 为新增接口，不在此限）
 - `allowedModels` 多选 UI
 - 一次性 Token 下载/二次确认
 - 国际化（i18n）
-- E2E 测试
+- E2E 测试（§4 的 WS 契约测试为协议级集成测试，不在此限）

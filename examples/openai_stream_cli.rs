@@ -44,6 +44,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         stop: None,
         response_format: None,
         reasoning: None,
+        seed: None,
+        frequency_penalty: None,
+        presence_penalty: None,
+        logit_bias: None,
+        max_completion_tokens: None,
     };
 
     let state = ProviderState {
@@ -65,8 +70,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tokio::spawn(async move {
         let (metadata_tx, _metadata_rx) =
             tokio::sync::oneshot::channel::<llm_bridge::actors::provider::ProviderResponseMetadata>();
+        let (started_tx, _started_rx) =
+            tokio::sync::oneshot::channel::<llm_bridge::actors::provider::ProviderStartSignal>();
         if let Err(error) =
-            openai::stream_chat(&state, request, tx.clone(), metadata_tx).await
+            openai::stream_chat(&state, request, tx.clone(), metadata_tx, started_tx).await
         {
             let _ = tx.send(Err(error)).await;
         }

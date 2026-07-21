@@ -15,7 +15,8 @@ use crate::types::{
 };
 
 use super::super::{
-    ProviderChatRequest, ProviderResponseMetadata, ProviderResponseSender, ProviderState,
+    ProviderChatRequest, ProviderError, ProviderResponseMetadata, ProviderResponseSender,
+    ProviderStartSignal, ProviderState,
 };
 
 const DEFAULT_OPENAI_BASE_URL: &str = "https://api.openai.com/v1";
@@ -33,7 +34,9 @@ pub async fn stream_chat(
     request: ProviderChatRequest,
     tx: ProviderResponseSender,
     metadata_tx: tokio::sync::oneshot::Sender<ProviderResponseMetadata>,
+    started_tx: tokio::sync::oneshot::Sender<ProviderStartSignal>,
 ) -> Result<(), String> {
+    let mut started_tx = Some(started_tx);
     let payload = build_request_body(&request)?;
     let endpoint = build_endpoint(state);
 
@@ -46,23 +49,31 @@ pub async fn stream_chat(
         }
     }
 
-    let response = req_builder
-        .json(&payload)
-        .send()
-        .await
-        .map_err(|error| format!("openai responses request failed: {error}"))?;
+    let response = match req_builder.json(&payload).send().await {
+        Ok(response) => response,
+        Err(error) => {
+            let err =
+                ProviderError::plain(format!("openai responses request failed: {error}"));
+            if let Some(tx) = started_tx.take() {
+                let _ = tx.send(Err(err.clone()));
+            }
+            return Err(err.message);
+        }
+    };
 
     let status = response.status();
+    if let Some(tx) = started_tx.take() {
+        let _ = tx.send(Ok(status.as_u16()));
+    }
     if !status.is_success() {
         let body = response
             .text()
             .await
             .map_err(|error| format!("openai error response read failed: {error}"))?;
-        return Err(format!(
-            "openai responses request failed (status {}): {}",
-            status.as_u16(),
-            parse_error_message(&body)
-        ));
+        let (code, message) = parse_error_body(&body);
+        let err = ProviderError::upstream(status.as_u16(), code, message);
+        let _ = tx.send(Err(err.message.clone())).await;
+        return Err(err.message);
     }
 
     let mut stream_state = OpenAiStreamState::default();
@@ -128,10 +139,19 @@ fn build_request_body(request: &ProviderChatRequest) -> Result<Value, String> {
         })
     });
 
-    // Responses API has no `stop` parameter; log a warning if provided.
+    // Responses API 不支持的参数：warn 并忽略。
     if request.stop.is_some() {
         tracing::warn!("openai responses adapter: stop parameter is not supported and will be ignored");
     }
+    if request.frequency_penalty.is_some() || request.presence_penalty.is_some() {
+        tracing::warn!("openai responses adapter: frequency_penalty/presence_penalty are not supported and will be ignored");
+    }
+    if request.logit_bias.is_some() {
+        tracing::warn!("openai responses adapter: logit_bias is not supported and will be ignored");
+    }
+
+    // max_completion_tokens 优先于 max_tokens
+    let max_output_tokens = request.max_completion_tokens.or(request.max_tokens);
 
     serde_json::to_value(OpenAiResponsesCreateRequest {
         model: request.model.clone(),
@@ -140,8 +160,9 @@ fn build_request_body(request: &ProviderChatRequest) -> Result<Value, String> {
         tools,
         tool_choice: request.tool_choice.clone(),
         temperature: request.temperature,
-        max_output_tokens: request.max_tokens,
+        max_output_tokens,
         top_p: request.top_p,
+        seed: request.seed,
         text: text_format,
         reasoning,
     })
@@ -325,7 +346,8 @@ fn resolve_base_url(base_url: Option<&str>) -> String {
         .to_string()
 }
 
-fn parse_error_message(body: &str) -> String {
+/// 解析 OpenAI 错误体为 (code, message)。
+fn parse_error_body(body: &str) -> (Option<String>, String) {
     #[derive(Deserialize)]
     struct ErrorWrapper {
         error: Option<ErrorBody>,
@@ -333,20 +355,27 @@ fn parse_error_message(body: &str) -> String {
 
     #[derive(Deserialize)]
     struct ErrorBody {
-        code: Option<String>,
+        code: Option<Value>,
         message: Option<String>,
     }
 
     serde_json::from_str::<ErrorWrapper>(body)
         .ok()
         .and_then(|wrapper| wrapper.error)
-        .map(|error| match (error.code, error.message) {
-            (Some(code), Some(message)) => format!("{code}: {message}"),
-            (_, Some(message)) => message,
-            (Some(code), None) => code,
-            (None, None) => body.to_string(),
+        .map(|error| {
+            let code = error.code.map(|c| match c {
+                Value::String(s) => s,
+                other => other.to_string(),
+            });
+            let message = match (&code, error.message) {
+                (Some(code), Some(message)) => format!("{code}: {message}"),
+                (_, Some(message)) => message,
+                (Some(code), None) => code.clone(),
+                (None, None) => body.to_string(),
+            };
+            (code, message)
         })
-        .unwrap_or_else(|| body.to_string())
+        .unwrap_or_else(|| (None, body.to_string()))
 }
 
 #[derive(Default)]
@@ -760,6 +789,8 @@ struct OpenAiResponsesCreateRequest {
     max_output_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     top_p: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    seed: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     text: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1256,6 +1287,11 @@ mod tests {
             stop: None,
             response_format: None,
             reasoning: None,
+            seed: None,
+            frequency_penalty: None,
+            presence_penalty: None,
+            logit_bias: None,
+            max_completion_tokens: None,
         };
 
         let payload = build_request_body(&request).expect("request body should build");
@@ -1297,6 +1333,11 @@ mod tests {
             stop: None,
             response_format: None,
             reasoning: None,
+            seed: None,
+            frequency_penalty: None,
+            presence_penalty: None,
+            logit_bias: None,
+            max_completion_tokens: None,
         };
 
         let payload = build_request_body(&request).expect("request body should build");
@@ -1334,6 +1375,11 @@ mod tests {
             stop: None,
             response_format: None,
             reasoning: None,
+            seed: None,
+            frequency_penalty: None,
+            presence_penalty: None,
+            logit_bias: None,
+            max_completion_tokens: None,
         };
 
         let payload = build_request_body(&request).expect("request body should build");
@@ -1417,6 +1463,11 @@ mod tests {
             stop: None,
             response_format: None,
             reasoning: None,
+            seed: None,
+            frequency_penalty: None,
+            presence_penalty: None,
+            logit_bias: None,
+            max_completion_tokens: None,
         };
         let payload = build_request_body(&request).expect("request body should build");
         assert_eq!(payload["temperature"], 0.5);

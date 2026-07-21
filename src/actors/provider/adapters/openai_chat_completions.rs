@@ -13,7 +13,8 @@ use crate::types::{
 };
 
 use super::super::{
-    ProviderChatRequest, ProviderResponseMetadata, ProviderResponseSender, ProviderState,
+    ProviderChatRequest, ProviderError, ProviderResponseMetadata, ProviderResponseSender,
+    ProviderStartSignal, ProviderState,
 };
 
 const DEFAULT_OPENAI_BASE_URL: &str = "https://api.openai.com/v1";
@@ -31,7 +32,9 @@ pub async fn stream_chat(
     request: ProviderChatRequest,
     tx: ProviderResponseSender,
     metadata_tx: tokio::sync::oneshot::Sender<ProviderResponseMetadata>,
+    started_tx: tokio::sync::oneshot::Sender<ProviderStartSignal>,
 ) -> Result<(), String> {
+    let mut started_tx = Some(started_tx);
     let payload = build_request_body(&request)?;
     let endpoint = build_endpoint(state);
 
@@ -44,23 +47,34 @@ pub async fn stream_chat(
         }
     }
 
-    let response = req_builder
-        .json(&payload)
-        .send()
-        .await
-        .map_err(|error| format!("openai chat completions request failed: {error}"))?;
+    let response = match req_builder.json(&payload).send().await {
+        Ok(response) => response,
+        Err(error) => {
+            let err = ProviderError::plain(format!(
+                "openai chat completions request failed: {error}"
+            ));
+            if let Some(tx) = started_tx.take() {
+                let _ = tx.send(Err(err.clone()));
+            }
+            return Err(err.message);
+        }
+    };
 
     let status = response.status();
+    if let Some(tx) = started_tx.take() {
+        let _ = tx.send(Ok(status.as_u16()));
+    }
     if !status.is_success() {
         let body = response
             .text()
             .await
             .map_err(|error| format!("openai error response read failed: {error}"))?;
-        return Err(format!(
-            "openai chat completions request failed (status {}): {}",
-            status.as_u16(),
-            parse_error_message(&body)
-        ));
+        let (code, message) = parse_error_body(&body);
+        let err = ProviderError::upstream(status.as_u16(), code, message);
+        // 将结构化错误塞进流内，保证已返回 stream 的调用方能拿到原始错误文本；
+        // 南向状态码已由 started_tx 信号透传。
+        let _ = tx.send(Err(err.message.clone())).await;
+        return Err(err.message);
     }
 
     let mut stream_state = OpenAiChatStreamState::default();
@@ -94,6 +108,14 @@ pub async fn stream_chat(
                     }
                 }
             }
+        }
+    }
+
+    // EOF：上游异常断开（未发 finish_reason）时，冲刷剩余 tool_call 缓冲，
+    // 避免完整 arguments 永远滞留。
+    for part in flush_tool_call_buffers(&mut stream_state) {
+        if tx.send(Ok(part)).await.is_err() {
+            return Ok(());
         }
     }
 
@@ -145,6 +167,11 @@ fn build_request_body(request: &ProviderChatRequest) -> Result<Value, String> {
         stop: request.stop.clone(),
         response_format,
         reasoning_effort,
+        seed: request.seed,
+        frequency_penalty: request.frequency_penalty,
+        presence_penalty: request.presence_penalty,
+        logit_bias: request.logit_bias.clone(),
+        max_completion_tokens: request.max_completion_tokens,
         stream_options: Some(OpenAiStreamOptions {
             include_usage: true,
         }),
@@ -308,7 +335,8 @@ fn resolve_base_url(base_url: Option<&str>) -> String {
         .to_string()
 }
 
-fn parse_error_message(body: &str) -> String {
+/// 解析 OpenAI 错误体为 (code, message)。
+fn parse_error_body(body: &str) -> (Option<String>, String) {
     #[derive(Deserialize)]
     struct ErrorWrapper {
         error: Option<ErrorBody>,
@@ -316,20 +344,27 @@ fn parse_error_message(body: &str) -> String {
 
     #[derive(Deserialize)]
     struct ErrorBody {
-        code: Option<String>,
+        code: Option<Value>,
         message: Option<String>,
     }
 
     serde_json::from_str::<ErrorWrapper>(body)
         .ok()
         .and_then(|wrapper| wrapper.error)
-        .map(|error| match (error.code, error.message) {
-            (Some(code), Some(message)) => format!("{code}: {message}"),
-            (_, Some(message)) => message,
-            (Some(code), None) => code,
-            (None, None) => body.to_string(),
+        .map(|error| {
+            let code = error.code.map(|c| match c {
+                Value::String(s) => s,
+                other => other.to_string(),
+            });
+            let message = match (&code, error.message) {
+                (Some(code), Some(message)) => format!("{code}: {message}"),
+                (_, Some(message)) => message,
+                (Some(code), None) => code.clone(),
+                (None, None) => body.to_string(),
+            };
+            (code, message)
         })
-        .unwrap_or_else(|| body.to_string())
+        .unwrap_or_else(|| (None, body.to_string()))
 }
 
 // ── SSE helpers ───────────────────────────────────────────────────────────────
@@ -369,10 +404,19 @@ fn extract_sse_data(frame: &str) -> Option<&str> {
 
 #[derive(Default)]
 struct OpenAiChatStreamState {
-    streamed_tool_call_ids: std::collections::HashSet<String>,
+    /// 按 OpenAI tool_calls[].index 累积增量 arguments 的缓冲
+    tool_call_buffers: std::collections::BTreeMap<u32, ToolCallBuffer>,
     last_finish_reason: Option<String>,
     upstream_id: Option<String>,
     upstream_created: Option<u64>,
+}
+
+#[derive(Default)]
+struct ToolCallBuffer {
+    id: String,
+    name: String,
+    arguments: String,
+    emitted: bool,
 }
 
 // ── Event mapping ─────────────────────────────────────────────────────────────
@@ -414,14 +458,6 @@ fn map_event(data: &str, state: &mut OpenAiChatStreamState) -> Result<Vec<LMResp
     }
 
     for choice in &event.choices {
-        if let Some(finish_reason) = &choice.finish_reason {
-            state.last_finish_reason = Some(finish_reason.clone());
-            parts.push(LMResponsePart::Usage(LanguageModelUsagePart {
-                finish_reason: Some(finish_reason.clone()),
-                ..Default::default()
-            }));
-        }
-
         if let Some(delta) = &choice.delta {
             if let Some(content) = &delta.content
                 && !content.is_empty()
@@ -431,24 +467,17 @@ fn map_event(data: &str, state: &mut OpenAiChatStreamState) -> Result<Vec<LMResp
                 }));
             }
 
-            if !delta.tool_calls.is_empty() {
-                for tc in &delta.tool_calls {
-                    if let Some(name) = &tc.function.name {
-                        // New tool call
-                        state.streamed_tool_call_ids.insert(tc.id.clone());
-                        let arguments = tc.function.arguments.clone().unwrap_or_default();
-                        let input =
-                            serde_json::from_str(&arguments).unwrap_or(Value::String(arguments));
-                        parts.push(LMResponsePart::ToolCall(LanguageModelToolCallPart {
-                            call_id: tc.id.clone(),
-                            name: name.clone(),
-                            input,
-                        }));
-                    } else if let Some(_arguments) = &tc.function.arguments {
-                        // Continuing tool call arguments (already emitted above)
-                        // In streaming, we get incremental arguments
-                        // For simplicity, we'll handle this by accumulating
-                    }
+            // 增量 tool_call：按 index 累积 id / name / arguments
+            for tc in &delta.tool_calls {
+                let buf = state.tool_call_buffers.entry(tc.index).or_default();
+                if let Some(id) = &tc.id {
+                    buf.id = id.clone();
+                }
+                if let Some(name) = &tc.function.name {
+                    buf.name = name.clone();
+                }
+                if let Some(arguments) = &tc.function.arguments {
+                    buf.arguments.push_str(arguments);
                 }
             }
 
@@ -463,9 +492,48 @@ fn map_event(data: &str, state: &mut OpenAiChatStreamState) -> Result<Vec<LMResp
                 }));
             }
         }
+
+        if let Some(finish_reason) = &choice.finish_reason {
+            state.last_finish_reason = Some(finish_reason.clone());
+            // finish 时冲刷所有缓冲的 tool_call，一次性发射完整 ToolCall part
+            for (_index, mut buf) in std::mem::take(&mut state.tool_call_buffers) {
+                if !buf.emitted && !buf.id.is_empty() {
+                    buf.emitted = true;
+                    let input = serde_json::from_str(&buf.arguments)
+                        .unwrap_or(Value::String(buf.arguments));
+                    parts.push(LMResponsePart::ToolCall(LanguageModelToolCallPart {
+                        call_id: buf.id,
+                        name: buf.name,
+                        input,
+                    }));
+                }
+            }
+            parts.push(LMResponsePart::Usage(LanguageModelUsagePart {
+                finish_reason: Some(finish_reason.clone()),
+                ..Default::default()
+            }));
+        }
     }
 
     Ok(parts)
+}
+
+/// 冲刷流状态中缓冲的 tool_call（EOF 保底路径）。
+fn flush_tool_call_buffers(state: &mut OpenAiChatStreamState) -> Vec<LMResponsePart> {
+    let mut parts = Vec::new();
+    for (_index, mut buf) in std::mem::take(&mut state.tool_call_buffers) {
+        if !buf.emitted && !buf.id.is_empty() {
+            buf.emitted = true;
+            let input =
+                serde_json::from_str(&buf.arguments).unwrap_or(Value::String(buf.arguments));
+            parts.push(LMResponsePart::ToolCall(LanguageModelToolCallPart {
+                call_id: buf.id,
+                name: buf.name,
+                input,
+            }));
+        }
+    }
+    parts
 }
 
 // ── Request/Response types ────────────────────────────────────────────────────
@@ -491,6 +559,16 @@ struct OpenAiChatCompletionsRequest {
     response_format: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     reasoning_effort: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    seed: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    frequency_penalty: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    presence_penalty: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    logit_bias: Option<std::collections::HashMap<String, f64>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_completion_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     stream_options: Option<OpenAiStreamOptions>,
 }
@@ -615,7 +693,9 @@ struct ChatCompletionChunkDelta {
 
 #[derive(Debug, Deserialize)]
 struct ChatCompletionChunkToolCall {
-    id: String,
+    #[serde(default)]
+    index: u32,
+    id: Option<String>,
     #[serde(rename = "type")]
     #[allow(dead_code)]
     tool_type: Option<String>,
@@ -645,6 +725,11 @@ mod tests {
             stop: None,
             response_format: None,
             reasoning: None,
+            seed: None,
+            frequency_penalty: None,
+            presence_penalty: None,
+            logit_bias: None,
+            max_completion_tokens: None,
         }
     }
 
@@ -655,6 +740,91 @@ mod tests {
         assert_eq!(payload["max_tokens"], 321);
         assert_eq!(payload["top_p"], 0.8);
         assert_eq!(payload["stream_options"]["include_usage"], true);
+    }
+
+    #[test]
+    fn incremental_tool_call_accumulates_and_flushes_on_finish() {
+        let mut state = OpenAiChatStreamState::default();
+
+        // chunk 1: 新 tool_call（index=0, id, name, 部分 arguments）
+        let chunk1 = serde_json::to_string(&json!({
+            "choices": [{
+                "delta": {
+                    "tool_calls": [{
+                        "index": 0,
+                        "id": "call_abc",
+                        "type": "function",
+                        "function": { "name": "search", "arguments": "{\"q\":" }
+                    }]
+                }
+            }]
+        }))
+        .unwrap();
+        let parts = map_event(&chunk1, &mut state).unwrap();
+        assert!(parts.is_empty(), "首块不发射 ToolCall");
+        assert!(state.tool_call_buffers.contains_key(&0));
+
+        // chunk 2: 续传 arguments（无 id/name）
+        let chunk2 = serde_json::to_string(&json!({
+            "choices": [{
+                "delta": {
+                    "tool_calls": [{
+                        "index": 0,
+                        "function": { "arguments": "\"rust\"}" }
+                    }]
+                }
+            }]
+        }))
+        .unwrap();
+        let parts = map_event(&chunk2, &mut state).unwrap();
+        assert!(parts.is_empty(), "续传不发射 ToolCall");
+
+        // chunk 3: finish_reason=tool_calls → 冲刷发射完整 ToolCall
+        let chunk3 = serde_json::to_string(&json!({
+            "choices": [{ "delta": {}, "finish_reason": "tool_calls" }]
+        }))
+        .unwrap();
+        let parts = map_event(&chunk3, &mut state).unwrap();
+        let tool_calls: Vec<_> = parts
+            .iter()
+            .filter_map(|p| match p {
+                LMResponsePart::ToolCall(tc) => Some(tc),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(tool_calls.len(), 1);
+        assert_eq!(tool_calls[0].call_id, "call_abc");
+        assert_eq!(tool_calls[0].name, "search");
+        assert_eq!(tool_calls[0].input, json!({"q": "rust"}));
+        // finish_reason 的 Usage part 同时存在
+        assert!(
+            parts
+                .iter()
+                .any(|p| matches!(p, LMResponsePart::Usage(u) if u.finish_reason.as_deref() == Some("tool_calls")))
+        );
+        assert!(state.tool_call_buffers.is_empty());
+    }
+
+    #[test]
+    fn flush_tool_call_buffers_emits_on_eof() {
+        let mut state = OpenAiChatStreamState::default();
+        state.tool_call_buffers.insert(
+            0,
+            ToolCallBuffer {
+                id: "call_x".to_string(),
+                name: "f".to_string(),
+                arguments: "{\"a\":1}".to_string(),
+                emitted: false,
+            },
+        );
+        let parts = flush_tool_call_buffers(&mut state);
+        assert_eq!(parts.len(), 1);
+        if let LMResponsePart::ToolCall(tc) = &parts[0] {
+            assert_eq!(tc.call_id, "call_x");
+            assert_eq!(tc.input, json!({"a": 1}));
+        } else {
+            panic!("expected ToolCall");
+        }
     }
 
     #[test]
