@@ -15,10 +15,10 @@ import {
 } from "@lucide/vue";
 
 import ModelLinkEditForm from "~/components/providers/ModelLinkEditForm.vue";
-import { getApi, formatTokens, parseTokens } from "~/lib/api";
-import { SKELETON_ROWS } from "~/lib/constants";
 import { useApiCall } from "~/composables/useApiCall";
 import { useReactiveMap, useReactiveSet } from "~/composables/useReactiveCollections";
+import { getApi, formatTokens, parseTokens } from "~/lib/api";
+import { SKELETON_ROWS } from "~/lib/constants";
 import { useAuthStore } from "~/stores/auth";
 
 const api = getApi();
@@ -59,9 +59,11 @@ const deleteTarget = ref<{ type: string; modelId: number; name: string; linkId?:
   null,
 );
 
-const { loading, error, execute: fetchData } = useApiCall(() =>
-  Promise.all([api.admin.listAdminModels(), api.admin.listProviders()]),
-);
+const {
+  loading,
+  error,
+  execute: fetchData,
+} = useApiCall(() => Promise.all([api.admin.listAdminModels(), api.admin.listProviders()]));
 
 async function loadData() {
   const result = await fetchData();
@@ -382,9 +384,7 @@ async function handleTestLink(modelId: number, link: ModelLinkView) {
                 <span
                   v-if="getLinkTestResult(link.id)"
                   class="text-xs"
-                  :class="
-                    getLinkTestResult(link.id)?.success ? 'text-cta' : 'text-destructive'
-                  "
+                  :class="getLinkTestResult(link.id)?.success ? 'text-cta' : 'text-destructive'"
                   >{{ formatLinkTestResult(link.id) }}</span
                 >
               </div>

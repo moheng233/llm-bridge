@@ -189,10 +189,16 @@ async function saveLink() {
             <Label class="text-xs">协议</Label>
             <Select v-model="linkProtocolId" :disabled="linkProviderId === null">
               <SelectTrigger class="h-9 w-full">
-                <SelectValue :placeholder="linkProviderId === null ? '先选择提供者' : '选择协议...'" />
+                <SelectValue
+                  :placeholder="linkProviderId === null ? '先选择提供者' : '选择协议...'"
+                />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem v-for="proto in protocolsForSelectedProvider" :key="proto.id" :value="proto.id">
+                <SelectItem
+                  v-for="proto in protocolsForSelectedProvider"
+                  :key="proto.id"
+                  :value="proto.id"
+                >
                   {{ proto.protocol }} — {{ proto.baseUrl }}
                 </SelectItem>
               </SelectContent>
@@ -203,7 +209,11 @@ async function saveLink() {
         <div class="grid grid-cols-2 gap-3">
           <div class="flex flex-col gap-1">
             <Label class="text-xs">提供者侧模型 ID</Label>
-            <Input v-model="linkProviderModelId" placeholder="gpt-4o" class="h-9 font-mono text-sm" />
+            <Input
+              v-model="linkProviderModelId"
+              placeholder="gpt-4o"
+              class="h-9 font-mono text-sm"
+            />
           </div>
           <div class="flex flex-col gap-1">
             <Label class="text-xs">显示名</Label>
@@ -220,7 +230,9 @@ async function saveLink() {
             <Label class="text-xs">最大输入</Label>
             <Input
               v-model="linkMaxInputStr"
-              :placeholder="currentModel ? `标称：${formatTokens(currentModel.maxInputTokens)}` : '如 1M / 256K'"
+              :placeholder="
+                currentModel ? `标称：${formatTokens(currentModel.maxInputTokens)}` : '如 1M / 256K'
+              "
               class="h-9 text-sm"
             />
           </div>
@@ -228,7 +240,11 @@ async function saveLink() {
             <Label class="text-xs">最大输出</Label>
             <Input
               v-model="linkMaxOutputStr"
-              :placeholder="currentModel ? `标称：${formatTokens(currentModel.maxOutputTokens)}` : '如 1M / 256K'"
+              :placeholder="
+                currentModel
+                  ? `标称：${formatTokens(currentModel.maxOutputTokens)}`
+                  : '如 1M / 256K'
+              "
               class="h-9 text-sm"
             />
           </div>
@@ -272,27 +288,37 @@ async function saveLink() {
         </div>
 
         <div class="flex flex-col gap-1.5">
-          <Label class="text-xs text-muted-foreground">能力（勾选表示该提供者支持，与标称一致时视为继承）</Label>
+          <Label class="text-xs text-muted-foreground"
+            >能力（勾选表示该提供者支持，与标称一致时视为继承）</Label
+          >
           <div class="flex flex-wrap gap-x-4 gap-y-1.5 text-xs">
             <label class="flex cursor-pointer items-center gap-1.5">
               <Checkbox v-model="linkToolCalling" />
               工具调用
-              <span v-if="currentModel" class="text-muted-foreground">标称:{{ currentModel.toolCalling ? "✓" : "✗" }}</span>
+              <span v-if="currentModel" class="text-muted-foreground"
+                >标称:{{ currentModel.toolCalling ? "✓" : "✗" }}</span
+              >
             </label>
             <label class="flex cursor-pointer items-center gap-1.5">
               <Checkbox v-model="linkVision" />
               视觉
-              <span v-if="currentModel" class="text-muted-foreground">标称:{{ currentModel.vision ? "✓" : "✗" }}</span>
+              <span v-if="currentModel" class="text-muted-foreground"
+                >标称:{{ currentModel.vision ? "✓" : "✗" }}</span
+              >
             </label>
             <label class="flex cursor-pointer items-center gap-1.5">
               <Checkbox v-model="linkThinking" />
               思考
-              <span v-if="currentModel" class="text-muted-foreground">标称:{{ currentModel.thinking ? "✓" : "✗" }}</span>
+              <span v-if="currentModel" class="text-muted-foreground"
+                >标称:{{ currentModel.thinking ? "✓" : "✗" }}</span
+              >
             </label>
             <label class="flex cursor-pointer items-center gap-1.5">
               <Checkbox v-model="linkAdaptive" />
               自适应思考
-              <span v-if="currentModel" class="text-muted-foreground">标称:{{ currentModel.adaptiveThinking ? "✓" : "✗" }}</span>
+              <span v-if="currentModel" class="text-muted-foreground"
+                >标称:{{ currentModel.adaptiveThinking ? "✓" : "✗" }}</span
+              >
             </label>
           </div>
         </div>

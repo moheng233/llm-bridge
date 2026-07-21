@@ -3,9 +3,9 @@ import { type CreateTokenResponse } from "@bindings/CreateTokenResponse";
 import { type TokenListItem } from "@bindings/TokenListItem";
 import { Plus, Trash2, Key, Copy, Check } from "@lucide/vue";
 
+import { useApiCall } from "~/composables/useApiCall";
 import { getApi, formatTime } from "~/lib/api";
 import { QUOTA_PERIOD_OPTIONS, quotaPeriodLabel, SKELETON_ROWS } from "~/lib/constants";
-import { useApiCall } from "~/composables/useApiCall";
 import { useAuthStore } from "~/stores/auth";
 
 const api = getApi();
@@ -105,7 +105,11 @@ function quotaLabel(t: TokenListItem): string {
 
 <template>
   <PageShell>
-    <SectionHeader title="API Token" description="管理你的 API Token，用于调用 LLM 接口" :icon="Key">
+    <SectionHeader
+      title="API Token"
+      description="管理你的 API Token，用于调用 LLM 接口"
+      :icon="Key"
+    >
       <template #actions>
         <Dialog :open="showCreate" @update:open="(v: boolean) => (showCreate = v)">
           <DialogTrigger as-child>
@@ -116,84 +120,84 @@ function quotaLabel(t: TokenListItem): string {
               <Plus class="h-4 w-4" /> 创建 Token
             </Button>
           </DialogTrigger>
-        <DialogContent class="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle class="font-mono">创建新 Token</DialogTitle>
-          </DialogHeader>
-          <!-- Token created -->
-          <div v-if="createdToken" class="flex flex-col gap-4">
-            <Alert class="border-cta/30 bg-cta/10">
-              <AlertDescription class="text-sm text-cta"
-                >Token 创建成功！请立即复制保存，此 Token 仅显示一次。</AlertDescription
-              >
-            </Alert>
-            <div class="flex items-center gap-2">
-              <code class="flex-1 rounded-md bg-muted px-3 py-2 font-mono text-sm break-all">{{
-                createdToken.token
-              }}</code>
+          <DialogContent class="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle class="font-mono">创建新 Token</DialogTitle>
+            </DialogHeader>
+            <!-- Token created -->
+            <div v-if="createdToken" class="flex flex-col gap-4">
+              <Alert class="border-cta/30 bg-cta/10">
+                <AlertDescription class="text-sm text-cta"
+                  >Token 创建成功！请立即复制保存，此 Token 仅显示一次。</AlertDescription
+                >
+              </Alert>
+              <div class="flex items-center gap-2">
+                <code class="flex-1 rounded-md bg-muted px-3 py-2 font-mono text-sm break-all">{{
+                  createdToken.token
+                }}</code>
+                <Button
+                  size="icon"
+                  variant="outline"
+                  class="shrink-0 cursor-pointer"
+                  @click="copyToken"
+                >
+                  <Check v-if="tokenCopied" class="h-4 w-4 text-cta" />
+                  <Copy v-else class="h-4 w-4" />
+                </Button>
+              </div>
+              <Button variant="secondary" class="cursor-pointer" @click="closeCreate">关闭</Button>
+            </div>
+            <!-- Create form -->
+            <div v-else class="flex flex-col gap-4">
+              <div class="flex flex-col gap-2">
+                <Label for="tname">名称</Label>
+                <Input id="tname" v-model="newName" placeholder="dev-machine" />
+              </div>
+              <div class="grid grid-cols-2 gap-3">
+                <div class="flex flex-col gap-2">
+                  <Label for="rq">请求配额</Label>
+                  <Input
+                    id="rq"
+                    v-model.number="newRequestQuota"
+                    type="number"
+                    placeholder="0 = 不限制"
+                  />
+                </div>
+                <div class="flex flex-col gap-2">
+                  <Label for="tq">Token 配额</Label>
+                  <Input
+                    id="tq"
+                    v-model.number="newTokenQuota"
+                    type="number"
+                    placeholder="0 = 不限制"
+                  />
+                </div>
+              </div>
+              <div class="flex flex-col gap-2">
+                <Label>配额周期</Label>
+                <Select v-model="newQuotaPeriod">
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem
+                      v-for="opt in QUOTA_PERIOD_OPTIONS"
+                      :key="opt.value"
+                      :value="opt.value"
+                      >{{ opt.label }}</SelectItem
+                    >
+                  </SelectContent>
+                </Select>
+              </div>
               <Button
-                size="icon"
-                variant="outline"
-                class="shrink-0 cursor-pointer"
-                @click="copyToken"
+                class="cursor-pointer bg-cta font-medium text-black hover:bg-cta-hover"
+                @click="handleCreate"
+                :disabled="!newName.trim()"
               >
-                <Check v-if="tokenCopied" class="h-4 w-4 text-cta" />
-                <Copy v-else class="h-4 w-4" />
+                创建
               </Button>
             </div>
-            <Button variant="secondary" class="cursor-pointer" @click="closeCreate">关闭</Button>
-          </div>
-          <!-- Create form -->
-          <div v-else class="flex flex-col gap-4">
-            <div class="flex flex-col gap-2">
-              <Label for="tname">名称</Label>
-              <Input id="tname" v-model="newName" placeholder="dev-machine" />
-            </div>
-            <div class="grid grid-cols-2 gap-3">
-              <div class="flex flex-col gap-2">
-                <Label for="rq">请求配额</Label>
-                <Input
-                  id="rq"
-                  v-model.number="newRequestQuota"
-                  type="number"
-                  placeholder="0 = 不限制"
-                />
-              </div>
-              <div class="flex flex-col gap-2">
-                <Label for="tq">Token 配额</Label>
-                <Input
-                  id="tq"
-                  v-model.number="newTokenQuota"
-                  type="number"
-                  placeholder="0 = 不限制"
-                />
-              </div>
-            </div>
-            <div class="flex flex-col gap-2">
-              <Label>配额周期</Label>
-              <Select v-model="newQuotaPeriod">
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem
-                    v-for="opt in QUOTA_PERIOD_OPTIONS"
-                    :key="opt.value"
-                    :value="opt.value"
-                    >{{ opt.label }}</SelectItem
-                  >
-                </SelectContent>
-              </Select>
-            </div>
-            <Button
-              class="cursor-pointer bg-cta font-medium text-black hover:bg-cta-hover"
-              @click="handleCreate"
-              :disabled="!newName.trim()"
-            >
-              创建
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
-    </template>
+          </DialogContent>
+        </Dialog>
+      </template>
     </SectionHeader>
 
     <ErrorState v-if="error" :error="error" inline @retry="loadTokens" />

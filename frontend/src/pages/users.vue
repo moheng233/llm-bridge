@@ -2,9 +2,9 @@
 import { type UserResponse } from "@bindings/UserResponse";
 import { Users, Shield } from "@lucide/vue";
 
+import { useApiCall } from "~/composables/useApiCall";
 import { getApi } from "~/lib/api";
 import { SKELETON_ROWS } from "~/lib/constants";
-import { useApiCall } from "~/composables/useApiCall";
 import { useAuthStore } from "~/stores/auth";
 
 const api = getApi();
@@ -37,7 +37,13 @@ watchEffect(() => {
 
 <template>
   <PageShell>
-    <SectionHeader title="用户管理" description="管理团队成员账户与角色" :count="users.length" count-label="个用户" :icon="Users" />
+    <SectionHeader
+      title="用户管理"
+      description="管理团队成员账户与角色"
+      :count="users.length"
+      count-label="个用户"
+      :icon="Users"
+    />
 
     <ErrorState v-if="error" :error="error" inline @retry="loadUsers" />
 

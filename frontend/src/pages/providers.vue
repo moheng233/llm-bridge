@@ -3,11 +3,11 @@ import { type ProviderModelResponse } from "@bindings/ProviderModelResponse";
 import { type ProviderResponse } from "@bindings/ProviderResponse";
 import { Globe } from "@lucide/vue";
 
+import { useApiCall } from "~/composables/useApiCall";
+import { useReactiveMap, useReactiveSet } from "~/composables/useReactiveCollections";
 import { getApi } from "~/lib/api";
 import { SKELETON_ROWS } from "~/lib/constants";
 import { protocolViewToInput } from "~/lib/utils/provider";
-import { useApiCall } from "~/composables/useApiCall";
-import { useReactiveMap, useReactiveSet } from "~/composables/useReactiveCollections";
 import { useAuthStore } from "~/stores/auth";
 
 const api = getApi();
@@ -33,9 +33,7 @@ const deleteTarget = ref<{
   modelName?: string;
 } | null>(null);
 
-const { loading, error, execute: fetchProviders } = useApiCall(() =>
-  api.admin.listProviders(),
-);
+const { loading, error, execute: fetchProviders } = useApiCall(() => api.admin.listProviders());
 
 async function loadProviders() {
   const result = await fetchProviders();
@@ -182,7 +180,11 @@ async function confirmDelete() {
     </div>
 
     <!-- Empty -->
-    <EmptyState v-else-if="providers.length === 0" :icon="Globe" title="暂无提供者，点击上方按钮添加" />
+    <EmptyState
+      v-else-if="providers.length === 0"
+      :icon="Globe"
+      title="暂无提供者，点击上方按钮添加"
+    />
 
     <!-- List -->
     <div v-else class="flex flex-col gap-2 overflow-auto">

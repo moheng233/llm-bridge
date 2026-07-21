@@ -13,9 +13,9 @@ import {
   Sparkles,
 } from "@lucide/vue";
 
+import { useApiCall } from "~/composables/useApiCall";
 import { getApi, formatTokens, formatPrice } from "~/lib/api";
 import { SKELETON_ROWS } from "~/lib/constants";
-import { useApiCall } from "~/composables/useApiCall";
 
 const api = getApi();
 
@@ -25,9 +25,7 @@ function cheapestPrice(
   providers: ModelProviderSummary[],
   key: keyof ModelProviderSummary,
 ): number | null {
-  const prices = providers
-    .map((p) => p[key])
-    .filter((v): v is number => typeof v === "number");
+  const prices = providers.map((p) => p[key]).filter((v): v is number => typeof v === "number");
   return prices.length > 0 ? Math.min(...prices) : null;
 }
 
@@ -35,9 +33,7 @@ function priceRange(
   providers: ModelProviderSummary[],
   key: keyof ModelProviderSummary,
 ): { min: number; max: number } | null {
-  const prices = providers
-    .map((p) => p[key])
-    .filter((v): v is number => typeof v === "number");
+  const prices = providers.map((p) => p[key]).filter((v): v is number => typeof v === "number");
   if (prices.length === 0) return null;
   return { min: Math.min(...prices), max: Math.max(...prices) };
 }
@@ -60,7 +56,11 @@ const onlyAvailable = ref(false);
 const sortField = ref<"name" | "maxInputTokens" | "maxOutputTokens" | "inputPrice">("name");
 const sortDir = ref<"asc" | "desc">("asc");
 
-const { loading, error, execute: fetchModels } = useApiCall(() =>
+const {
+  loading,
+  error,
+  execute: fetchModels,
+} = useApiCall(() =>
   onlyAvailable.value ? api.models.listAvailableModels() : api.models.listAllModels(),
 );
 
@@ -188,7 +188,13 @@ function sortedProviders(providers: ModelProviderSummary[]): ModelProviderSummar
 
 <template>
   <PageShell>
-    <SectionHeader title="模型目录" description="浏览可用模型的能力、上下文与定价 · 支持多 Provider 路由" :count="models.length" count-label="个模型" :icon="Cpu" />
+    <SectionHeader
+      title="模型目录"
+      description="浏览可用模型的能力、上下文与定价 · 支持多 Provider 路由"
+      :count="models.length"
+      count-label="个模型"
+      :icon="Cpu"
+    />
 
     <ErrorState v-if="error" :error="error" inline @retry="load" />
 
@@ -215,7 +221,7 @@ function sortedProviders(providers: ModelProviderSummary[]): ModelProviderSummar
           {{ chip.label }}
         </button>
         <Label
-          class="flex cursor-pointer items-center gap-2 whitespace-nowrap text-sm text-muted-foreground"
+          class="flex cursor-pointer items-center gap-2 text-sm whitespace-nowrap text-muted-foreground"
         >
           <Checkbox v-model="onlyAvailable" class="cursor-pointer" /> 仅可用
         </Label>
@@ -280,13 +286,11 @@ function sortedProviders(providers: ModelProviderSummary[]): ModelProviderSummar
                     :key="p.providerModelId"
                     variant="outline"
                     class="px-1.5 py-0 font-mono text-[10px]"
-                    :class="!p.enabled && 'opacity-40 line-through'"
+                    :class="!p.enabled && 'line-through opacity-40'"
                     :title="p.providerModelId"
                     >{{ p.providerDisplayName }}</Badge
                   >
-                  <span
-                    v-if="model.providers.length > 2"
-                    class="text-[10px] text-muted-foreground"
+                  <span v-if="model.providers.length > 2" class="text-[10px] text-muted-foreground"
                     >+{{ model.providers.length - 2 }}</span
                   >
                 </div>
@@ -300,11 +304,7 @@ function sortedProviders(providers: ModelProviderSummary[]): ModelProviderSummar
             </td>
             <td class="px-4 py-3">
               <div class="flex items-center justify-center gap-1.5">
-                <Wrench
-                  v-if="model.toolCalling"
-                  class="h-3.5 w-3.5 text-cta"
-                  title="工具调用"
-                />
+                <Wrench v-if="model.toolCalling" class="h-3.5 w-3.5 text-cta" title="工具调用" />
                 <Eye v-if="model.vision" class="h-3.5 w-3.5 text-cta" title="视觉" />
                 <Brain
                   v-if="model.thinking || model.adaptiveThinking"
@@ -312,7 +312,12 @@ function sortedProviders(providers: ModelProviderSummary[]): ModelProviderSummar
                   title="推理"
                 />
                 <span
-                  v-if="!model.toolCalling && !model.vision && !model.thinking && !model.adaptiveThinking"
+                  v-if="
+                    !model.toolCalling &&
+                    !model.vision &&
+                    !model.thinking &&
+                    !model.adaptiveThinking
+                  "
                   class="text-[10px] text-muted-foreground"
                   >—</span
                 >
@@ -386,12 +391,14 @@ function sortedProviders(providers: ModelProviderSummary[]): ModelProviderSummar
         </div>
         <div class="flex items-center justify-between text-[11px] text-muted-foreground">
           <span
-            >输入 <span class="font-mono text-foreground">{{
+            >输入
+            <span class="font-mono text-foreground">{{
               formatPrice(cheapestPrice(model.providers, "inputPricePer1m"))
             }}</span></span
           >
           <span
-            >输出 <span class="font-mono text-foreground">{{
+            >输出
+            <span class="font-mono text-foreground">{{
               formatPrice(cheapestPrice(model.providers, "outputPricePer1m"))
             }}</span></span
           >
@@ -418,10 +425,7 @@ function sortedProviders(providers: ModelProviderSummary[]): ModelProviderSummar
               selectedModel?.modelName
             }}</SheetTitle>
           </div>
-          <SheetDescription
-            v-if="selectedModel?.description"
-            class="text-sm text-muted-foreground"
-          >
+          <SheetDescription v-if="selectedModel?.description" class="text-sm text-muted-foreground">
             {{ selectedModel.description }}
           </SheetDescription>
           <SheetDescription v-else class="text-xs text-muted-foreground">暂无描述</SheetDescription>
@@ -483,9 +487,7 @@ function sortedProviders(providers: ModelProviderSummary[]): ModelProviderSummar
               <div>
                 <div class="text-[10px] text-muted-foreground">缓存读</div>
                 <div class="font-mono text-foreground tabular-nums">
-                  {{
-                    formatPriceRange(priceRange(selectedModel.providers, "cacheReadPricePer1m"))
-                  }}
+                  {{ formatPriceRange(priceRange(selectedModel.providers, "cacheReadPricePer1m")) }}
                 </div>
               </div>
             </div>
@@ -547,18 +549,11 @@ function sortedProviders(providers: ModelProviderSummary[]): ModelProviderSummar
                   </div>
                 </div>
                 <div class="mt-1.5 flex flex-wrap gap-1 text-[10px]">
-                  <span
-                    v-if="p.toolCalling"
-                    class="rounded bg-cta/10 px-1 py-0 text-cta">工具</span
+                  <span v-if="p.toolCalling" class="rounded bg-cta/10 px-1 py-0 text-cta"
+                    >工具</span
                   >
-                  <span
-                    v-if="p.vision"
-                    class="rounded bg-cta/10 px-1 py-0 text-cta">视觉</span
-                  >
-                  <span
-                    v-if="p.thinking"
-                    class="rounded bg-cta/10 px-1 py-0 text-cta">推理</span
-                  >
+                  <span v-if="p.vision" class="rounded bg-cta/10 px-1 py-0 text-cta">视觉</span>
+                  <span v-if="p.thinking" class="rounded bg-cta/10 px-1 py-0 text-cta">推理</span>
                 </div>
               </div>
             </div>

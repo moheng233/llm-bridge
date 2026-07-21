@@ -10,9 +10,7 @@
 
 import { formatApiError } from "~/lib/utils/error";
 
-export function useApiCall<T, A extends unknown[]>(
-  fn: (...args: A) => Promise<T>,
-) {
+export function useApiCall<T, A extends unknown[]>(fn: (...args: A) => Promise<T>) {
   const data = ref<T | null>(null);
   const loading = ref(false);
   /** 中文友好主文案 */

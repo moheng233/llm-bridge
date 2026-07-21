@@ -138,7 +138,9 @@
 
 /* ── 页面过渡动画 ── */
 .page-enter-active {
-  transition: opacity 0.15s ease-out, transform 0.15s ease-out;
+  transition:
+    opacity 0.15s ease-out,
+    transform 0.15s ease-out;
 }
 .page-leave-active {
   transition: opacity 0.1s ease-in;

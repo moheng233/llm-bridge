@@ -39,7 +39,8 @@ export function formatTokens(n: number): string {
  * 返回 null 表示无法解析。
  */
 export function parseTokens(input: string | number): number | null {
-  if (typeof input === "number") return Number.isFinite(input) && input >= 0 ? Math.floor(input) : null;
+  if (typeof input === "number")
+    return Number.isFinite(input) && input >= 0 ? Math.floor(input) : null;
   const s = input.trim();
   if (s === "") return null;
   const m = s.match(/^([\d.]+)\s*([MmKk])?$/);
