@@ -92,14 +92,11 @@ function handleLogout() {
     >
       <!-- Header -->
       <div class="flex items-center gap-2.5 border-b border-border/50 px-3 py-3">
-        <div
-          :class="[
-            'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#22C55E] font-mono text-sm font-bold text-black',
-            sidebarCollapsed ? 'mx-auto' : '',
-          ]"
-        >
-          LB
-        </div>
+        <img
+          src="/favicon.svg"
+          alt="LLM Bridge"
+          :class="['h-8 w-8 shrink-0', sidebarCollapsed ? 'mx-auto' : '']"
+        />
         <span
           v-if="!sidebarCollapsed"
           class="overflow-hidden font-mono text-sm font-semibold whitespace-nowrap"
