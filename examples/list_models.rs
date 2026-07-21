@@ -119,11 +119,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build()?;
 
     let url = format!("{base_url}/v1/models");
-    let resp = client
-        .get(&url)
-        .bearer_auth(token)
-        .send()
-        .await?;
+    let resp = client.get(&url).bearer_auth(token).send().await?;
 
     if !resp.status().is_success() {
         let status = resp.status();

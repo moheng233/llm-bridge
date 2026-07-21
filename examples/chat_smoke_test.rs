@@ -327,7 +327,9 @@ async fn scenario_reasoning(client: &TestClient) -> Result<(), Box<dyn std::erro
     if had_reasoning {
         println!("{GREEN}✓ 响应中包含 reasoning_content（思考链已透传）{RESET}");
     } else {
-        println!("{YELLOW}提示：响应中没有 reasoning_content（模型或提供者可能不返回思考链）{RESET}");
+        println!(
+            "{YELLOW}提示：响应中没有 reasoning_content（模型或提供者可能不返回思考链）{RESET}"
+        );
     }
 
     // 第二轮：携带完整历史（含上一轮回复），验证上下文仍然连贯。
