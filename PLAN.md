@@ -55,8 +55,6 @@ Provider 多协议架构已落地：Provider → ProviderProtocol（协议 + bas
 
 | # | 问题 | 说明 |
 |---|------|------|
-| 1 | 通用组件未接入 | 各页面仍重复手写 header/empty/error 布局，未使用已有的 `PageShell`/`SectionHeader`/`EmptyState`/`ErrorState` |
-| 2 | `formatApiError` 未集成 | `useApiCall` 中仍用 `e.message` 原始错误，未走中文友好格式化 |
 | 3 | 主内容区大面积留白 | 数据少时页面下 2/3 全空，需限制最大宽度或添加引导内容 |
 
 ### P1 — 中优先级（体验提升）
@@ -77,40 +75,9 @@ Provider 多协议架构已落地：Provider → ProviderProtocol（协议 + bas
 
 ---
 
-## 3. 后端：`/v1/chat/completions` OpenRouter 兼容性差距
+## 3. 后端：`/v1/chat/completions` OpenRouter 兼容性差距（剩余）
 
-> 来源：2026-07-21 对照 [OpenRouter API 文档](https://openrouter.ai/docs/api/api-reference/chat/create-a-chat-completion) 逐项核对。
-> 图例：南向 = 客户端 → llm-bridge；北向 = llm-bridge → 上游 provider。
-> 已完成（2026-07-21）：`tools` / `tool_choice` 声明与透传、`assistant(tool_calls)` / `tool` 消息双向映射、流式/非流式 `tool_calls` 输出。
-
-### P0 — 已声明未生效 / 影响计费正确性
-
-| # | 方向 | 位置 | 问题 |
-|---|------|------|------|
-| 1 | 南+北 | `server/openai_api.rs` → `ProviderChatRequest` → 三个适配器 | `temperature` / `max_tokens` / `top_p` 已反序列化但从未传给适配器；`ProviderChatRequest` 无采样参数字段，`build_request_body` 全部不携带。Anthropic `max_tokens` 硬编码 4096 |
-| 2 | 北+南 | 三个适配器 `map_event` / 聚合循环 | **`usage` 完全未解析**：非流式响应无 `usage` 字段；流式从不发 usage chunk（`stream_options.include_usage` 无效）。配额结算只能按字符估算 |
-| 3 | 北+南 | 适配器 chunk 类型 / `stream_to_sse` / 非流式响应 | `finish_reason` 真实值被丢弃：非流式硬编码 `"stop"`，流式 chunk 的 `finish_reason` 字段标 `#[allow(dead_code)]`；`length` / `content_filter` 永远透传不出来 |
-| 4 | 南 | `estimate_token_count` | 配额预估未计入 tools（已修复 ✅），但结算应改用真实 usage（依赖 #2） |
-
-### P1 — 常用功能缺失
-
-| # | 方向 | 位置 | 问题 |
-|---|------|------|------|
-| 5 | 南+北 | `ChatCompletionRequest` + 适配器 | ~~`response_format`（JSON mode / JSON Schema 结构化输出）未反序列化、无通路~~ ✅ 2026-07-21 |
-| 6 | 南+北 | `ChatCompletionRequest` + 适配器 | ~~`reasoning` / `reasoning_effort` 推理强度配置未反序列化、无通路~~ ✅ 2026-07-21 |
-| 7 | 南 | `stream_to_sse` | ~~流式协议细节：不发结束哨兵 `data: [DONE]`；首包无 `role: "assistant"`；chunk `id` / `created` 硬编码~~ ✅ 2026-07-21 |
-| 8 | 南 | 非流式响应 | ~~`id` 硬编码 `"chatcmpl-llm-bridge"`、`created` 硬编码 `0`，未透传上游真实值~~ ✅ 2026-07-21 |
-| 9 | 南+北 | `ChatCompletionRequest` + 适配器 | ~~`stop`（停止序列，string \| string[]）未反序列化、无通路~~ ✅ 2026-07-21 |
-
-### P2 — 常规参数与角色
-
-| # | 方向 | 位置 | 问题 |
-|---|------|------|------|
-| 10 | 南 | `convert_messages` | ~~`system` 角色被降级为 `user`；不支持 `developer` 角色~~ ✅ 2026-07-21（随 P1 批次） |
-| 11 | 南 | `content_to_text` / `OpenAiContentPart` | ~~多模态 `image_url` part 被丢弃~~ ✅ 2026-07-21（`data:` URI 解码 + http(s) 抓取，10 MiB/图、8 图/消息上限）；`input_audio` / `video_url` / `file` 仍不支持 |
-| 12 | 南+北 | `ChatCompletionRequest` + 适配器 | ~~`seed` / `frequency_penalty` / `presence_penalty` / `logit_bias` / `max_completion_tokens` 未反序列化、无通路~~ ✅ 2026-07-21（OpenAI 系原生透传；Anthropic/Responses 仅映射 `max_completion_tokens`，其余 warn 忽略） |
-| 13 | 北+南 | `chat_completions` 错误处理 | ~~上游错误统一包装为 500 + `provider_error`，语义状态码不透传~~ ✅ 2026-07-21（`ProviderError` + 启动信号，429/402/400 等真实状态码透传；流式错误 chunk 补 `code` 字段） |
-| 14 | 北 | `openai_chat_completions.rs` `map_event` | ~~增量 tool_call arguments 续传分支为空~~ ✅ 2026-07-21（按 index 缓冲累积，finish/EOF 一次性发射完整 ToolCall，对齐 §4 语义基准 A2） |
+> 2026-07-21 全面核对：P0（#1–#4）与 P1（#5–#9）、P2（#10–#14）已全部落地并验证（采样参数贯通、usage 五元组解析与真实结算、finish_reason 透传、system/developer 角色、多模态 image_url、seed/penalty 等参数、上游状态码透传、增量 tool_call 累积发射），相应内容已从本节删除。图例：南向 = 客户端 → llm-bridge；北向 = llm-bridge → 上游 provider。
 
 ### P3 — 按需（低频 / OpenRouter 特有）
 
@@ -119,14 +86,8 @@ Provider 多协议架构已落地：Provider → ProviderProtocol（协议 + bas
 | 15 | 南+北 | `n`（多候选）、`logprobs` / `top_logprobs`、`parallel_tool_calls`、`user`、`metadata` |
 | 16 | 南+北 | OpenRouter 特有：`provider`（路由偏好）、`models`（fallback 列表）、`route`、`transforms`、`plugins`、`session_id`、`trace`、`service_tier`、`modalities`、`prediction`、`image_config`、`min_p` / `top_k` / `top_a` / `repetition_penalty` |
 | 17 | 南 | assistant 消息 `refusal` 字段；tool 消息 content 为 part 数组（含图片）时仅提取 text |
-| 18 | 南 | 错误 chunk 格式无 `code` 字段；`reasoning_details`（OpenRouter 结构化格式）未支持，当前仅以 DeepSeek 风格 `reasoning_content` 字符串透传 |
+| 18 | 南 | `reasoning_details`（OpenRouter 结构化格式）未支持，当前仅以 DeepSeek 风格 `reasoning_content` 字符串透传 |
 | 19 | 北 | 响应中 `images` / `audio` 多模态输出未解析 |
-
-### 建议实施顺序
-
-1. **P0 一批**：#1 采样参数贯通 + #2 usage 解析与透传（含流式 `include_usage`）+ #3 `finish_reason` 透传 —— 改动集中在 `ProviderChatRequest`、`LMResponsePart`（需新增 Usage part）、三个适配器与 `openai_api.rs` 外壳。
-2. **P1 一批**：#5 `response_format` + #6 `reasoning` + #7/#8 流式协议细节 + #9 `stop`。
-3. P2 / P3 按实际需求排期。
 
 ---
 
@@ -139,7 +100,7 @@ Provider 多协议架构已落地：Provider → ProviderProtocol（协议 + bas
 `LMResponsePart` 的流式语义对齐 vscode `LanguageModelChatResponse`，冲突时优先修复实现而非文档化残缺：
 
 - Text / Thinking：增量 append。
-- ToolCall：参数增量累积完整后**一次性发完整 part**（`input` 必须是完整 JSON 对象），无增量 tool call 帧。`anthropic_messages`、`openai_responses` 已是此语义。
+- ToolCall：参数增量累积完整后**一次性发完整 part**（`input` 必须是完整 JSON 对象），无增量 tool call 帧。三适配器均已对齐（`openai_chat_completions` 的修复已于 2026-07-21 完成，即原阶段 A2）。
 
 ### 协议要点
 
@@ -154,9 +115,8 @@ Provider 多协议架构已落地：Provider → ProviderProtocol（协议 + bas
 | # | 阶段 | 内容 | 依赖 |
 |---|------|------|------|
 | A | 协议类型 + TS 导出 | `src/types.rs`：为 `LMResponsePart` / `LanguageModelChatMessage` 等 15 个既有类型补 `#[derive(TS)]`（现状仅 3 个有）；新增 `WsChatParams` / `WsClientMessage`（`#[serde(tag="method")]`）/ `WsServerMessage`（result\|chunk\|done\|error）/ `WsErrorBody` / `WsErrorCode` / `WsChatDone` / `WsListModelsResult`；`cargo test generate_ts_client` 再生成绑定（含 untagged union 与 serde 判别行为的一致性断言测试） | — |
-| A2 | ToolCall 流式语义修复 | `openai_chat_completions.rs` 适配器对齐语义基准：流状态改按 index 累积 `arguments`，`finish_reason: "tool_calls"` 或 EOF 时冲刷发射完整 ToolCall part；配单元测试（参照 `anthropic_messages.rs` 的 `tool_use_lifecycle_produces_tool_call`）。SSE 客户端收到完整 tool_call 的时机从流早期变为末尾（此前 arguments 本为空），属有意修正 | —（可与 A 并行） |
 | B | 配额/usage 逻辑抽取 | 新建 `src/server/chat_common.rs`：从 `openai_api.rs` 抽出 `UsageAccumulator` / `settle_quota_with_actual_usage` / `estimate_token_count`，新增 `prepare_chat_request`（resolve_model → 白名单 → 预扣 → spawn ProviderActor → 取 stream，错误用结构化 `ChatPrepareError` 由两 handler 各自映射）；纯移动无行为变更 | A |
-| C | WS handler | 新建 `src/server/ws.rs`：`ws_handler(State, TokenAuth, WebSocketUpgrade)` → 读写任务分离；chat 消费任务把 `ProviderStream` map 为信封帧，连接级 `HashMap<request_id, AbortHandle>` 支撑 cancel 与断连清理（含 provider 层 channel 关闭时中止上游请求的验证）；`server/mod.rs` 注册路由（已核实 axfetchum 0.1.4 `get()` 兼容 WS upgrade handler）。**契约测试** `tests/ws_chat_contract.rs`：mock provider 覆盖 chunk 序列 / 并发归属 / cancel 结算 / 401 / 坏帧 / 慢消费 | A + A2 + B |
+| C | WS handler | 新建 `src/server/ws.rs`：`ws_handler(State, TokenAuth, WebSocketUpgrade)` → 读写任务分离；chat 消费任务把 `ProviderStream` map 为信封帧，连接级 `HashMap<request_id, AbortHandle>` 支撑 cancel 与断连清理（含 provider 层 channel 关闭时中止上游请求的验证）；`server/mod.rs` 注册路由（已核实 axfetchum 0.1.4 `get()` 兼容 WS upgrade handler）。**契约测试** `tests/ws_chat_contract.rs`：mock provider 覆盖 chunk 序列 / 并发归属 / cancel 结算 / 401 / 坏帧 / 慢消费 | A + B |
 | D | 文档与示例 | 重写 `docs/architecture.md` §6.1（删旧草稿与 ConnectionActor 时序）；新增面向插件开发者的 `docs/ws-api.md`；`examples/ws_chat_client.rs` 最小客户端（dev-dependencies 加 `tokio-tungstenite`） | C |
 
 ### 复用（不改动）
@@ -164,10 +124,55 @@ Provider 多协议架构已落地：Provider → ProviderProtocol（协议 + bas
 - `ProviderStream = Stream<Item = Result<LMResponsePart, String>>`（`src/actors/provider/mod.rs`）——与传输协议解耦，WS 只是新的消费端。
 - `TokenAuth`（`src/middleware/token_auth.rs`）、`check_and_deduct` / `TokenQuotaContext::from_token` / `adjust_usage`（`src/auth/quota.rs`）。
 
+---
+
+## 4.1 vscode 插件登录鉴权（设备码流程，RFC 8628 风格）
+
+> 设计定稿：2026-07-21。目标：vscode 插件无需手动复制粘贴即可获取 API token。与 §4 的 WS 接口配套：插件先经本节流程拿到 token，再以 Bearer 握手 `/v1/ws`。
+
+### 流程（四端点）
+
+| # | 端点 | 认证 | 说明 |
+|---|------|------|------|
+| 1 | `POST /api/v1/auth/cli-sessions` | 无 | 插件创建 CLI 会话，返回 `{ sessionId, userCode, verificationUrl, expiresIn, interval }`。userCode 为 6 位数字（不含 0/1/O/I 混淆字符），session 10 分钟过期，轮询间隔 5s |
+| 2 | `GET /auth/cli-verify?code=` | Session | 浏览器验证页（前端路由或后端渲染）。未登录先走 `GET /auth/login?next=/auth/cli-verify?code=...`（复用现有 OIDC + `login_next` 机制；no-auth 模式中间件自动注入 admin session，两种模式行为统一） |
+| 3 | `POST /api/v1/auth/cli-sessions/confirm` | Session | 验证页提交用户码 + 确认授权：服务端为当前 SessionUser 签发 token（见「token 属性」），标记会话 `approved`。防钓鱼：必须用户主动输入码 + 点确认，码不出现在 URL 时不授权 |
+| 4 | `GET /api/v1/auth/cli-sessions/{sessionId}` | 无（sessionId 即凭证） | 插件轮询。`pending` → 202 + `{ status }`；`approved` → 200 + `{ status, token, tokenPrefix }`（**token 明文仅此一次**，响应后会话标记 `consumed`，再查返回 410）；`expired` → 410 |
+
+### token 属性（自动默认 + 自动吊销）
+
+- 名称 `vscode:<8位随机后缀>`；`allowed_models = []`（全模型）；配额 unlimited；归属当前 SessionUser。
+- **自动吊销**：签发前列出该用户全部 token，`name` 以 `vscode:` 前缀匹配的旧 token 置 `active = false`（不物理删除，保留审计痕迹），保证同一用户同一时刻最多一个有效 vscode token，避免重复登录导致列表堆积。
+
+### 数据模型
+
+新增 `CliSession` 表（`toasty::models!` 注册 + `push_schema` 自动建表，无迁移负担）：`id`(key) / `user_code`(unique) / `status`(pending|approved|consumed|expired) / `user_id`(nullable，授权前未知) / `token_plaintext`(nullable，仅 approved 后暂存至 consumed) / `created_at` / `expires_at`。服务端惰性过期（查询时判 `expires_at`），无需后台清理任务。
+
+### 实施步骤
+
+| # | 内容 | 位置 |
+|---|------|------|
+| 1 | `CliSession` 模型 + 注册 `all_models()` | `src/db/models.rs`、`src/db/mod.rs` |
+| 2 | 会话创建/查询/确认服务函数 + userCode 生成 + 自动吊销逻辑 | `src/auth/cli_session.rs`（新） |
+| 3 | 四个路由 handler（`POST cli-sessions` / `GET cli-sessions/{id}` / `POST cli-sessions/confirm` / `GET cli-verify` 重定向页） | `src/server/auth.rs` 或新 `src/server/cli_auth.rs`，注册进 `auth_routes()`（ApiRouter，confirm 标 `.auth()`） |
+| 4 | 前端验证页路由（输码 + 确认按钮，复用 `useApiCall`） | `frontend/src/pages/` + router |
+| 5 | 文档：`docs/ws-api.md` 增加「插件登录」一节（完整流程时序 + curl 示例） | docs |
+
+### 复用（不改动）
+
+- `token::create_token` / `list_user_tokens` / `update_token`（`src/auth/token.rs`）；`SessionAuth` 提取器；`GET /auth/login` + `login_next` 重定向机制；no-auth 自动注入 admin session 的中间件。
+
 ### 明确否决
+
+- 回环回调模式（`127.0.0.1` 临时服务器）——远程 SSH 场景不可用，已评估否决。
+- 免确认直接签发（码在 URL 中拿到链接即授权）——防钓鱼底线保留「输码 + 确认按钮」。
+- 为 CLI 单独发明 token 类型——复用现有 `Token` 表与 bcrypt 验证链路，`vscode:` 前缀仅是命名约定。
+
 
 - 不落旧稿的 ConnectionActor / GatewayManager 转发层——WS handler 与 `openai_api` 同构，直接编排 store + ProviderActor，避免两套调用链漂移。
 - 一请求一连接（无多路复用）方案；session cookie 双模式鉴权（session 用户无配额体系）；服务端非流式 chat（WS 上一切皆流，聚合是客户端的事）。
+
+> §4.1 的登录鉴权为插件获取 token 的前置环节，与 WS 接口独立交付（WS 接口假设 token 已存在）。
 
 ### 记录待办（不阻塞本节）
 
@@ -176,7 +181,83 @@ Provider 多协议架构已落地：Provider → ProviderProtocol（协议 + bas
 
 ---
 
-## 5. 不在本计划范围
+## 5. AI 可观察性（请求追踪 + GenAI 遥测）
+
+> 设计定稿：2026-07-21。范围：运营可观察性（metrics/traces）+ 用量计费归因 + 内容追踪三层；质量评估（eval）明确划出（网关是透传层，无 ground truth）。语义遵循 OpenTelemetry GenAI 语义约定（development 稳定性）。
+
+### 核心模型：`LlmRequestTrace`（单一事实源）
+
+一次请求生命周期产生的全部结构化事实落为**一行记录**，metrics 是其流式投影、计费查询是其 SQL 聚合、内容快照是其可空大字段——不建三套采集管线。
+
+**生命周期状态机**：`pending → streaming → finalized`（success / error / cancelled）。请求开始时 INSERT（pending），结束时 upsert 终态——中途崩溃可见「卡住」的请求而非丢记录（Langfuse observation upsert 模式）。
+
+**写入路径**：handler 热路径只发 mpsc 事件，专用后台任务批量落盘；mpsc 满则**丢弃并计数**（`dropped_traces_total` metric）——观察性数据可丢，业务请求不可阻塞。
+
+### 表结构（`llm_request_traces`，toasty model 注册 `all_models()`）
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `id` | u64 PK auto | |
+| `request_id` | String unique idx | UUID，网关生成；响应头 `x-request-id` 回传，贯穿 stdout 日志 / OTel / DB |
+| `trace_id` | Option\<String\> | OTel trace id（otel 启用时双写互查） |
+| `interface` | String | `openai_http` \| `ws_rpc`（为 §4 WS 接口预留） |
+| `token_id` / `user_id` / `token_prefix` | u64 / u64 / String | 归属（`token_hash` 永不进表） |
+| `model` | String idx | 规范模型名 |
+| `provider_id` / `provider_model_id` / `protocol` | String | 路由结果 |
+| `status` | String | pending \| streaming \| success \| error \| cancelled |
+| `error_type` / `error_message` / `upstream_status` | Option | 错误三元组 |
+| `finish_reason` | Option\<String\> | 上游真实值 |
+| `estimated_tokens` | i64 | 预扣量（解释配额结算 delta） |
+| `input/output/reasoning/cached/total_tokens` | Option\<u64\> | 五元组（`LanguageModelUsagePart` 持久化形态） |
+| `cost_usd` | Option\<f64\> | `model_providers` 定价 × usage（派生） |
+| `upstream_request_id` | Option\<String\> | `ProviderResponseMetadata.id` |
+| `created_at` / `first_chunk_at` / `completed_at` | Timestamp / Option×2 | 时间线；`ttft_ms`、`latency_ms` 派生存储 |
+| `request_messages` / `response_parts` | Option\<Json\> | **内容快照（决策：包含）**，`Vec<LanguageModelChatMessage>` / 聚合后 `LMResponsePart` 序列；Opt-In 写入（见隐私分级） |
+
+**预聚合表 `usage_daily`**：`day` × `token_id` × `model` 的 rollup（request_count、五元组 tokens、cost_usd 合计），由 finalize 事件同事务更新——仪表盘聚合查询不全表扫。
+
+### 隐私分级与保留
+
+- **运营数据**（默认可存）：token_id、模型、延迟、用量五元组、成本。
+- **PII 敏感**（Opt-In）：`request_messages` / `response_parts` 仅当 `LLM_BRIDGE_OBS_CAPTURE_CONTENT=true` 时写入（对齐 OTel `gen_ai.input.messages` 的 Opt-In 约定）；建议配置独立更短 retention。
+- **保留策略**：trace 表定期 `DELETE WHERE created_at < ?`（后台任务，`LLM_BRIDGE_OBS_TRACE_RETENTION_DAYS`，默认 30 天）；`usage_daily` 永久保留（已聚合无 PII）。
+
+### OTel GenAI 遥测（仅 OTLP，决策：不接 Prometheus /metrics）
+
+- **Span**：现有骨架 `chat_completions → provider_adapter_stream → stream_chat` 补齐 GenAI 属性——span 名改 `chat {model}`；属性 `gen_ai.operation.name=chat` / `gen_ai.provider.name`（protocol 映射：`openai`/`anthropic`/…）/ `gen_ai.request.model` / `gen_ai.request.stream` / `gen_ai.response.model` / `gen_ai.response.finish_reasons` / `gen_ai.usage.input_tokens` / `gen_ai.usage.output_tokens` / `error.type`；流式请求附 `gen_ai.response.time_to_first_chunk`。
+- **Metrics**（新增 meter，opentelemetry crate 已依赖）：`gen_ai.client.token.usage`（histogram，by `gen_ai.token.type`=input/output）、`gen_ai.client.operation.duration`、`gen_ai.client.operation.time_to_first_chunk`——全部由 finalize 事件投影。
+- **stdout 关联**：fmt 层输出 `trace_id` 字段（`tracing_opentelemetry::OpenTelemetrySpanExt`），stdout 日志 ↔ OTLP trace ↔ DB request_id 三方互查。
+
+### request_id 贯穿（决策：手写 axum 中间件，不引 tower-http）
+
+`from_fn` 中间件（与 `no_auth_middleware` 同款风格）：生成 UUID → `request.extensions_mut().insert(RequestId)` → handler → 响应头回写 `x-request-id`。WS handler 用 `Extension<RequestId>` 提取器在 upgrade 前读取（axum 的 Extensions 在 upgrade 前已就位，天然覆盖 §4）。tower-http `SetRequestId` 在 WS 路径拿不到 extensions，否决。
+
+### 实施阶段
+
+| # | 阶段 | 内容 | 依赖 |
+|---|------|------|------|
+| O1 | 请求标识 | 手写 `RequestId` 中间件 + `x-request-id` 回传 + span 字段 + stdout fmt 层 trace_id 输出 + **span context 断点修复**（`openai_api.rs` SSE 转发与结算 `tokio::spawn` 挂回请求 span，`.instrument()`） | — |
+| O2 | GenAI span/metrics | span 属性补齐 + meter 接线 + 三个 GenAI metrics | O1 |
+| O3 | trace 持久化 | `llm_request_traces` + `usage_daily` 表 + 异步写入器（mpsc + 批量落盘）+ finalize 挂钩（复用 `settle_quota_with_actual_usage` 汇集点，流式/非流式两路径均汇于此）+ 内容快照 Opt-In。**与 §4 阶段 B/C 同期**（WS handler 复用同一 `prepare_chat_request` 挂钩点，`interface` 字段区分来源，避免二次改动） | O1，与 §4.B/C 并行 |
+| O4 | 成本与查询 | 成本计算（读 `model_providers` 定价）+ `GET /api/v1/usage/summary` / `/api/v1/usage/traces`（分页/按 token/模型/时间筛选）+ 前端仪表盘页（对应 §2 P2#9） | O3 |
+| O5 | 内容追踪 UI | trace 详情页（messages/parts 快照展示）+ 保留策略后台任务 | O3 |
+
+### 配置（`RuntimeSettings.observability` 新增段，环境变量）
+
+- `LLM_BRIDGE_OBS_CAPTURE_CONTENT`（默认 false）——内容快照开关
+- `LLM_BRIDGE_OBS_TRACE_RETENTION_DAYS`（默认 30）
+- OTel endpoint 维持标准 `OTEL_EXPORTER_OTLP_*` 环境变量（现状，不进 RuntimeSettings）
+
+### 明确否决
+
+- Prometheus `/metrics` 端点（决策：仅 OTLP）
+- tower-http `SetRequestId`（WS 路径不可用，手写中间件替代）
+- 质量评估 / eval 管线（网关无 ground truth）
+- 分别为 metrics/计费/内容建三套采集管线（单一事实源原则）
+
+---
+
+## 6. 不在本计划范围
 
 - 既有 REST Admin API 与 `/v1/chat/completions` 的请求/响应形态变更（`/v1/ws` 为新增接口，不在此限）
 - `allowedModels` 多选 UI
