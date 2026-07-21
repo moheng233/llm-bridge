@@ -14,7 +14,9 @@ use crate::types::{
     LanguageModelToolResultContent, LanguageModelUsagePart,
 };
 
-use super::super::{ProviderChatRequest, ProviderResponseSender, ProviderState};
+use super::super::{
+    ProviderChatRequest, ProviderResponseMetadata, ProviderResponseSender, ProviderState,
+};
 
 const DEFAULT_ANTHROPIC_BASE_URL: &str = "https://api.anthropic.com/v1";
 const ANTHROPIC_VERSION: &str = "2023-06-01";
@@ -33,6 +35,7 @@ pub async fn stream_chat(
     state: &ProviderState,
     request: ProviderChatRequest,
     tx: ProviderResponseSender,
+    metadata_tx: tokio::sync::oneshot::Sender<ProviderResponseMetadata>,
 ) -> Result<(), String> {
     let (system, messages) = build_messages(&request.messages)?;
     let payload = build_request_body(
@@ -44,6 +47,9 @@ pub async fn stream_chat(
         request.temperature,
         request.max_tokens,
         request.top_p,
+        request.stop.as_deref(),
+        request.response_format.as_ref(),
+        request.reasoning.as_ref(),
     )?;
     let endpoint = build_endpoint(state);
 
@@ -83,6 +89,7 @@ pub async fn stream_chat(
     let mut stream_state = AnthropicStreamState::default();
     let mut decoder = SseDecoder::default();
     let mut body_stream = response.bytes_stream();
+    let mut metadata_tx = Some(metadata_tx);
 
     while let Some(chunk) = body_stream.next().await {
         let chunk = chunk.map_err(|error| format!("anthropic stream read failed: {error}"))?;
@@ -91,6 +98,17 @@ pub async fn stream_chat(
         while let Some(frame) = decoder.next_frame() {
             if let Some(data) = extract_sse_data(&frame) {
                 let parts = map_event(&data, &mut stream_state)?;
+
+                // Capture upstream id from message_start.
+                if let (Some(tx), Some(id)) =
+                    (metadata_tx.take(), stream_state.upstream_id.clone())
+                {
+                    let _ = tx.send(ProviderResponseMetadata {
+                        id: Some(id),
+                        created: None,
+                    });
+                }
+
                 for part in parts {
                     if tx.send(Ok(part)).await.is_err() {
                         return Ok(());
@@ -98,6 +116,11 @@ pub async fn stream_chat(
                 }
             }
         }
+    }
+
+    // If no metadata was captured, send default so caller doesn't hang.
+    if let Some(tx) = metadata_tx.take() {
+        let _ = tx.send(ProviderResponseMetadata::default());
     }
 
     Ok(())
@@ -113,11 +136,24 @@ fn build_request_body(
     temperature: Option<f64>,
     max_tokens: Option<u32>,
     top_p: Option<f64>,
+    stop: Option<&[String]>,
+    response_format: Option<&crate::types::LanguageModelResponseFormat>,
+    reasoning: Option<&crate::types::LanguageModelReasoningConfig>,
 ) -> Result<Value, String> {
+    let mut effective_max_tokens = max_tokens.unwrap_or(DEFAULT_MAX_TOKENS);
+
+    // Anthropic thinking: budget_tokens must be < max_tokens.
+    if let Some(reasoning) = reasoning
+        && let Some(budget) = reasoning.max_tokens
+        && budget >= effective_max_tokens
+    {
+        effective_max_tokens = budget + DEFAULT_MAX_TOKENS;
+    }
+
     let mut body = json!({
         "model": model,
         "messages": messages,
-        "max_tokens": max_tokens.unwrap_or(DEFAULT_MAX_TOKENS),
+        "max_tokens": effective_max_tokens,
         "stream": true,
     });
 
@@ -129,6 +165,43 @@ fn build_request_body(
     }
     if let Some(top_p) = top_p {
         body["top_p"] = json!(top_p);
+    }
+    if let Some(stop) = stop
+        && !stop.is_empty()
+    {
+        body["stop_sequences"] = json!(stop);
+    }
+
+    // Anthropic structured outputs beta: response_format mapped to output_format.
+    if let Some(format) = response_format {
+        let output_format = match format {
+            crate::types::LanguageModelResponseFormat::JsonObject => {
+                json!({ "type": "json_object" })
+            }
+            crate::types::LanguageModelResponseFormat::JsonSchema { json_schema } => {
+                json!({ "type": "json_schema", "schema": json_schema })
+            }
+        };
+        body["output_format"] = output_format;
+    }
+
+    // Anthropic thinking config: effort → default budget, max_tokens → explicit budget.
+    if let Some(reasoning) = reasoning {
+        let thinking = if let Some(budget) = reasoning.max_tokens {
+            json!({ "type": "enabled", "budget_tokens": budget })
+        } else if let Some(effort) = &reasoning.effort {
+            let budget = match effort.as_str() {
+                "minimal" | "low" => 1024,
+                "medium" => 4096,
+                "high" => 16384,
+                "xhigh" => 65536,
+                _ => 4096,
+            };
+            json!({ "type": "enabled", "budget_tokens": budget })
+        } else {
+            json!({ "type": "disabled" })
+        };
+        body["thinking"] = thinking;
     }
 
     if let Some(tools) = tools
@@ -189,12 +262,34 @@ fn map_tool_choice_to_anthropic(choice: &Value) -> Value {
 fn build_messages(
     messages: &[LanguageModelChatMessage],
 ) -> Result<(Option<String>, Vec<AnthropicMessage>), String> {
+    let mut system_prompts: Vec<String> = Vec::new();
     let mut anthropic_messages: Vec<AnthropicMessage> = Vec::new();
 
     for message in messages {
+        // Extract system / developer content to top-level system field.
+        if matches!(
+            message.role,
+            LanguageModelChatMessageRole::System | LanguageModelChatMessageRole::Developer
+        ) {
+            let content = build_content_blocks(&message.content)?;
+            let text = content
+                .into_iter()
+                .filter_map(|block| match block {
+                    AnthropicContentBlock::Text(t) => Some(t.text),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            if !text.is_empty() {
+                system_prompts.push(text);
+            }
+            continue;
+        }
+
         let role = match message.role {
             LanguageModelChatMessageRole::User => "user",
             LanguageModelChatMessageRole::Assistant => "assistant",
+            _ => unreachable!("system/developer handled above"),
         };
 
         let content = build_content_blocks(&message.content)?;
@@ -217,7 +312,13 @@ fn build_messages(
         });
     }
 
-    Ok((None, anthropic_messages))
+    let system = if system_prompts.is_empty() {
+        None
+    } else {
+        Some(system_prompts.join("\n\n"))
+    };
+
+    Ok((system, anthropic_messages))
 }
 
 fn build_content_blocks(
@@ -379,6 +480,8 @@ struct AnthropicStreamState {
     block_types: HashMap<u32, String>,
     // Input tokens from message_start, merged into the final Usage part.
     input_tokens: Option<u64>,
+    // Upstream message id from message_start.
+    upstream_id: Option<String>,
 }
 
 #[derive(Default)]
@@ -413,6 +516,9 @@ fn map_event(data: &str, state: &mut AnthropicStreamState) -> Result<Vec<LMRespo
                 .map_err(|e| format!("invalid message_start: {e}"))?;
             if let Some(usage) = event.message.usage {
                 state.input_tokens = usage.input_tokens;
+            }
+            if let Some(id) = event.message.id {
+                state.upstream_id = Some(id);
             }
             Ok(Vec::new())
         }
@@ -728,6 +834,7 @@ struct MessageStartEvent {
 #[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct MessageStartMessage {
+    id: Option<String>,
     usage: Option<MessageStartUsage>,
 }
 
@@ -988,6 +1095,9 @@ mod tests {
             Some(0.7),
             Some(123),
             Some(0.9),
+            None,
+            None,
+            None,
         )
         .unwrap();
         assert_eq!(body["max_tokens"], 123);
@@ -997,8 +1107,20 @@ mod tests {
 
     #[test]
     fn build_request_body_defaults_max_tokens() {
-        let body =
-            build_request_body("claude-test", None, vec![], None, None, None, None, None).unwrap();
+        let body = build_request_body(
+            "claude-test",
+            None,
+            vec![],
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
         assert_eq!(body["max_tokens"], DEFAULT_MAX_TOKENS);
         assert!(body.get("temperature").is_none());
         assert!(body.get("top_p").is_none());

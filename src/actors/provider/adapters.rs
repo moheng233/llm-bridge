@@ -4,22 +4,23 @@ pub mod openai_responses;
 
 use crate::config::models::ProviderCompatibility;
 
-use super::{ProviderChatRequest, ProviderResponseSender, ProviderState};
+use super::{ProviderChatRequest, ProviderResponseMetadata, ProviderResponseSender, ProviderState};
 
 pub async fn stream_chat(
     state: &ProviderState,
     request: ProviderChatRequest,
     tx: ProviderResponseSender,
+    metadata_tx: tokio::sync::oneshot::Sender<ProviderResponseMetadata>,
 ) -> Result<(), String> {
     match state.compatibility {
         ProviderCompatibility::OpenAiChatCompletions => {
-            openai_chat_completions::stream_chat(state, request, tx).await
+            openai_chat_completions::stream_chat(state, request, tx, metadata_tx).await
         }
         ProviderCompatibility::OpenAiResponses => {
-            openai_responses::stream_chat(state, request, tx).await
+            openai_responses::stream_chat(state, request, tx, metadata_tx).await
         }
         ProviderCompatibility::AnthropicMessages => {
-            anthropic_messages::stream_chat(state, request, tx).await
+            anthropic_messages::stream_chat(state, request, tx, metadata_tx).await
         }
     }
 }

@@ -36,6 +36,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             })],
             None,
         )],
+        tools: None,
+        tool_choice: None,
+        temperature: None,
+        max_tokens: None,
+        top_p: None,
+        stop: None,
+        response_format: None,
+        reasoning: None,
     };
 
     let state = ProviderState {
@@ -55,7 +63,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let (tx, mut rx) = mpsc::channel(64);
     tokio::spawn(async move {
-        if let Err(error) = anthropic::stream_chat(&state, request, tx.clone()).await {
+        let (metadata_tx, _metadata_rx) =
+            tokio::sync::oneshot::channel::<llm_bridge::actors::provider::ProviderResponseMetadata>();
+        if let Err(error) =
+            anthropic::stream_chat(&state, request, tx.clone(), metadata_tx).await
+        {
             let _ = tx.send(Err(error)).await;
         }
     });

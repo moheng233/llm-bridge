@@ -14,7 +14,9 @@ use crate::types::{
     LanguageModelToolResultContent, LanguageModelToolResultPart, LanguageModelUsagePart,
 };
 
-use super::super::{ProviderChatRequest, ProviderResponseSender, ProviderState};
+use super::super::{
+    ProviderChatRequest, ProviderResponseMetadata, ProviderResponseSender, ProviderState,
+};
 
 const DEFAULT_OPENAI_BASE_URL: &str = "https://api.openai.com/v1";
 
@@ -30,6 +32,7 @@ pub async fn stream_chat(
     state: &ProviderState,
     request: ProviderChatRequest,
     tx: ProviderResponseSender,
+    metadata_tx: tokio::sync::oneshot::Sender<ProviderResponseMetadata>,
 ) -> Result<(), String> {
     let payload = build_request_body(&request)?;
     let endpoint = build_endpoint(state);
@@ -65,6 +68,7 @@ pub async fn stream_chat(
     let mut stream_state = OpenAiStreamState::default();
     let mut decoder = SseDecoder::default();
     let mut body_stream = response.bytes_stream();
+    let mut metadata_tx = Some(metadata_tx);
 
     while let Some(chunk) = body_stream.next().await {
         let chunk = chunk.map_err(|error| format!("openai stream read failed: {error}"))?;
@@ -73,6 +77,19 @@ pub async fn stream_chat(
         while let Some(frame) = decoder.next_frame() {
             if let Some(data) = extract_sse_data(&frame) {
                 let parts = map_event(&data, &mut stream_state)?;
+
+                // Capture upstream id/created from first event that has them.
+                if let (Some(tx), Some(id), Some(created)) = (
+                    metadata_tx.take(),
+                    stream_state.upstream_id.clone(),
+                    stream_state.upstream_created,
+                ) {
+                    let _ = tx.send(ProviderResponseMetadata {
+                        id: Some(id),
+                        created: Some(created),
+                    });
+                }
+
                 for part in parts {
                     if tx.send(Ok(part)).await.is_err() {
                         return Ok(());
@@ -80,6 +97,11 @@ pub async fn stream_chat(
                 }
             }
         }
+    }
+
+    // If no metadata was captured, send default so caller doesn't hang.
+    if let Some(tx) = metadata_tx.take() {
+        let _ = tx.send(ProviderResponseMetadata::default());
     }
 
     Ok(())
@@ -91,6 +113,26 @@ fn build_request_body(request: &ProviderChatRequest) -> Result<Value, String> {
         .as_ref()
         .map(|tools| tools.iter().map(tool_to_responses).collect::<Vec<_>>());
 
+    let text_format = request.response_format.as_ref().map(|format| match format {
+        crate::types::LanguageModelResponseFormat::JsonObject => {
+            json!({ "format": { "type": "json_object" } })
+        }
+        crate::types::LanguageModelResponseFormat::JsonSchema { json_schema } => {
+            json!({ "format": { "type": "json_schema", "schema": json_schema } })
+        }
+    });
+
+    let reasoning = request.reasoning.as_ref().and_then(|r| {
+        r.effort.as_ref().map(|effort| OpenAiResponsesReasoning {
+            effort: Some(effort.clone()),
+        })
+    });
+
+    // Responses API has no `stop` parameter; log a warning if provided.
+    if request.stop.is_some() {
+        tracing::warn!("openai responses adapter: stop parameter is not supported and will be ignored");
+    }
+
     serde_json::to_value(OpenAiResponsesCreateRequest {
         model: request.model.clone(),
         input: build_input_items(&request.messages)?,
@@ -100,6 +142,8 @@ fn build_request_body(request: &ProviderChatRequest) -> Result<Value, String> {
         temperature: request.temperature,
         max_output_tokens: request.max_tokens,
         top_p: request.top_p,
+        text: text_format,
+        reasoning,
     })
     .map_err(|error| format!("failed to serialize openai request body: {error}"))
 }
@@ -218,6 +262,8 @@ fn role_to_openai(role: LanguageModelChatMessageRole) -> &'static str {
     match role {
         LanguageModelChatMessageRole::User => "user",
         LanguageModelChatMessageRole::Assistant => "assistant",
+        LanguageModelChatMessageRole::System => "system",
+        LanguageModelChatMessageRole::Developer => "developer",
     }
 }
 
@@ -311,11 +357,24 @@ struct OpenAiStreamState {
     emitted_message_parts: HashSet<String>,
     streamed_reasoning_items: HashSet<String>,
     emitted_reasoning_items: HashSet<String>,
+    upstream_id: Option<String>,
+    upstream_created: Option<u64>,
 }
 
 fn map_event(data: &str, state: &mut OpenAiStreamState) -> Result<Vec<LMResponsePart>, String> {
     let event: RawEvent = serde_json::from_str(data)
         .map_err(|error| format!("invalid openai event payload: {error}"))?;
+
+    // Capture upstream metadata from response envelope.
+    if state.upstream_id.is_none()
+        && let Some(response) = event.payload.get("response")
+    {
+        state.upstream_id = response
+            .get("id")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        state.upstream_created = response.get("created_at").and_then(Value::as_u64);
+    }
 
     match event.event_type.as_str() {
         "response.output_text.delta" => {
@@ -701,6 +760,16 @@ struct OpenAiResponsesCreateRequest {
     max_output_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     top_p: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    text: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning: Option<OpenAiResponsesReasoning>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct OpenAiResponsesReasoning {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    effort: Option<String>,
 }
 
 /// Responses API 的 function tool 是扁平结构（无嵌套 `function` 字段）。
@@ -1184,6 +1253,9 @@ mod tests {
             temperature: None,
             max_tokens: None,
             top_p: None,
+            stop: None,
+            response_format: None,
+            reasoning: None,
         };
 
         let payload = build_request_body(&request).expect("request body should build");
@@ -1222,6 +1294,9 @@ mod tests {
             temperature: None,
             max_tokens: None,
             top_p: None,
+            stop: None,
+            response_format: None,
+            reasoning: None,
         };
 
         let payload = build_request_body(&request).expect("request body should build");
@@ -1256,6 +1331,9 @@ mod tests {
             temperature: None,
             max_tokens: None,
             top_p: None,
+            stop: None,
+            response_format: None,
+            reasoning: None,
         };
 
         let payload = build_request_body(&request).expect("request body should build");
@@ -1336,6 +1414,9 @@ mod tests {
             temperature: Some(0.5),
             max_tokens: Some(64),
             top_p: Some(0.9),
+            stop: None,
+            response_format: None,
+            reasoning: None,
         };
         let payload = build_request_body(&request).expect("request body should build");
         assert_eq!(payload["temperature"], 0.5);

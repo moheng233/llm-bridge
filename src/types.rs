@@ -3,13 +3,15 @@ use serde_json::Value;
 use serde_repr::{Deserialize_repr, Serialize_repr};
 use ts_rs::TS;
 
-/// 消息角色，对应 LanguageModelChatMessageRole 枚举（User = 1, Assistant = 2）
+/// 消息角色，对应 LanguageModelChatMessageRole 枚举（User = 1, Assistant = 2, System = 3, Developer = 4）
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize_repr, Deserialize_repr, TS)]
 #[ts(export)]
 #[repr(u8)]
 pub enum LanguageModelChatMessageRole {
     User = 1,
     Assistant = 2,
+    System = 3,
+    Developer = 4,
 }
 
 /// 纯文本消息部分，对应 LanguageModelTextPart
@@ -54,6 +56,24 @@ pub struct LanguageModelTool {
     /// JSON Schema 参数定义，对应 OpenAI 的 `parameters` / Anthropic 的 `input_schema`
     #[serde(default)]
     pub input_schema: Value,
+}
+
+/// 协议无关的推理配置：effort（OpenAI）与 max_tokens（Anthropic budget_tokens）至少其一非空。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LanguageModelReasoningConfig {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_tokens: Option<u32>,
+}
+
+/// 协议无关的结构化输出配置。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum LanguageModelResponseFormat {
+    JsonObject,
+    JsonSchema { json_schema: Value },
 }
 
 /// 协议无关的 token 用量统计，由适配器在上游响应末尾发出。

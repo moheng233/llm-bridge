@@ -15,7 +15,8 @@ use tracing::instrument;
 
 use crate::actors::provider::adapters::openai_chat_completions::flatten_thinking_value_for_sse;
 use crate::actors::provider::{
-    ProviderActor, ProviderChatRequest, ProviderMessage, ProviderRuntimeConfig,
+    ProviderActor, ProviderChatRequest, ProviderMessage, ProviderResponseMetadata,
+    ProviderRuntimeConfig,
 };
 use crate::middleware::token_auth::TokenAuth;
 use crate::server::AppState;
@@ -209,6 +210,62 @@ pub struct ChatCompletionRequest {
     /// "auto" | "none" | {"type":"function","function":{"name":...}}
     #[serde(default)]
     pub tool_choice: Option<serde_json::Value>,
+    /// 停止序列：string | string[]
+    #[serde(default, deserialize_with = "deserialize_stop")]
+    pub stop: Option<Vec<String>>,
+    /// 结构化输出 / JSON mode：{"type":"json_object"} | {"type":"json_schema","json_schema":{...}}
+    #[serde(default)]
+    pub response_format: Option<OpenAiResponseFormat>,
+    /// OpenAI 推理强度（o 系列 / gpt-5）："low" | "medium" | "high" | "minimal" | "none" | "xhigh"
+    #[serde(default)]
+    pub reasoning_effort: Option<String>,
+    /// OpenRouter 扩展推理配置：{"effort":...} | {"max_tokens":...} | {"enabled":true} | {"exclude":...}
+    #[serde(default)]
+    pub reasoning: Option<OpenAiReasoning>,
+}
+
+/// `response_format` 仅支持 OpenAI 官方两种形态；`text` 视为缺省不单独处理。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum OpenAiResponseFormat {
+    JsonObject,
+    JsonSchema { json_schema: serde_json::Value },
+}
+
+/// OpenRouter `reasoning` 对象：effort / max_tokens / enabled / exclude 四选若干。
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct OpenAiReasoning {
+    #[serde(default)]
+    pub effort: Option<String>,
+    #[serde(default)]
+    pub max_tokens: Option<u32>,
+    #[serde(default)]
+    pub enabled: Option<bool>,
+    #[serde(default)]
+    pub exclude: Option<bool>,
+}
+
+/// OpenAI `stop` 允许单个字符串或字符串数组。
+fn deserialize_stop<'de, D>(deserializer: D) -> Result<Option<Vec<String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::de::Error;
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    match value {
+        None | Some(serde_json::Value::Null) => Ok(None),
+        Some(serde_json::Value::String(s)) => Ok(Some(vec![s])),
+        Some(serde_json::Value::Array(arr)) => arr
+            .into_iter()
+            .map(|v| {
+                v.as_str()
+                    .map(str::to_string)
+                    .ok_or_else(|| D::Error::custom("stop array must contain only strings"))
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map(Some),
+        _ => Err(D::Error::custom("stop must be a string or an array of strings")),
+    }
 }
 
 /// OpenAI 工具声明（`type: "function"`）。
@@ -379,6 +436,8 @@ pub async fn chat_completions(
         compat_settings: route.compat_settings.clone(),
     };
 
+    let reasoning = merge_reasoning(req.reasoning_effort.as_deref(), req.reasoning.as_ref());
+
     let provider_request = ProviderChatRequest {
         model: route.provider_model_name.clone(),
         messages,
@@ -389,6 +448,9 @@ pub async fn chat_completions(
         temperature: req.temperature,
         max_tokens: req.max_tokens,
         top_p: req.top_p,
+        stop: req.stop.clone(),
+        response_format: req.response_format.clone().map(Into::into),
+        reasoning,
     };
 
     // Spawn provider actor and get stream.
@@ -396,9 +458,12 @@ pub async fn chat_completions(
         .await
         .map_err(|e| internal_error(&e.to_string()))?;
 
+    let (metadata_tx, metadata_rx) =
+        tokio::sync::oneshot::channel::<ProviderResponseMetadata>();
+
     let stream = ractor::call_t!(
         provider_ref,
-        |reply| ProviderMessage::ChatRequest(provider_request, reply),
+        |reply| ProviderMessage::ChatRequest(provider_request, reply, metadata_tx),
         30_000
     )
     .map_err(|e| internal_error(&e.to_string()))?
@@ -410,7 +475,12 @@ pub async fn chat_completions(
 
     if req.stream {
         let usage_handle = UsageHandle::default();
-        let sse_stream = stream_to_sse(stream, req.model.clone(), usage_handle.clone());
+        let sse_stream = stream_to_sse(
+            stream,
+            req.model.clone(),
+            usage_handle.clone(),
+            metadata_rx,
+        );
 
         // Spawn cleanup after stream is consumed.
         let settle_state = state.clone();
@@ -464,6 +534,10 @@ pub async fn chat_completions(
         let settle_ctx = crate::auth::quota::TokenQuotaContext::from_token(&token);
         settle_quota_with_actual_usage(&state, &settle_ctx, estimated_tokens, &usage_acc).await;
 
+        let upstream = metadata_rx.await.unwrap_or_default();
+        let id = upstream.id.unwrap_or_else(|| "chatcmpl-llm-bridge".to_string());
+        let created = upstream.created.unwrap_or(0);
+
         let has_tool_calls = !tool_calls.is_empty();
         let mut message = serde_json::json!({
             "role": "assistant",
@@ -481,9 +555,9 @@ pub async fn chat_completions(
             .unwrap_or(if has_tool_calls { "tool_calls" } else { "stop" });
 
         let mut response = serde_json::json!({
-            "id": "chatcmpl-llm-bridge",
+            "id": id,
             "object": "chat.completion",
-            "created": 0,
+            "created": created,
             "model": req.model,
             "choices": [{
                 "index": 0,
@@ -496,6 +570,43 @@ pub async fn chat_completions(
         }
 
         Ok(Json(response).into_response())
+    }
+}
+
+/// 合并 OpenAI `reasoning_effort` 与 OpenRouter `reasoning` 对象为协议无关配置。
+fn merge_reasoning(
+    reasoning_effort: Option<&str>,
+    reasoning: Option<&OpenAiReasoning>,
+) -> Option<crate::types::LanguageModelReasoningConfig> {
+    let effort = reasoning_effort
+        .map(str::to_string)
+        .or_else(|| reasoning.and_then(|r| r.effort.clone()));
+    let max_tokens = reasoning.and_then(|r| r.max_tokens);
+
+    // OpenRouter reasoning.enabled=true 但未给 effort/max_tokens 时，默认 medium
+    let effort = effort.or_else(|| match reasoning {
+        Some(r) if r.enabled == Some(true) => Some("medium".to_string()),
+        _ => None,
+    });
+
+    if effort.is_none() && max_tokens.is_none() {
+        return None;
+    }
+
+    Some(crate::types::LanguageModelReasoningConfig {
+        effort,
+        max_tokens,
+    })
+}
+
+impl From<OpenAiResponseFormat> for crate::types::LanguageModelResponseFormat {
+    fn from(value: OpenAiResponseFormat) -> Self {
+        match value {
+            OpenAiResponseFormat::JsonObject => crate::types::LanguageModelResponseFormat::JsonObject,
+            OpenAiResponseFormat::JsonSchema { json_schema } => {
+                crate::types::LanguageModelResponseFormat::JsonSchema { json_schema }
+            }
+        }
     }
 }
 
@@ -586,18 +697,62 @@ async fn settle_quota_with_actual_usage(
 /// 流式路径共享的 usage 累积句柄。
 type UsageHandle = std::sync::Arc<tokio::sync::Mutex<UsageAccumulator>>;
 
+/// 用于在流式 SSE 中共享上游 metadata（id/created）与角色发送状态。
+struct SseSharedState {
+    usage_acc: UsageHandle,
+    metadata_rx: tokio::sync::oneshot::Receiver<ProviderResponseMetadata>,
+    upstream: Option<ProviderResponseMetadata>,
+    role_sent: bool,
+}
+
+impl SseSharedState {
+    fn upstream_id(&mut self) -> String {
+        if self.upstream.is_none() {
+            self.upstream = self.metadata_rx.try_recv().ok();
+        }
+        self.upstream
+            .as_ref()
+            .and_then(|m| m.id.clone())
+            .unwrap_or_else(|| "chatcmpl-llm-bridge".to_string())
+    }
+
+    fn upstream_created(&mut self) -> u64 {
+        if self.upstream.is_none() {
+            self.upstream = self.metadata_rx.try_recv().ok();
+        }
+        self.upstream.as_ref().and_then(|m| m.created).unwrap_or(0)
+    }
+}
+
 fn stream_to_sse(
     stream: impl Stream<Item = Result<LMResponsePart, String>> + Send + 'static,
     model: String,
     usage_handle: UsageHandle,
+    metadata_rx: tokio::sync::oneshot::Receiver<ProviderResponseMetadata>,
 ) -> impl Stream<Item = Result<Event, axum::Error>> + Send + 'static {
-    stream.map(move |item| map_part_to_sse(item, &model, usage_handle.clone()))
+    let shared = std::sync::Arc::new(tokio::sync::Mutex::new(SseSharedState {
+        usage_acc: usage_handle,
+        metadata_rx,
+        upstream: None,
+        role_sent: false,
+    }));
+
+    // Map each item, then append a [DONE] sentinel at the end.
+    let mapped = stream.then(move |item| {
+        let shared = shared.clone();
+        let model = model.clone();
+        async move { map_part_to_sse(item, &model, shared).await }
+    });
+
+    use futures_util::stream;
+    let done = stream::once(async { Ok(Event::default().data("[DONE]")) });
+    mapped.chain(done)
 }
 
-fn map_part_to_sse(
+async fn map_part_to_sse(
     item: Result<LMResponsePart, String>,
     model: &str,
-    usage_acc: UsageHandle,
+    shared: std::sync::Arc<tokio::sync::Mutex<SseSharedState>>,
 ) -> Result<Event, axum::Error> {
     match item {
         Ok(part) => {
@@ -639,9 +794,8 @@ fn map_part_to_sse(
                 }
                 LMResponsePart::Usage(u) => {
                     // 聚合供流后结算
-                    if let Ok(mut acc) = usage_acc.try_lock() {
-                        acc.merge(u);
-                    }
+                    let guard = shared.lock().await;
+                    guard.usage_acc.lock().await.merge(u);
                     // OpenAI include_usage 格式：choices 为空数组的 usage-only chunk
                     if u.input_tokens.is_some() {
                         usage_json = Some(serde_json::json!({
@@ -658,10 +812,13 @@ fn map_part_to_sse(
 
             // usage-only chunk（OpenAI 格式：choices 为空）
             if let Some(usage) = usage_json {
+                let mut guard = shared.lock().await;
+                let id = guard.upstream_id();
+                let created = guard.upstream_created();
                 let chunk = serde_json::json!({
-                    "id": "chatcmpl-llm-bridge",
+                    "id": id,
                     "object": "chat.completion.chunk",
-                    "created": 0,
+                    "created": created,
                     "model": model,
                     "choices": [],
                     "usage": usage,
@@ -669,10 +826,23 @@ fn map_part_to_sse(
                 return Ok(Event::default().data(serde_json::to_string(&chunk).unwrap_or_default()));
             }
 
+            let mut guard = shared.lock().await;
+            let id = guard.upstream_id();
+            let created = guard.upstream_created();
+
+            // OpenAI 规范：首包必须携带 role: "assistant"
+            if !guard.role_sent {
+                delta.insert(
+                    "role".to_string(),
+                    serde_json::Value::String("assistant".to_string()),
+                );
+                guard.role_sent = true;
+            }
+
             let chunk = serde_json::json!({
-                "id": "chatcmpl-llm-bridge",
+                "id": id,
                 "object": "chat.completion.chunk",
-                "created": 0,
+                "created": created,
                 "model": model,
                 "choices": [{
                     "index": 0,
@@ -703,7 +873,8 @@ fn convert_messages(messages: &[OpenAiMessage]) -> Result<Vec<LanguageModelChatM
             let role = match msg.role.as_str() {
                 "user" => LanguageModelChatMessageRole::User,
                 "assistant" => LanguageModelChatMessageRole::Assistant,
-                "system" => LanguageModelChatMessageRole::User, // map system → user for simplicity
+                "system" => LanguageModelChatMessageRole::System,
+                "developer" => LanguageModelChatMessageRole::Developer,
                 _ => LanguageModelChatMessageRole::User,
             };
 

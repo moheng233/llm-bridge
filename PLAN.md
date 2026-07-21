@@ -96,11 +96,11 @@ Provider 多协议架构已落地：Provider → ProviderProtocol（协议 + bas
 
 | # | 方向 | 位置 | 问题 |
 |---|------|------|------|
-| 5 | 南+北 | `ChatCompletionRequest` + 适配器 | `response_format`（JSON mode / JSON Schema 结构化输出）未反序列化、无通路 |
-| 6 | 南+北 | `ChatCompletionRequest` + 适配器 | `reasoning` / `reasoning_effort` 推理强度配置未反序列化、无通路（OpenAI `reasoning_effort`、Anthropic `thinking`） |
-| 7 | 南 | `stream_to_sse` | 流式协议细节：不发结束哨兵 `data: [DONE]`；首包无 `role: "assistant"`；chunk `id` / `created` 硬编码 |
-| 8 | 南 | 非流式响应 | `id` 硬编码 `"chatcmpl-llm-bridge"`、`created` 硬编码 `0`，未透传上游真实值 |
-| 9 | 南+北 | `ChatCompletionRequest` + 适配器 | `stop`（停止序列，string \| string[]）未反序列化、无通路 |
+| 5 | 南+北 | `ChatCompletionRequest` + 适配器 | ~~`response_format`（JSON mode / JSON Schema 结构化输出）未反序列化、无通路~~ ✅ 2026-07-21 |
+| 6 | 南+北 | `ChatCompletionRequest` + 适配器 | ~~`reasoning` / `reasoning_effort` 推理强度配置未反序列化、无通路~~ ✅ 2026-07-21 |
+| 7 | 南 | `stream_to_sse` | ~~流式协议细节：不发结束哨兵 `data: [DONE]`；首包无 `role: "assistant"`；chunk `id` / `created` 硬编码~~ ✅ 2026-07-21 |
+| 8 | 南 | 非流式响应 | ~~`id` 硬编码 `"chatcmpl-llm-bridge"`、`created` 硬编码 `0`，未透传上游真实值~~ ✅ 2026-07-21 |
+| 9 | 南+北 | `ChatCompletionRequest` + 适配器 | ~~`stop`（停止序列，string \| string[]）未反序列化、无通路~~ ✅ 2026-07-21 |
 
 ### P2 — 常规参数与角色
 

@@ -12,7 +12,9 @@ use crate::types::{
     LanguageModelToolResultContent, LanguageModelToolResultPart, LanguageModelUsagePart,
 };
 
-use super::super::{ProviderChatRequest, ProviderResponseSender, ProviderState};
+use super::super::{
+    ProviderChatRequest, ProviderResponseMetadata, ProviderResponseSender, ProviderState,
+};
 
 const DEFAULT_OPENAI_BASE_URL: &str = "https://api.openai.com/v1";
 
@@ -28,6 +30,7 @@ pub async fn stream_chat(
     state: &ProviderState,
     request: ProviderChatRequest,
     tx: ProviderResponseSender,
+    metadata_tx: tokio::sync::oneshot::Sender<ProviderResponseMetadata>,
 ) -> Result<(), String> {
     let payload = build_request_body(&request)?;
     let endpoint = build_endpoint(state);
@@ -63,6 +66,7 @@ pub async fn stream_chat(
     let mut stream_state = OpenAiChatStreamState::default();
     let mut decoder = SseDecoder::default();
     let mut body_stream = response.bytes_stream();
+    let mut metadata_tx = Some(metadata_tx);
 
     while let Some(chunk) = body_stream.next().await {
         let chunk = chunk.map_err(|error| format!("openai stream read failed: {error}"))?;
@@ -71,6 +75,19 @@ pub async fn stream_chat(
         while let Some(frame) = decoder.next_frame() {
             if let Some(data) = extract_sse_data(&frame) {
                 let parts = map_event(data, &mut stream_state)?;
+
+                // Capture upstream id/created from first chunk that has them.
+                if let (Some(tx), Some(id), Some(created)) = (
+                    metadata_tx.take(),
+                    stream_state.upstream_id.clone(),
+                    stream_state.upstream_created,
+                ) {
+                    let _ = tx.send(ProviderResponseMetadata {
+                        id: Some(id),
+                        created: Some(created),
+                    });
+                }
+
                 for part in parts {
                     if tx.send(Ok(part)).await.is_err() {
                         return Ok(());
@@ -78,6 +95,11 @@ pub async fn stream_chat(
                 }
             }
         }
+    }
+
+    // If no metadata was captured, send default so caller doesn't hang.
+    if let Some(tx) = metadata_tx.take() {
+        let _ = tx.send(ProviderResponseMetadata::default());
     }
 
     Ok(())
@@ -100,6 +122,17 @@ fn build_request_body(request: &ProviderChatRequest) -> Result<Value, String> {
         .as_ref()
         .map(|tools| tools.iter().map(tool_to_openai).collect::<Vec<_>>());
 
+    let response_format = request.response_format.as_ref().map(|format| match format {
+        crate::types::LanguageModelResponseFormat::JsonObject => {
+            json!({ "type": "json_object" })
+        }
+        crate::types::LanguageModelResponseFormat::JsonSchema { json_schema } => {
+            json!({ "type": "json_schema", "json_schema": json_schema })
+        }
+    });
+
+    let reasoning_effort = request.reasoning.as_ref().and_then(|r| r.effort.clone());
+
     serde_json::to_value(OpenAiChatCompletionsRequest {
         model: request.model.clone(),
         messages: build_messages(&request.messages)?,
@@ -109,6 +142,9 @@ fn build_request_body(request: &ProviderChatRequest) -> Result<Value, String> {
         temperature: request.temperature,
         max_tokens: request.max_tokens,
         top_p: request.top_p,
+        stop: request.stop.clone(),
+        response_format,
+        reasoning_effort,
         stream_options: Some(OpenAiStreamOptions {
             include_usage: true,
         }),
@@ -226,6 +262,8 @@ fn role_to_openai(role: LanguageModelChatMessageRole) -> &'static str {
     match role {
         LanguageModelChatMessageRole::User => "user",
         LanguageModelChatMessageRole::Assistant => "assistant",
+        LanguageModelChatMessageRole::System => "system",
+        LanguageModelChatMessageRole::Developer => "developer",
     }
 }
 
@@ -333,6 +371,8 @@ fn extract_sse_data(frame: &str) -> Option<&str> {
 struct OpenAiChatStreamState {
     streamed_tool_call_ids: std::collections::HashSet<String>,
     last_finish_reason: Option<String>,
+    upstream_id: Option<String>,
+    upstream_created: Option<u64>,
 }
 
 // ── Event mapping ─────────────────────────────────────────────────────────────
@@ -344,6 +384,14 @@ fn map_event(data: &str, state: &mut OpenAiChatStreamState) -> Result<Vec<LMResp
 
     let event: ChatCompletionChunk = serde_json::from_str(data)
         .map_err(|error| format!("invalid openai chat completions event: {error}"))?;
+
+    // Capture upstream metadata for response envelope.
+    if state.upstream_id.is_none() {
+        state.upstream_id = event.id.clone();
+    }
+    if state.upstream_created.is_none() {
+        state.upstream_created = event.created;
+    }
 
     let mut parts = Vec::new();
 
@@ -438,6 +486,12 @@ struct OpenAiChatCompletionsRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     top_p: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    stop: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    response_format: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning_effort: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     stream_options: Option<OpenAiStreamOptions>,
 }
 
@@ -517,8 +571,8 @@ struct OpenAiChatFunctionCall {
 
 #[derive(Debug, Deserialize)]
 struct ChatCompletionChunk {
-    #[allow(dead_code)]
     id: Option<String>,
+    created: Option<u64>,
     #[serde(default)]
     choices: Vec<ChatCompletionChunkChoice>,
     usage: Option<ChatCompletionUsage>,
@@ -588,6 +642,9 @@ mod tests {
             temperature: Some(0.7),
             max_tokens: Some(321),
             top_p: Some(0.8),
+            stop: None,
+            response_format: None,
+            reasoning: None,
         }
     }
 

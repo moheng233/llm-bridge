@@ -1599,6 +1599,9 @@ async fn test_model_provider_reply(
         temperature: None,
         max_tokens: None,
         top_p: None,
+        stop: None,
+        response_format: None,
+        reasoning: None,
     };
 
     let started = std::time::Instant::now();
@@ -1607,9 +1610,12 @@ async fn test_model_provider_reply(
         .await
         .map_err(|e| db_err(e.to_string()))?;
 
+    let (metadata_tx, _metadata_rx) =
+        tokio::sync::oneshot::channel::<crate::actors::provider::ProviderResponseMetadata>();
+
     let mut stream = match ractor::call_t!(
         provider_ref,
-        |reply| ProviderMessage::ChatRequest(request, reply),
+        |reply| ProviderMessage::ChatRequest(request, reply, metadata_tx),
         10_000
     ) {
         Ok(Ok(stream)) => stream,

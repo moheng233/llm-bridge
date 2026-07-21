@@ -3,7 +3,10 @@ pub mod adapters;
 use std::pin::Pin;
 
 use crate::config::models::{CompatibilitySettings, ProviderCompatibility};
-use crate::types::{LMResponsePart, LanguageModelChatMessage, LanguageModelTool};
+use crate::types::{
+    LMResponsePart, LanguageModelChatMessage, LanguageModelReasoningConfig,
+    LanguageModelResponseFormat, LanguageModelTool,
+};
 use ractor::{Actor, ActorProcessingErr, ActorRef};
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
@@ -49,19 +52,33 @@ pub struct ProviderChatRequest {
     pub max_tokens: Option<u32>,
     /// nucleus 采样参数（0-1）
     pub top_p: Option<f64>,
+    /// 停止序列
+    pub stop: Option<Vec<String>>,
+    /// 结构化输出 / JSON mode
+    pub response_format: Option<LanguageModelResponseFormat>,
+    /// 推理配置（effort / max_tokens）
+    pub reasoning: Option<LanguageModelReasoningConfig>,
+}
+
+/// 由适配器在上游响应中捕获的元数据，用于回填 OpenAI 响应/分块。
+#[derive(Debug, Clone, Default)]
+pub struct ProviderResponseMetadata {
+    pub id: Option<String>,
+    pub created: Option<u64>,
 }
 
 pub enum ProviderMessage {
     ChatRequest(
         ProviderChatRequest,
         ractor::RpcReplyPort<Result<ProviderStream, String>>,
+        tokio::sync::oneshot::Sender<ProviderResponseMetadata>,
     ),
 }
 
 impl ProviderMessage {
     fn kind(&self) -> &'static str {
         match self {
-            Self::ChatRequest(_, _) => "chat_request",
+            Self::ChatRequest(_, _, _) => "chat_request",
         }
     }
 }
@@ -109,7 +126,7 @@ impl Actor for ProviderActor {
         state: &mut Self::State,
     ) -> Result<(), ActorProcessingErr> {
         match message {
-            ProviderMessage::ChatRequest(request, reply) => {
+            ProviderMessage::ChatRequest(request, reply, metadata_tx) => {
                 let (tx, rx) = mpsc::channel(32);
                 let stream = Box::pin(ReceiverStream::new(rx)) as ProviderStream;
                 let _ = reply.send(Ok(stream));
@@ -125,8 +142,13 @@ impl Actor for ProviderActor {
 
                 tokio::spawn(
                     async move {
-                        if let Err(error) =
-                            adapters::stream_chat(&provider_state, request, tx.clone()).await
+                        if let Err(error) = adapters::stream_chat(
+                            &provider_state,
+                            request,
+                            tx.clone(),
+                            metadata_tx,
+                        )
+                        .await
                         {
                             let _ = tx.send(Err(error)).await;
                         }
