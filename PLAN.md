@@ -77,111 +77,56 @@ Provider 多协议架构已落地：Provider → ProviderProtocol（协议 + bas
 
 ---
 
-## 3. 后端：OpenAI 兼容层工具调用透传（chat_completions）
+## 3. 后端：`/v1/chat/completions` OpenRouter 兼容性差距
 
-> 来源：2026-07-21 完善 `examples/chat_smoke_test.rs` 时发现。
-> 现状：内部类型 `LanguageModelInputPart::ToolCall/ToolResult` 与各上游适配器（openai_chat_completions / openai_responses / anthropic_messages）已具备完整的工具调用双向映射，但 **HTTP 入口 `/v1/chat/completions` 未对客户端暴露**。
+> 来源：2026-07-21 对照 [OpenRouter API 文档](https://openrouter.ai/docs/api/api-reference/chat/create-a-chat-completion) 逐项核对。
+> 图例：南向 = 客户端 → llm-bridge；北向 = llm-bridge → 上游 provider。
+> 已完成（2026-07-21）：`tools` / `tool_choice` 声明与透传、`assistant(tool_calls)` / `tool` 消息双向映射、流式/非流式 `tool_calls` 输出。
 
-### 问题清单
+### P0 — 已声明未生效 / 影响计费正确性
 
-| # | 位置 | 问题 |
+| # | 方向 | 位置 | 问题 |
+|---|------|------|------|
+| 1 | 南+北 | `server/openai_api.rs` → `ProviderChatRequest` → 三个适配器 | `temperature` / `max_tokens` / `top_p` 已反序列化但从未传给适配器；`ProviderChatRequest` 无采样参数字段，`build_request_body` 全部不携带。Anthropic `max_tokens` 硬编码 4096 |
+| 2 | 北+南 | 三个适配器 `map_event` / 聚合循环 | **`usage` 完全未解析**：非流式响应无 `usage` 字段；流式从不发 usage chunk（`stream_options.include_usage` 无效）。配额结算只能按字符估算 |
+| 3 | 北+南 | 适配器 chunk 类型 / `stream_to_sse` / 非流式响应 | `finish_reason` 真实值被丢弃：非流式硬编码 `"stop"`，流式 chunk 的 `finish_reason` 字段标 `#[allow(dead_code)]`；`length` / `content_filter` 永远透传不出来 |
+| 4 | 南 | `estimate_token_count` | 配额预估未计入 tools（已修复 ✅），但结算应改用真实 usage（依赖 #2） |
+
+### P1 — 常用功能缺失
+
+| # | 方向 | 位置 | 问题 |
+|---|------|------|------|
+| 5 | 南+北 | `ChatCompletionRequest` + 适配器 | `response_format`（JSON mode / JSON Schema 结构化输出）未反序列化、无通路 |
+| 6 | 南+北 | `ChatCompletionRequest` + 适配器 | `reasoning` / `reasoning_effort` 推理强度配置未反序列化、无通路（OpenAI `reasoning_effort`、Anthropic `thinking`） |
+| 7 | 南 | `stream_to_sse` | 流式协议细节：不发结束哨兵 `data: [DONE]`；首包无 `role: "assistant"`；chunk `id` / `created` 硬编码 |
+| 8 | 南 | 非流式响应 | `id` 硬编码 `"chatcmpl-llm-bridge"`、`created` 硬编码 `0`，未透传上游真实值 |
+| 9 | 南+北 | `ChatCompletionRequest` + 适配器 | `stop`（停止序列，string \| string[]）未反序列化、无通路 |
+
+### P2 — 常规参数与角色
+
+| # | 方向 | 位置 | 问题 |
+|---|------|------|------|
+| 10 | 南 | `convert_messages` | `system` 角色被降级为 `user`（Anthropic 适配器本支持独立 system prompt，入口永远收不到）；不支持 `developer` 角色 |
+| 11 | 南 | `content_to_text` / `OpenAiContentPart` | 多模态 `image_url` part 被丢弃（内部 `LanguageModelDataPart` 与适配器图片映射已就绪，入口未接）；`input_audio` / `video_url` / `file` 不支持 |
+| 12 | 南+北 | `ChatCompletionRequest` + 适配器 | `seed` / `frequency_penalty` / `presence_penalty` / `logit_bias` / `max_completion_tokens` 未反序列化、无通路 |
+| 13 | 北+南 | `chat_completions` 错误处理 | 上游错误统一包装为 500 + `provider_error`，429 / 402 / 400 等语义状态码不透传，客户端无法做针对性重试 |
+| 14 | 北 | `openai_chat_completions.rs` `map_event` | 增量 tool_call arguments 续传分支为空（`// For simplicity...`），非完整 OpenAI 增量语义；Anthropic / Responses 适配器已按缓冲累积处理 |
+
+### P3 — 按需（低频 / OpenRouter 特有）
+
+| # | 方向 | 问题 |
 |---|------|------|
-| A | `server/openai_api.rs` — `ChatCompletionRequest` | 缺少 `tools` / `tool_choice` 字段，客户端无法声明可用工具 |
-| B | `server/openai_api.rs` — `OpenAiMessage` | 缺少 `tool_calls` / `tool_call_id` 字段，客户端回放的 `assistant(tool_calls)` 与 `tool` 角色消息在反序列化时被静默丢弃（`serde` 默认忽略未知字段） |
-| C | `server/openai_api.rs` — `convert_messages` | 未把 `tool` 角色 / `tool_calls` 映射为内部 `ToolCall` / `ToolResult` part |
-| D | `server/openai_api.rs` — 非流式响应 | 聚合循环里 `LMResponsePart::ToolCall` 被 `Ok(_) => {}` 吞掉，响应 JSON 无 `tool_calls` |
-| E | `server/openai_api.rs` — `stream_to_sse` | 工具调用仅发一个空数组占位 `delta.tool_calls = []`，未透传真实 `id` / `name` / `arguments` |
-| F | `actors/provider/*` — `ProviderChatRequest` | 请求体未携带工具定义，适配器 `build_request_body` 也就无法向上游传 `tools` |
+| 15 | 南+北 | `n`（多候选）、`logprobs` / `top_logprobs`、`parallel_tool_calls`、`user`、`metadata` |
+| 16 | 南+北 | OpenRouter 特有：`provider`（路由偏好）、`models`（fallback 列表）、`route`、`transforms`、`plugins`、`session_id`、`trace`、`service_tier`、`modalities`、`prediction`、`image_config`、`min_p` / `top_k` / `top_a` / `repetition_penalty` |
+| 17 | 南 | assistant 消息 `refusal` 字段；tool 消息 content 为 part 数组（含图片）时仅提取 text |
+| 18 | 南 | 错误 chunk 格式无 `code` 字段；`reasoning_details`（OpenRouter 结构化格式）未支持，当前仅以 DeepSeek 风格 `reasoning_content` 字符串透传 |
+| 19 | 北 | 响应中 `images` / `audio` 多模态输出未解析 |
 
-### 修复方案
+### 建议实施顺序
 
-#### 1. 扩展请求/消息类型（`server/openai_api.rs`）
-
-```rust
-pub struct ChatCompletionRequest {
-    pub model: String,
-    pub messages: Vec<OpenAiMessage>,
-    #[serde(default)]
-    pub stream: bool,
-    pub temperature: Option<f64>,
-    pub max_tokens: Option<u32>,
-    pub top_p: Option<f64>,
-    #[serde(default)]
-    pub stream_options: Option<OpenAiStreamOptions>,
-    // 新增 ↓
-    pub tools: Option<Vec<OpenAiTool>>,          // OpenAI 标准：{type:"function", function:{name,description,parameters}}
-    pub tool_choice: Option<serde_json::Value>,  // "auto" | "none" | {"type":"function","function":{"name":...}}
-}
-
-pub struct OpenAiMessage {
-    pub role: String,
-    #[serde(default)]
-    pub content: OpenAiContent,
-    pub name: Option<String>,
-    // 新增 ↓
-    pub tool_calls: Option<Vec<OpenAiMessageToolCall>>, // assistant 消息携带
-    pub tool_call_id: Option<String>,                    // role=tool 时携带
-}
-```
-
-#### 2. `convert_messages` 映射补齐
-
-- `role == "assistant"` 且带 `tool_calls` → 生成 `LanguageModelInputPart::ToolCall`（`call_id` / `name` / `input` = 解析后的 arguments JSON）。
-- `role == "tool"` → 生成 `LanguageModelInputPart::ToolResult`（`call_id` = `tool_call_id`，`content` = 文本 part）。
-- 其余角色逻辑保持不变。
-
-#### 3. `ProviderChatRequest` 携带工具定义
-
-```rust
-pub struct ProviderChatRequest {
-    pub model: String,
-    pub messages: Vec<LanguageModelChatMessage>,
-    pub tools: Option<Vec<OpenAiTool>>,   // 或定义为与协议无关的内部 Tool 类型
-    pub tool_choice: Option<serde_json::Value>,
-}
-```
-
-三个适配器（`openai_chat_completions`、`openai_responses`、`anthropic_messages`）在 `build_request_body` 中把工具定义序列化为各自上游格式：
-- openai chat completions：`tools` + `tool_choice` 原样透传；
-- openai responses：`tools` 转换为 responses API 格式；
-- anthropic：`tools` → `tools` 数组（`name` / `description` / `input_schema`）。
-
-#### 4. 非流式响应透传 `tool_calls`
-
-聚合循环中收集 `LMResponsePart::ToolCall`，在最终 `message` JSON 中输出：
-
-```json
-"message": {
-  "role": "assistant",
-  "content": "...",
-  "tool_calls": [{"id":"call_xxx","type":"function","function":{"name":"...","arguments":"{...}"}}]
-}
-```
-
-并将 `finish_reason` 设为 `"tool_calls"`（当存在工具调用时）。
-
-#### 5. 流式 SSE 透传 `tool_calls`
-
-`stream_to_sse` 中遇到 `LMResponsePart::ToolCall` 时，按 OpenAI chunk 格式输出：
-
-```json
-"delta": {"tool_calls": [{"index":0,"id":"call_xxx","type":"function","function":{"name":"...","arguments":"..."}}]}
-```
-
-注意：上游是增量推送 arguments 的场景下，当前适配器（`openai_chat_completions.rs` 的 `map_event`）对「续传 arguments」分支是空的（注释 `// For simplicity...`）。如需严格对齐 OpenAI 增量语义，需在适配器内按 `index` 累积 arguments 后再发完整 ToolCall，或改为透传增量片段。
-
-#### 6. 验收方式
-
-- `examples/chat_smoke_test.rs` 场景 3（工具调用回放）在修复后应能：
-  1. 请求携带 `tools` 声明 `get_current_weather`；
-  2. 上游真实返回 `finish_reason=tool_calls` 的响应并被桥接层透传；
-  3. 客户端回填 `tool` 结果后拿到最终自然语言回复（端到端，而非回放）。
-- `curl -s ... /v1/chat/completions -d '{"model":..., "messages":[...], "tools":[...]}'` 手工验证非流式与 `stream:true` 两种路径。
-
-### 影响面
-
-- 仅 `server/openai_api.rs` 的请求/响应外壳 + `ProviderChatRequest` 结构 + 三个适配器的 `build_request_body`；内部 `LanguageModelInputPart` 类型与上游映射逻辑已就绪，无需改动。
-- `estimate_token_count`（配额预估）目前只统计 `content`，带 `tools` 时建议把工具定义 JSON 长度也计入，避免低估。
+1. **P0 一批**：#1 采样参数贯通 + #2 usage 解析与透传（含流式 `include_usage`）+ #3 `finish_reason` 透传 —— 改动集中在 `ProviderChatRequest`、`LMResponsePart`（需新增 Usage part）、三个适配器与 `openai_api.rs` 外壳。
+2. **P1 一批**：#5 `response_format` + #6 `reasoning` + #7/#8 流式协议细节 + #9 `stop`。
+3. P2 / P3 按实际需求排期。
 
 ---
 
