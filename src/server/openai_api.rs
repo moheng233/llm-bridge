@@ -21,7 +21,8 @@ use crate::middleware::token_auth::TokenAuth;
 use crate::server::AppState;
 use crate::types::{
     LMResponsePart, LanguageModelChatMessage, LanguageModelChatMessageRole, LanguageModelInputPart,
-    LanguageModelTextPart,
+    LanguageModelTextPart, LanguageModelTool, LanguageModelToolCallPart,
+    LanguageModelToolResultContent, LanguageModelToolResultPart,
 };
 
 // ── Auth ── (legacy — used by check_auth only)
@@ -202,6 +203,39 @@ pub struct ChatCompletionRequest {
     pub top_p: Option<f64>,
     #[serde(default)]
     pub stream_options: Option<OpenAiStreamOptions>,
+    /// OpenAI 标准工具声明：[{"type":"function","function":{"name","description","parameters"}}]
+    #[serde(default)]
+    pub tools: Option<Vec<OpenAiTool>>,
+    /// "auto" | "none" | {"type":"function","function":{"name":...}}
+    #[serde(default)]
+    pub tool_choice: Option<serde_json::Value>,
+}
+
+/// OpenAI 工具声明（`type: "function"`）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpenAiTool {
+    pub r#type: String,
+    pub function: OpenAiToolFunction,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpenAiToolFunction {
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub parameters: serde_json::Value,
+}
+
+impl OpenAiTool {
+    /// 转换为协议无关的内部工具定义。
+    fn into_internal(self) -> LanguageModelTool {
+        LanguageModelTool {
+            name: self.function.name,
+            description: self.function.description,
+            input_schema: self.function.parameters,
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -210,6 +244,27 @@ pub struct OpenAiMessage {
     #[serde(default)]
     pub content: OpenAiContent,
     pub name: Option<String>,
+    /// assistant 消息携带的工具调用列表
+    #[serde(default)]
+    pub tool_calls: Option<Vec<OpenAiMessageToolCall>>,
+    /// role=tool 时携带，对应要回填的 tool_call id
+    #[serde(default)]
+    pub tool_call_id: Option<String>,
+}
+
+/// assistant 消息中的单个工具调用（OpenAI 格式）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpenAiMessageToolCall {
+    pub id: String,
+    pub r#type: String,
+    pub function: OpenAiMessageToolCallFunction,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpenAiMessageToolCallFunction {
+    pub name: String,
+    /// JSON 字符串形式的参数
+    pub arguments: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -295,7 +350,7 @@ pub async fn chat_completions(
     let route = &routes[0];
 
     // Phase 2: Quota check and deduct (before making upstream call)
-    let estimated_tokens = estimate_token_count(&req.messages);
+    let estimated_tokens = estimate_token_count(&req.messages, req.tools.as_deref());
     if let Err(quota_err) =
         crate::auth::quota::check_and_deduct(&state.db, &token, estimated_tokens).await
     {
@@ -327,6 +382,10 @@ pub async fn chat_completions(
     let provider_request = ProviderChatRequest {
         model: route.provider_model_name.clone(),
         messages,
+        tools: req
+            .tools
+            .map(|tools| tools.into_iter().map(OpenAiTool::into_internal).collect()),
+        tool_choice: req.tool_choice.clone(),
     };
 
     // Spawn provider actor and get stream.
@@ -361,12 +420,23 @@ pub async fn chat_completions(
         let mut stream = stream;
         let mut content = String::new();
         let mut reasoning_content = String::new();
+        let mut tool_calls: Vec<serde_json::Value> = Vec::new();
         while let Some(item) = stream.next().await {
             match item {
                 Ok(LMResponsePart::Text(t)) => content.push_str(&t.value),
                 Ok(LMResponsePart::Thinking(t)) => {
                     let text = crate::actors::provider::adapters::openai_chat_completions::flatten_thinking_value_for_sse(&t.value);
                     reasoning_content.push_str(&text);
+                }
+                Ok(LMResponsePart::ToolCall(tc)) => {
+                    tool_calls.push(serde_json::json!({
+                        "id": tc.call_id,
+                        "type": "function",
+                        "function": {
+                            "name": tc.name,
+                            "arguments": serde_json::to_string(&tc.input).unwrap_or_default(),
+                        }
+                    }));
                 }
                 Ok(_) => {}
                 Err(e) => {
@@ -379,6 +449,7 @@ pub async fn chat_completions(
         cleanup_ref.stop(None);
         let _ = cleanup_handle.await;
 
+        let has_tool_calls = !tool_calls.is_empty();
         let mut message = serde_json::json!({
             "role": "assistant",
             "content": content,
@@ -386,6 +457,10 @@ pub async fn chat_completions(
         if !reasoning_content.is_empty() {
             message["reasoning_content"] = serde_json::Value::String(reasoning_content);
         }
+        if has_tool_calls {
+            message["tool_calls"] = serde_json::Value::Array(tool_calls);
+        }
+        let finish_reason = if has_tool_calls { "tool_calls" } else { "stop" };
 
         Ok(Json(serde_json::json!({
             "id": "chatcmpl-llm-bridge",
@@ -395,7 +470,7 @@ pub async fn chat_completions(
             "choices": [{
                 "index": 0,
                 "message": message,
-                "finish_reason": "stop"
+                "finish_reason": finish_reason
             }]
         }))
         .into_response())
@@ -428,8 +503,20 @@ fn stream_to_sse(
                         );
                         None
                     }
-                    LMResponsePart::ToolCall(_tc) => {
-                        delta.insert("tool_calls".to_string(), serde_json::Value::Array(vec![]));
+                    LMResponsePart::ToolCall(tc) => {
+                        delta.insert(
+                            "tool_calls".to_string(),
+                            serde_json::json!([{
+                                "index": 0,
+                                "id": tc.call_id,
+                                "type": "function",
+                                "function": {
+                                    "name": tc.name,
+                                    "arguments": serde_json::to_string(&tc.input)
+                                        .unwrap_or_default(),
+                                }
+                            }]),
+                        );
                         Some("tool_calls")
                     }
                     _ => None,
@@ -474,35 +561,69 @@ fn convert_messages(messages: &[OpenAiMessage]) -> Result<Vec<LanguageModelChatM
                 _ => LanguageModelChatMessageRole::User,
             };
 
-            let content = match &msg.content {
-                OpenAiContent::String(s) => {
-                    vec![LanguageModelInputPart::Text(LanguageModelTextPart {
-                        value: s.clone(),
-                    })]
+            // role=tool → ToolResult part
+            if msg.role == "tool" {
+                let call_id = msg.tool_call_id.clone().unwrap_or_default();
+                let text = content_to_text(&msg.content);
+                return Ok(LanguageModelChatMessage {
+                    role: LanguageModelChatMessageRole::User,
+                    content: vec![LanguageModelInputPart::ToolResult(
+                        LanguageModelToolResultPart {
+                            call_id,
+                            content: vec![LanguageModelToolResultContent::Text(
+                                LanguageModelTextPart { value: text },
+                            )],
+                        },
+                    )],
+                    name: msg.name.clone(),
+                });
+            }
+
+            let mut parts: Vec<LanguageModelInputPart> = Vec::new();
+
+            // assistant 携带 tool_calls → ToolCall parts
+            if let Some(tool_calls) = &msg.tool_calls {
+                for tc in tool_calls {
+                    let input = serde_json::from_str(&tc.function.arguments)
+                        .unwrap_or(serde_json::Value::String(tc.function.arguments.clone()));
+                    parts.push(LanguageModelInputPart::ToolCall(LanguageModelToolCallPart {
+                        call_id: tc.id.clone(),
+                        name: tc.function.name.clone(),
+                        input,
+                    }));
                 }
-                OpenAiContent::Array(_parts) => {
-                    // For array content, flatten to text for now.
-                    let text = _parts
-                        .iter()
-                        .filter_map(|p| match p {
-                            OpenAiContentPart::Text { text } => Some(text.clone()),
-                            _ => None,
-                        })
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                    vec![LanguageModelInputPart::Text(LanguageModelTextPart {
-                        value: text,
-                    })]
-                }
-            };
+            }
+
+            // 文本/多模态内容
+            let text = content_to_text(&msg.content);
+            if !text.is_empty() || parts.is_empty() {
+                parts.insert(
+                    0,
+                    LanguageModelInputPart::Text(LanguageModelTextPart { value: text }),
+                );
+            }
 
             Ok(LanguageModelChatMessage {
                 role,
-                content,
+                content: parts,
                 name: msg.name.clone(),
             })
         })
         .collect()
+}
+
+fn content_to_text(content: &OpenAiContent) -> String {
+    match content {
+        OpenAiContent::String(s) => s.clone(),
+        OpenAiContent::Array(parts) => parts
+            .iter()
+            .filter_map(|p| match p {
+                OpenAiContentPart::Text { text } => Some(text.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
+    }
 }
 
 fn internal_error(msg: &str) -> Response {
@@ -521,8 +642,9 @@ fn internal_error(msg: &str) -> Response {
 
 /// Rough token count estimate for quota pre-check.
 /// Uses character count / 4 as a rough heuristic (common for English text).
-fn estimate_token_count(messages: &[OpenAiMessage]) -> i64 {
-    let total_chars: usize = messages
+/// 工具定义 JSON 长度也计入，避免带 tools 时低估。
+fn estimate_token_count(messages: &[OpenAiMessage], tools: Option<&[OpenAiTool]>) -> i64 {
+    let message_chars: usize = messages
         .iter()
         .map(|m| match &m.content {
             OpenAiContent::String(s) => s.len(),
@@ -535,5 +657,16 @@ fn estimate_token_count(messages: &[OpenAiMessage]) -> i64 {
                 .sum(),
         })
         .sum();
-    (total_chars / 4) as i64
+    let tool_chars: usize = tools
+        .map(|t| {
+            t.iter()
+                .map(|tool| {
+                    tool.function.name.len()
+                        + tool.function.description.as_deref().unwrap_or("").len()
+                        + tool.function.parameters.to_string().len()
+                })
+                .sum()
+        })
+        .unwrap_or(0);
+    ((message_chars + tool_chars) / 4) as i64
 }

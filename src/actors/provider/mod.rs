@@ -3,7 +3,7 @@ pub mod adapters;
 use std::pin::Pin;
 
 use crate::config::models::{CompatibilitySettings, ProviderCompatibility};
-use crate::types::{LMResponsePart, LanguageModelChatMessage};
+use crate::types::{LMResponsePart, LanguageModelChatMessage, LanguageModelTool};
 use ractor::{Actor, ActorProcessingErr, ActorRef};
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
@@ -39,6 +39,10 @@ pub struct ProviderState {
 pub struct ProviderChatRequest {
     pub model: String,
     pub messages: Vec<LanguageModelChatMessage>,
+    /// 客户端声明的可用工具（协议无关），由适配器序列化为上游格式
+    pub tools: Option<Vec<LanguageModelTool>>,
+    /// 工具选择策略，OpenAI 格式原样透传（"auto" | "none" | {"type":"function",...}）
+    pub tool_choice: Option<serde_json::Value>,
 }
 
 pub enum ProviderMessage {

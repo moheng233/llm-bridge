@@ -1594,6 +1594,8 @@ async fn test_model_provider_reply(
             })],
             None,
         )],
+        tools: None,
+        tool_choice: None,
     };
 
     let started = std::time::Instant::now();

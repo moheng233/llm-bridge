@@ -10,7 +10,8 @@ use tracing::instrument;
 use crate::types::{
     LMResponsePart, LanguageModelChatMessage, LanguageModelChatMessageRole, LanguageModelDataPart,
     LanguageModelInputPart, LanguageModelTextPart, LanguageModelThinkingPart,
-    LanguageModelThinkingValue, LanguageModelToolCallPart, LanguageModelToolResultContent,
+    LanguageModelThinkingValue, LanguageModelTool, LanguageModelToolCallPart,
+    LanguageModelToolResultContent,
 };
 
 use super::super::{ProviderChatRequest, ProviderResponseSender, ProviderState};
@@ -34,7 +35,13 @@ pub async fn stream_chat(
     tx: ProviderResponseSender,
 ) -> Result<(), String> {
     let (system, messages) = build_messages(&request.messages)?;
-    let payload = build_request_body(&request.model, system, messages)?;
+    let payload = build_request_body(
+        &request.model,
+        system,
+        messages,
+        request.tools.as_deref(),
+        request.tool_choice.as_ref(),
+    )?;
     let endpoint = build_endpoint(state);
 
     let mut req_builder = state
@@ -97,6 +104,8 @@ fn build_request_body(
     model: &str,
     system: Option<String>,
     messages: Vec<AnthropicMessage>,
+    tools: Option<&[LanguageModelTool]>,
+    tool_choice: Option<&Value>,
 ) -> Result<Value, String> {
     let mut body = json!({
         "model": model,
@@ -109,7 +118,55 @@ fn build_request_body(
         body["system"] = Value::String(system_prompt);
     }
 
+    if let Some(tools) = tools
+        && !tools.is_empty()
+    {
+        let anthropic_tools: Vec<Value> = tools
+            .iter()
+            .map(|tool| {
+                let mut t = json!({
+                    "name": tool.name,
+                    "input_schema": tool.input_schema,
+                });
+                if let Some(desc) = &tool.description {
+                    t["description"] = Value::String(desc.clone());
+                }
+                t
+            })
+            .collect();
+        body["tools"] = Value::Array(anthropic_tools);
+
+        // Anthropic tool_choice: {"type":"auto"} | {"type":"none"} | {"type":"tool","name":"..."}
+        if let Some(choice) = tool_choice {
+            body["tool_choice"] = map_tool_choice_to_anthropic(choice);
+        }
+    }
+
     Ok(body)
+}
+
+/// 将 OpenAI 格式的 tool_choice 映射为 Anthropic 格式。
+fn map_tool_choice_to_anthropic(choice: &Value) -> Value {
+    match choice {
+        Value::String(s) => match s.as_str() {
+            "none" => json!({"type": "none"}),
+            "required" => json!({"type": "any"}),
+            _ => json!({"type": "auto"}),
+        },
+        Value::Object(map) => {
+            // OpenAI: {"type":"function","function":{"name":"..."}}
+            if let Some(name) = map
+                .get("function")
+                .and_then(|f| f.get("name"))
+                .and_then(Value::as_str)
+            {
+                json!({"type": "tool", "name": name})
+            } else {
+                json!({"type": "auto"})
+            }
+        }
+        _ => json!({"type": "auto"}),
+    }
 }
 
 /// Splits the message list into an optional system prompt and a list of Anthropic messages.

@@ -8,8 +8,8 @@ use tracing::instrument;
 use crate::types::{
     LMResponsePart, LanguageModelChatMessage, LanguageModelChatMessageRole, LanguageModelDataPart,
     LanguageModelInputPart, LanguageModelTextPart, LanguageModelThinkingPart,
-    LanguageModelThinkingValue, LanguageModelToolCallPart, LanguageModelToolResultContent,
-    LanguageModelToolResultPart,
+    LanguageModelThinkingValue, LanguageModelTool, LanguageModelToolCallPart,
+    LanguageModelToolResultContent, LanguageModelToolResultPart,
 };
 
 use super::super::{ProviderChatRequest, ProviderResponseSender, ProviderState};
@@ -95,12 +95,30 @@ fn build_endpoint(state: &ProviderState) -> String {
 }
 
 fn build_request_body(request: &ProviderChatRequest) -> Result<Value, String> {
+    let tools = request
+        .tools
+        .as_ref()
+        .map(|tools| tools.iter().map(tool_to_openai).collect::<Vec<_>>());
+
     serde_json::to_value(OpenAiChatCompletionsRequest {
         model: request.model.clone(),
         messages: build_messages(&request.messages)?,
         stream: true,
+        tools,
+        tool_choice: request.tool_choice.clone(),
     })
     .map_err(|error| format!("failed to serialize openai chat completions request body: {error}"))
+}
+
+fn tool_to_openai(tool: &LanguageModelTool) -> OpenAiTool {
+    OpenAiTool {
+        r#type: "function".to_string(),
+        function: OpenAiToolFunction {
+            name: tool.name.clone(),
+            description: tool.description.clone(),
+            parameters: tool.input_schema.clone(),
+        },
+    }
 }
 
 fn build_messages(messages: &[LanguageModelChatMessage]) -> Result<Vec<OpenAiChatMessage>, String> {
@@ -376,6 +394,24 @@ struct OpenAiChatCompletionsRequest {
     model: String,
     messages: Vec<OpenAiChatMessage>,
     stream: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tools: Option<Vec<OpenAiTool>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_choice: Option<Value>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct OpenAiTool {
+    r#type: String,
+    function: OpenAiToolFunction,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct OpenAiToolFunction {
+    name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
+    parameters: Value,
 }
 
 #[derive(Debug, Clone, Serialize)]

@@ -43,6 +43,19 @@ pub struct LanguageModelPromptTsxPart {
     pub value: Value,
 }
 
+/// 协议无关的工具（函数）定义，对应 OpenAI `tools[].function` 的核心字段。
+/// 各上游适配器负责将其序列化为各自的协议格式。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LanguageModelTool {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// JSON Schema 参数定义，对应 OpenAI 的 `parameters` / Anthropic 的 `input_schema`
+    #[serde(default)]
+    pub input_schema: Value,
+}
+
 /// 二进制数据消息部分，对应 LanguageModelDataPart
 /// `data` 对应 Uint8Array，序列化为数字数组
 #[derive(Debug, Clone, Serialize, Deserialize)]

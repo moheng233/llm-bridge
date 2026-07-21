@@ -10,8 +10,8 @@ use tracing::instrument;
 use crate::types::{
     LMResponsePart, LanguageModelChatMessage, LanguageModelChatMessageRole, LanguageModelDataPart,
     LanguageModelInputPart, LanguageModelTextPart, LanguageModelThinkingPart,
-    LanguageModelThinkingValue, LanguageModelToolCallPart, LanguageModelToolResultContent,
-    LanguageModelToolResultPart,
+    LanguageModelThinkingValue, LanguageModelTool, LanguageModelToolCallPart,
+    LanguageModelToolResultContent, LanguageModelToolResultPart,
 };
 
 use super::super::{ProviderChatRequest, ProviderResponseSender, ProviderState};
@@ -86,12 +86,28 @@ pub async fn stream_chat(
 }
 
 fn build_request_body(request: &ProviderChatRequest) -> Result<Value, String> {
+    let tools = request
+        .tools
+        .as_ref()
+        .map(|tools| tools.iter().map(tool_to_responses).collect::<Vec<_>>());
+
     serde_json::to_value(OpenAiResponsesCreateRequest {
         model: request.model.clone(),
         input: build_input_items(&request.messages)?,
         stream: true,
+        tools,
+        tool_choice: request.tool_choice.clone(),
     })
     .map_err(|error| format!("failed to serialize openai request body: {error}"))
+}
+
+fn tool_to_responses(tool: &LanguageModelTool) -> OpenAiResponsesTool {
+    OpenAiResponsesTool {
+        r#type: "function".to_string(),
+        name: tool.name.clone(),
+        description: tool.description.clone(),
+        parameters: tool.input_schema.clone(),
+    }
 }
 
 fn build_input_items(
@@ -646,6 +662,20 @@ struct OpenAiResponsesCreateRequest {
     model: String,
     input: Vec<OpenAiInputItem>,
     stream: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tools: Option<Vec<OpenAiResponsesTool>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_choice: Option<Value>,
+}
+
+/// Responses API 的 function tool 是扁平结构（无嵌套 `function` 字段）。
+#[derive(Debug, Clone, Serialize)]
+struct OpenAiResponsesTool {
+    r#type: String,
+    name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
+    parameters: Value,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1107,6 +1137,8 @@ mod tests {
                     None,
                 ),
             ],
+            tools: None,
+            tool_choice: None,
         };
 
         let payload = build_request_body(&request).expect("request body should build");
@@ -1140,6 +1172,8 @@ mod tests {
                 ],
                 None,
             )],
+            tools: None,
+            tool_choice: None,
         };
 
         let payload = build_request_body(&request).expect("request body should build");
@@ -1169,6 +1203,8 @@ mod tests {
                 )],
                 None,
             )],
+            tools: None,
+            tool_choice: None,
         };
 
         let payload = build_request_body(&request).expect("request body should build");
