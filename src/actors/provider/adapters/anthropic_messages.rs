@@ -11,7 +11,7 @@ use crate::types::{
     LMResponsePart, LanguageModelChatMessage, LanguageModelChatMessageRole, LanguageModelDataPart,
     LanguageModelInputPart, LanguageModelTextPart, LanguageModelThinkingPart,
     LanguageModelThinkingValue, LanguageModelTool, LanguageModelToolCallPart,
-    LanguageModelToolResultContent,
+    LanguageModelToolResultContent, LanguageModelUsagePart,
 };
 
 use super::super::{ProviderChatRequest, ProviderResponseSender, ProviderState};
@@ -41,6 +41,9 @@ pub async fn stream_chat(
         messages,
         request.tools.as_deref(),
         request.tool_choice.as_ref(),
+        request.temperature,
+        request.max_tokens,
+        request.top_p,
     )?;
     let endpoint = build_endpoint(state);
 
@@ -100,22 +103,32 @@ pub async fn stream_chat(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_request_body(
     model: &str,
     system: Option<String>,
     messages: Vec<AnthropicMessage>,
     tools: Option<&[LanguageModelTool]>,
     tool_choice: Option<&Value>,
+    temperature: Option<f64>,
+    max_tokens: Option<u32>,
+    top_p: Option<f64>,
 ) -> Result<Value, String> {
     let mut body = json!({
         "model": model,
         "messages": messages,
-        "max_tokens": DEFAULT_MAX_TOKENS,
+        "max_tokens": max_tokens.unwrap_or(DEFAULT_MAX_TOKENS),
         "stream": true,
     });
 
     if let Some(system_prompt) = system {
         body["system"] = Value::String(system_prompt);
+    }
+    if let Some(temperature) = temperature {
+        body["temperature"] = json!(temperature);
+    }
+    if let Some(top_p) = top_p {
+        body["top_p"] = json!(top_p);
     }
 
     if let Some(tools) = tools
@@ -364,6 +377,8 @@ struct AnthropicStreamState {
     tool_input_buffers: HashMap<u32, ToolUseBuffer>,
     // Tracks the current block type by index for fast routing of delta events.
     block_types: HashMap<u32, String>,
+    // Input tokens from message_start, merged into the final Usage part.
+    input_tokens: Option<u64>,
 }
 
 #[derive(Default)]
@@ -393,15 +408,39 @@ fn map_event(data: &str, state: &mut AnthropicStreamState) -> Result<Vec<LMRespo
                 .map_err(|e| format!("invalid content_block_stop: {e}"))?;
             on_content_block_stop(event, state)
         }
+        "message_start" => {
+            let event: MessageStartEvent = serde_json::from_value(event.payload)
+                .map_err(|e| format!("invalid message_start: {e}"))?;
+            if let Some(usage) = event.message.usage {
+                state.input_tokens = usage.input_tokens;
+            }
+            Ok(Vec::new())
+        }
         "message_delta" => {
             let event: MessageDeltaEvent = serde_json::from_value(event.payload)
                 .map_err(|e| format!("invalid message_delta: {e}"))?;
-            if let Some(stop_reason) = &event.delta.stop_reason
-                && stop_reason == "max_tokens"
-            {
-                return Err("anthropic response stopped: max_tokens reached".to_string());
+
+            let stop_reason = event.delta.stop_reason.clone();
+            let output_tokens = event.usage.and_then(|u| u.output_tokens);
+
+            if stop_reason.is_none() && output_tokens.is_none() {
+                return Ok(Vec::new());
             }
-            Ok(Vec::new())
+
+            let finish_reason = stop_reason.as_deref().map(map_anthropic_stop_reason);
+            let output = output_tokens.map(u64::from);
+
+            Ok(vec![LMResponsePart::Usage(LanguageModelUsagePart {
+                input_tokens: state.input_tokens,
+                output_tokens: output,
+                total_tokens: match (state.input_tokens, output) {
+                    (Some(i), Some(o)) => Some(i + o),
+                    _ => None,
+                },
+                reasoning_tokens: None,
+                cached_tokens: None,
+                finish_reason: finish_reason.map(str::to_string),
+            })])
         }
         "error" => {
             let event: ErrorEvent = serde_json::from_value(event.payload)
@@ -670,6 +709,35 @@ struct ContentBlockStopEvent {
     index: u32,
 }
 
+/// 将 Anthropic stop_reason 映射为 OpenAI 风格 finish_reason。
+fn map_anthropic_stop_reason(reason: &str) -> &'static str {
+    match reason {
+        "end_turn" | "stop_sequence" => "stop",
+        "max_tokens" => "length",
+        "tool_use" => "tool_calls",
+        _ => "stop",
+    }
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Deserialize)]
+struct MessageStartEvent {
+    message: MessageStartMessage,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Deserialize)]
+struct MessageStartMessage {
+    usage: Option<MessageStartUsage>,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Deserialize)]
+struct MessageStartUsage {
+    input_tokens: Option<u64>,
+    output_tokens: Option<u64>,
+}
+
 #[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct MessageDeltaEvent {
@@ -847,5 +915,92 @@ mod tests {
     fn extract_sse_data_skips_done() {
         let frame = "data: [DONE]";
         assert!(extract_sse_data(frame).is_none());
+    }
+
+    #[test]
+    fn message_start_and_delta_produce_usage_with_finish_reason() {
+        let mut state = AnthropicStreamState::default();
+
+        let start = serde_json::to_string(&json!({
+            "type": "message_start",
+            "message": { "usage": { "input_tokens": 25, "output_tokens": 1 } }
+        }))
+        .unwrap();
+        let parts = map_event(&start, &mut state).unwrap();
+        assert!(parts.is_empty());
+        assert_eq!(state.input_tokens, Some(25));
+
+        let delta = serde_json::to_string(&json!({
+            "type": "message_delta",
+            "delta": { "stop_reason": "end_turn" },
+            "usage": { "output_tokens": 7 }
+        }))
+        .unwrap();
+        let parts = map_event(&delta, &mut state).unwrap();
+        assert_eq!(parts.len(), 1);
+        if let LMResponsePart::Usage(u) = &parts[0] {
+            assert_eq!(u.input_tokens, Some(25));
+            assert_eq!(u.output_tokens, Some(7));
+            assert_eq!(u.total_tokens, Some(32));
+            assert_eq!(u.finish_reason.as_deref(), Some("stop"));
+        } else {
+            panic!("expected Usage part");
+        }
+    }
+
+    #[test]
+    fn message_delta_maps_stop_reasons() {
+        let cases = [
+            ("end_turn", "stop"),
+            ("stop_sequence", "stop"),
+            ("max_tokens", "length"),
+            ("tool_use", "tool_calls"),
+        ];
+        for (anthropic, expected) in cases {
+            let mut state = AnthropicStreamState::default();
+            let delta = serde_json::to_string(&json!({
+                "type": "message_delta",
+                "delta": { "stop_reason": anthropic },
+                "usage": { "output_tokens": 1 }
+            }))
+            .unwrap();
+            let parts = map_event(&delta, &mut state).unwrap();
+            if let LMResponsePart::Usage(u) = &parts[0] {
+                assert_eq!(
+                    u.finish_reason.as_deref(),
+                    Some(expected),
+                    "for {anthropic}"
+                );
+            } else {
+                panic!("expected Usage part for {anthropic}");
+            }
+        }
+    }
+
+    #[test]
+    fn build_request_body_carries_sampling_params() {
+        let body = build_request_body(
+            "claude-test",
+            None,
+            vec![],
+            None,
+            None,
+            Some(0.7),
+            Some(123),
+            Some(0.9),
+        )
+        .unwrap();
+        assert_eq!(body["max_tokens"], 123);
+        assert_eq!(body["temperature"], 0.7);
+        assert_eq!(body["top_p"], 0.9);
+    }
+
+    #[test]
+    fn build_request_body_defaults_max_tokens() {
+        let body =
+            build_request_body("claude-test", None, vec![], None, None, None, None, None).unwrap();
+        assert_eq!(body["max_tokens"], DEFAULT_MAX_TOKENS);
+        assert!(body.get("temperature").is_none());
+        assert!(body.get("top_p").is_none());
     }
 }

@@ -11,7 +11,7 @@ use crate::types::{
     LMResponsePart, LanguageModelChatMessage, LanguageModelChatMessageRole, LanguageModelDataPart,
     LanguageModelInputPart, LanguageModelTextPart, LanguageModelThinkingPart,
     LanguageModelThinkingValue, LanguageModelTool, LanguageModelToolCallPart,
-    LanguageModelToolResultContent, LanguageModelToolResultPart,
+    LanguageModelToolResultContent, LanguageModelToolResultPart, LanguageModelUsagePart,
 };
 
 use super::super::{ProviderChatRequest, ProviderResponseSender, ProviderState};
@@ -97,6 +97,9 @@ fn build_request_body(request: &ProviderChatRequest) -> Result<Value, String> {
         stream: true,
         tools,
         tool_choice: request.tool_choice.clone(),
+        temperature: request.temperature,
+        max_output_tokens: request.max_tokens,
+        top_p: request.top_p,
     })
     .map_err(|error| format!("failed to serialize openai request body: {error}"))
 }
@@ -430,6 +433,19 @@ fn map_event(data: &str, state: &mut OpenAiStreamState) -> Result<Vec<LMResponse
                 .map_err(|error| format!("invalid content_part.done event: {error}"))?;
             map_message_content_part(&event.item_id, event.content_index, &event.part, state)
         }
+        "response.completed" => {
+            let event: ResponseCompletedEvent = serde_json::from_value(event.payload)
+                .map_err(|error| format!("invalid response.completed event: {error}"))?;
+            let usage = event.response.usage.unwrap_or_default();
+            Ok(vec![LMResponsePart::Usage(LanguageModelUsagePart {
+                input_tokens: usage.input_tokens,
+                output_tokens: usage.output_tokens,
+                total_tokens: usage.total_tokens,
+                reasoning_tokens: usage.output_tokens_details.and_then(|d| d.reasoning_tokens),
+                cached_tokens: usage.input_tokens_details.and_then(|d| d.cached_tokens),
+                finish_reason: Some("stop".to_string()),
+            })])
+        }
         "response.failed" => {
             let event: ResponseFailedEvent = serde_json::from_value(event.payload)
                 .map_err(|error| format!("invalid response.failed event: {error}"))?;
@@ -448,7 +464,20 @@ fn map_event(data: &str, state: &mut OpenAiStreamState) -> Result<Vec<LMResponse
                 .incomplete_details
                 .and_then(|details| details.reason)
                 .unwrap_or_else(|| "unknown".to_string());
-            Err(format!("openai response incomplete: {reason}"))
+            let usage = event.response.usage.unwrap_or_default();
+            let finish_reason = if reason == "max_output_tokens" {
+                "length"
+            } else {
+                "stop"
+            };
+            Ok(vec![LMResponsePart::Usage(LanguageModelUsagePart {
+                input_tokens: usage.input_tokens,
+                output_tokens: usage.output_tokens,
+                total_tokens: usage.total_tokens,
+                reasoning_tokens: usage.output_tokens_details.and_then(|d| d.reasoning_tokens),
+                cached_tokens: usage.input_tokens_details.and_then(|d| d.cached_tokens),
+                finish_reason: Some(finish_reason.to_string()),
+            })])
         }
         "error" => {
             let event: ErrorEvent = serde_json::from_value(event.payload)
@@ -666,6 +695,12 @@ struct OpenAiResponsesCreateRequest {
     tools: Option<Vec<OpenAiResponsesTool>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tool_choice: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    temperature: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_output_tokens: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    top_p: Option<f64>,
 }
 
 /// Responses API 的 function tool 是扁平结构（无嵌套 `function` 字段）。
@@ -807,7 +842,7 @@ struct OpenAiResponse {
 }
 
 #[allow(dead_code)]
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 struct OpenAiResponseUsage {
     input_tokens: Option<u64>,
     output_tokens: Option<u64>,
@@ -1014,6 +1049,13 @@ struct FunctionCallArgumentsDoneEvent {
 
 #[allow(dead_code)]
 #[derive(Debug, Deserialize)]
+struct ResponseCompletedEvent {
+    response: OpenAiResponse,
+    sequence_number: Option<u64>,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Deserialize)]
 struct ResponseFailedEvent {
     response: OpenAiResponse,
     sequence_number: Option<u64>,
@@ -1139,6 +1181,9 @@ mod tests {
             ],
             tools: None,
             tool_choice: None,
+            temperature: None,
+            max_tokens: None,
+            top_p: None,
         };
 
         let payload = build_request_body(&request).expect("request body should build");
@@ -1174,6 +1219,9 @@ mod tests {
             )],
             tools: None,
             tool_choice: None,
+            temperature: None,
+            max_tokens: None,
+            top_p: None,
         };
 
         let payload = build_request_body(&request).expect("request body should build");
@@ -1205,6 +1253,9 @@ mod tests {
             )],
             tools: None,
             tool_choice: None,
+            temperature: None,
+            max_tokens: None,
+            top_p: None,
         };
 
         let payload = build_request_body(&request).expect("request body should build");
@@ -1235,6 +1286,61 @@ mod tests {
     #[test]
     fn done_frames_are_ignored() {
         assert!(extract_sse_data("data: [DONE]").is_none());
+    }
+
+    #[test]
+    fn response_completed_emits_usage_with_stop_reason() {
+        let mut state = OpenAiStreamState::default();
+        let parts = map_event(
+            r#"{"type":"response.completed","response":{"usage":{"input_tokens":10,"output_tokens":5,"total_tokens":15,"input_tokens_details":{"cached_tokens":3},"output_tokens_details":{"reasoning_tokens":2}}}}"#,
+            &mut state,
+        )
+        .expect("completed event should parse");
+        assert_eq!(parts.len(), 1);
+        if let LMResponsePart::Usage(u) = &parts[0] {
+            assert_eq!(u.input_tokens, Some(10));
+            assert_eq!(u.output_tokens, Some(5));
+            assert_eq!(u.total_tokens, Some(15));
+            assert_eq!(u.cached_tokens, Some(3));
+            assert_eq!(u.reasoning_tokens, Some(2));
+            assert_eq!(u.finish_reason.as_deref(), Some("stop"));
+        } else {
+            panic!("expected Usage part");
+        }
+    }
+
+    #[test]
+    fn response_incomplete_max_tokens_maps_to_length() {
+        let mut state = OpenAiStreamState::default();
+        let parts = map_event(
+            r#"{"type":"response.incomplete","response":{"incomplete_details":{"reason":"max_output_tokens"},"usage":{"input_tokens":4,"output_tokens":100,"total_tokens":104}}}"#,
+            &mut state,
+        )
+        .expect("incomplete event should parse");
+        assert_eq!(parts.len(), 1);
+        if let LMResponsePart::Usage(u) = &parts[0] {
+            assert_eq!(u.finish_reason.as_deref(), Some("length"));
+            assert_eq!(u.total_tokens, Some(104));
+        } else {
+            panic!("expected Usage part");
+        }
+    }
+
+    #[test]
+    fn build_request_body_carries_sampling_params() {
+        let request = ProviderChatRequest {
+            model: "gpt-test".to_string(),
+            messages: vec![],
+            tools: None,
+            tool_choice: None,
+            temperature: Some(0.5),
+            max_tokens: Some(64),
+            top_p: Some(0.9),
+        };
+        let payload = build_request_body(&request).expect("request body should build");
+        assert_eq!(payload["temperature"], 0.5);
+        assert_eq!(payload["max_output_tokens"], 64);
+        assert_eq!(payload["top_p"], 0.9);
     }
 
     #[test]

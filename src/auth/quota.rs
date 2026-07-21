@@ -210,6 +210,50 @@ pub async fn check_and_deduct(
     Ok(())
 }
 
+/// 配额结算所需的最小上下文。
+///
+/// 从 [`Token`] 提取而来，用于请求结束后的对账（多退少补）。
+/// 刻意只含标量字段：结算逻辑不需要 Token 的名称/哈希/关联实体，
+/// 避免把 ORM 实体跨任务传递（toasty 实体因 Deferred 关联无法干净 Clone）。
+#[derive(Debug, Clone)]
+pub struct TokenQuotaContext {
+    pub token_id: u64,
+    pub quota_period: String,
+    pub request_quota: i64,
+    pub token_quota: i64,
+}
+
+impl TokenQuotaContext {
+    pub fn from_token(token: &Token) -> Self {
+        Self {
+            token_id: token.id,
+            quota_period: token.quota_period.clone(),
+            request_quota: token.request_quota,
+            token_quota: token.token_quota,
+        }
+    }
+
+    fn is_unlimited(&self) -> bool {
+        self.quota_period == "unlimited" && self.request_quota <= 0 && self.token_quota <= 0
+    }
+}
+
+/// 用真实用量对预估扣减做对账（多退少补）。
+///
+/// `delta` 为 真实 total_tokens - 预估 tokens，可正可负。
+/// 无配额限制的 token 直接跳过。
+pub async fn adjust_usage(db: &db::Db, ctx: &TokenQuotaContext, delta: i64) -> Result<(), String> {
+    if delta == 0 || ctx.is_unlimited() {
+        return Ok(());
+    }
+
+    let period_key = current_period_key(&ctx.quota_period);
+    let usage = get_or_create_usage_record(db, ctx.token_id, &period_key).await?;
+
+    // request_delta = 0：请求数在预估阶段已计，这里只调 token 数
+    deduct_usage(db, ctx.token_id, usage.id, 0, delta).await
+}
+
 /// 后台配额重置任务：清理过期周期记录。
 ///
 /// 仅对 `daily` 和 `monthly` 周期的记录生效，unlimited 记录不会被重置。

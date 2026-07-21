@@ -9,7 +9,7 @@ use crate::types::{
     LMResponsePart, LanguageModelChatMessage, LanguageModelChatMessageRole, LanguageModelDataPart,
     LanguageModelInputPart, LanguageModelTextPart, LanguageModelThinkingPart,
     LanguageModelThinkingValue, LanguageModelTool, LanguageModelToolCallPart,
-    LanguageModelToolResultContent, LanguageModelToolResultPart,
+    LanguageModelToolResultContent, LanguageModelToolResultPart, LanguageModelUsagePart,
 };
 
 use super::super::{ProviderChatRequest, ProviderResponseSender, ProviderState};
@@ -106,6 +106,12 @@ fn build_request_body(request: &ProviderChatRequest) -> Result<Value, String> {
         stream: true,
         tools,
         tool_choice: request.tool_choice.clone(),
+        temperature: request.temperature,
+        max_tokens: request.max_tokens,
+        top_p: request.top_p,
+        stream_options: Some(OpenAiStreamOptions {
+            include_usage: true,
+        }),
     })
     .map_err(|error| format!("failed to serialize openai chat completions request body: {error}"))
 }
@@ -326,6 +332,7 @@ fn extract_sse_data(frame: &str) -> Option<&str> {
 #[derive(Default)]
 struct OpenAiChatStreamState {
     streamed_tool_call_ids: std::collections::HashSet<String>,
+    last_finish_reason: Option<String>,
 }
 
 // ── Event mapping ─────────────────────────────────────────────────────────────
@@ -340,7 +347,33 @@ fn map_event(data: &str, state: &mut OpenAiChatStreamState) -> Result<Vec<LMResp
 
     let mut parts = Vec::new();
 
+    // usage chunk（OpenAI stream_options.include_usage：最后一个 chunk 只含 usage，choices 为空）
+    if let Some(usage) = &event.usage {
+        parts.push(LMResponsePart::Usage(LanguageModelUsagePart {
+            input_tokens: usage.prompt_tokens,
+            output_tokens: usage.completion_tokens,
+            total_tokens: usage.total_tokens,
+            reasoning_tokens: usage
+                .completion_tokens_details
+                .as_ref()
+                .and_then(|d| d.reasoning_tokens),
+            cached_tokens: usage
+                .prompt_tokens_details
+                .as_ref()
+                .and_then(|d| d.cached_tokens),
+            finish_reason: state.last_finish_reason.clone(),
+        }));
+    }
+
     for choice in &event.choices {
+        if let Some(finish_reason) = &choice.finish_reason {
+            state.last_finish_reason = Some(finish_reason.clone());
+            parts.push(LMResponsePart::Usage(LanguageModelUsagePart {
+                finish_reason: Some(finish_reason.clone()),
+                ..Default::default()
+            }));
+        }
+
         if let Some(delta) = &choice.delta {
             if let Some(content) = &delta.content
                 && !content.is_empty()
@@ -398,6 +431,19 @@ struct OpenAiChatCompletionsRequest {
     tools: Option<Vec<OpenAiTool>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tool_choice: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    temperature: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_tokens: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    top_p: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stream_options: Option<OpenAiStreamOptions>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct OpenAiStreamOptions {
+    include_usage: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -473,14 +519,34 @@ struct OpenAiChatFunctionCall {
 struct ChatCompletionChunk {
     #[allow(dead_code)]
     id: Option<String>,
+    #[serde(default)]
     choices: Vec<ChatCompletionChunkChoice>,
+    usage: Option<ChatCompletionUsage>,
 }
 
 #[derive(Debug, Deserialize)]
 struct ChatCompletionChunkChoice {
     delta: Option<ChatCompletionChunkDelta>,
-    #[allow(dead_code)]
     finish_reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChatCompletionUsage {
+    prompt_tokens: Option<u64>,
+    completion_tokens: Option<u64>,
+    total_tokens: Option<u64>,
+    completion_tokens_details: Option<ChatCompletionTokensDetails>,
+    prompt_tokens_details: Option<ChatPromptTokensDetails>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChatCompletionTokensDetails {
+    reasoning_tokens: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChatPromptTokensDetails {
+    cached_tokens: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -506,4 +572,76 @@ struct ChatCompletionChunkToolCall {
 struct ChatCompletionChunkFunction {
     name: Option<String>,
     arguments: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn base_request() -> ProviderChatRequest {
+        ProviderChatRequest {
+            model: "gpt-test".to_string(),
+            messages: vec![],
+            tools: None,
+            tool_choice: None,
+            temperature: Some(0.7),
+            max_tokens: Some(321),
+            top_p: Some(0.8),
+        }
+    }
+
+    #[test]
+    fn build_request_body_carries_sampling_params_and_include_usage() {
+        let payload = build_request_body(&base_request()).unwrap();
+        assert_eq!(payload["temperature"], 0.7);
+        assert_eq!(payload["max_tokens"], 321);
+        assert_eq!(payload["top_p"], 0.8);
+        assert_eq!(payload["stream_options"]["include_usage"], true);
+    }
+
+    #[test]
+    fn map_event_emits_finish_reason_and_usage() {
+        let mut state = OpenAiChatStreamState::default();
+
+        // finish_reason chunk
+        let finish = serde_json::to_string(&json!({
+            "choices": [{ "delta": {}, "finish_reason": "stop" }]
+        }))
+        .unwrap();
+        let parts = map_event(&finish, &mut state).unwrap();
+        assert_eq!(parts.len(), 1);
+        if let LMResponsePart::Usage(u) = &parts[0] {
+            assert_eq!(u.finish_reason.as_deref(), Some("stop"));
+            assert!(u.input_tokens.is_none());
+        } else {
+            panic!("expected Usage part");
+        }
+
+        // usage chunk（choices 为空）
+        let usage = serde_json::to_string(&json!({
+            "choices": [],
+            "usage": {
+                "prompt_tokens": 10,
+                "completion_tokens": 5,
+                "total_tokens": 15,
+                "completion_tokens_details": { "reasoning_tokens": 2 },
+                "prompt_tokens_details": { "cached_tokens": 3 }
+            }
+        }))
+        .unwrap();
+        let parts = map_event(&usage, &mut state).unwrap();
+        assert_eq!(parts.len(), 1);
+        if let LMResponsePart::Usage(u) = &parts[0] {
+            assert_eq!(u.input_tokens, Some(10));
+            assert_eq!(u.output_tokens, Some(5));
+            assert_eq!(u.total_tokens, Some(15));
+            assert_eq!(u.reasoning_tokens, Some(2));
+            assert_eq!(u.cached_tokens, Some(3));
+            // 携带之前记录的 finish_reason
+            assert_eq!(u.finish_reason.as_deref(), Some("stop"));
+        } else {
+            panic!("expected Usage part");
+        }
+    }
 }

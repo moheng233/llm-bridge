@@ -43,6 +43,12 @@ pub struct ProviderChatRequest {
     pub tools: Option<Vec<LanguageModelTool>>,
     /// 工具选择策略，OpenAI 格式原样透传（"auto" | "none" | {"type":"function",...}）
     pub tool_choice: Option<serde_json::Value>,
+    /// 采样温度（0-2）
+    pub temperature: Option<f64>,
+    /// 最大输出 token 数
+    pub max_tokens: Option<u32>,
+    /// nucleus 采样参数（0-1）
+    pub top_p: Option<f64>,
 }
 
 pub enum ProviderMessage {

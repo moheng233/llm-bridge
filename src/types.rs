@@ -56,6 +56,25 @@ pub struct LanguageModelTool {
     pub input_schema: Value,
 }
 
+/// 协议无关的 token 用量统计，由适配器在上游响应末尾发出。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LanguageModelUsagePart {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_tokens: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_tokens: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_tokens: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_tokens: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cached_tokens: Option<u64>,
+    /// 上游真实的 finish_reason（stop / length / tool_calls / content_filter / end_turn / max_tokens …）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub finish_reason: Option<String>,
+}
+
 /// 二进制数据消息部分，对应 LanguageModelDataPart
 /// `data` 对应 Uint8Array，序列化为数字数组
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -107,7 +126,7 @@ pub enum LanguageModelInputPart {
 }
 
 /// 语言模型响应部分的联合类型，对应 LMResponsePart:
-/// LanguageModelTextPart | LanguageModelToolCallPart | LanguageModelDataPart | LanguageModelThinkingPart | LanguageModelToolResultPart
+/// LanguageModelTextPart | LanguageModelToolCallPart | LanguageModelDataPart | LanguageModelThinkingPart | LanguageModelToolResultPart | LanguageModelUsagePart
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum LMResponsePart {
@@ -116,6 +135,7 @@ pub enum LMResponsePart {
     Data(LanguageModelDataPart),
     Thinking(LanguageModelThinkingPart),
     ToolResult(LanguageModelToolResultPart),
+    Usage(LanguageModelUsagePart),
 }
 
 /// 聊天消息，对应 LanguageModelChatMessage

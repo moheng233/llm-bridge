@@ -386,6 +386,9 @@ pub async fn chat_completions(
             .tools
             .map(|tools| tools.into_iter().map(OpenAiTool::into_internal).collect()),
         tool_choice: req.tool_choice.clone(),
+        temperature: req.temperature,
+        max_tokens: req.max_tokens,
+        top_p: req.top_p,
     };
 
     // Spawn provider actor and get stream.
@@ -406,12 +409,18 @@ pub async fn chat_completions(
     let cleanup_ref = provider_ref;
 
     if req.stream {
-        let sse_stream = stream_to_sse(stream, req.model.clone());
+        let usage_handle = UsageHandle::default();
+        let sse_stream = stream_to_sse(stream, req.model.clone(), usage_handle.clone());
 
         // Spawn cleanup after stream is consumed.
+        let settle_state = state.clone();
+        let settle_ctx = crate::auth::quota::TokenQuotaContext::from_token(&token);
         tokio::spawn(async move {
             cleanup_ref.stop(None);
             let _ = cleanup_handle.await;
+            let usage = usage_handle.lock().await.clone();
+            settle_quota_with_actual_usage(&settle_state, &settle_ctx, estimated_tokens, &usage)
+                .await;
         });
 
         Ok(Sse::new(sse_stream).into_response())
@@ -421,6 +430,7 @@ pub async fn chat_completions(
         let mut content = String::new();
         let mut reasoning_content = String::new();
         let mut tool_calls: Vec<serde_json::Value> = Vec::new();
+        let mut usage_acc = UsageAccumulator::default();
         while let Some(item) = stream.next().await {
             match item {
                 Ok(LMResponsePart::Text(t)) => content.push_str(&t.value),
@@ -438,6 +448,7 @@ pub async fn chat_completions(
                         }
                     }));
                 }
+                Ok(LMResponsePart::Usage(u)) => usage_acc.merge(&u),
                 Ok(_) => {}
                 Err(e) => {
                     cleanup_ref.stop(None);
@@ -448,6 +459,10 @@ pub async fn chat_completions(
         }
         cleanup_ref.stop(None);
         let _ = cleanup_handle.await;
+
+        // 按真实 usage 结算配额：多退少补（相对预估）
+        let settle_ctx = crate::auth::quota::TokenQuotaContext::from_token(&token);
+        settle_quota_with_actual_usage(&state, &settle_ctx, estimated_tokens, &usage_acc).await;
 
         let has_tool_calls = !tool_calls.is_empty();
         let mut message = serde_json::json!({
@@ -460,9 +475,12 @@ pub async fn chat_completions(
         if has_tool_calls {
             message["tool_calls"] = serde_json::Value::Array(tool_calls);
         }
-        let finish_reason = if has_tool_calls { "tool_calls" } else { "stop" };
+        let finish_reason = usage_acc
+            .finish_reason
+            .as_deref()
+            .unwrap_or(if has_tool_calls { "tool_calls" } else { "stop" });
 
-        Ok(Json(serde_json::json!({
+        let mut response = serde_json::json!({
             "id": "chatcmpl-llm-bridge",
             "object": "chat.completion",
             "created": 0,
@@ -472,81 +490,209 @@ pub async fn chat_completions(
                 "message": message,
                 "finish_reason": finish_reason
             }]
-        }))
-        .into_response())
+        });
+        if let Some(usage_json) = usage_acc.to_openai_usage() {
+            response["usage"] = usage_json;
+        }
+
+        Ok(Json(response).into_response())
     }
 }
+
+/// 跨多个 Usage part 聚合用量与 finish_reason。
+#[derive(Default, Clone)]
+struct UsageAccumulator {
+    input_tokens: Option<u64>,
+    output_tokens: Option<u64>,
+    total_tokens: Option<u64>,
+    reasoning_tokens: Option<u64>,
+    cached_tokens: Option<u64>,
+    finish_reason: Option<String>,
+}
+
+impl UsageAccumulator {
+    fn merge(&mut self, u: &crate::types::LanguageModelUsagePart) {
+        if u.input_tokens.is_some() {
+            self.input_tokens = u.input_tokens;
+        }
+        if u.output_tokens.is_some() {
+            self.output_tokens = u.output_tokens;
+        }
+        if u.total_tokens.is_some() {
+            self.total_tokens = u.total_tokens;
+        }
+        if u.reasoning_tokens.is_some() {
+            self.reasoning_tokens = u.reasoning_tokens;
+        }
+        if u.cached_tokens.is_some() {
+            self.cached_tokens = u.cached_tokens;
+        }
+        if u.finish_reason.is_some() {
+            self.finish_reason = u.finish_reason.clone();
+        }
+    }
+
+    fn total(&self) -> Option<i64> {
+        self.total_tokens
+            .or(match (self.input_tokens, self.output_tokens) {
+                (Some(i), Some(o)) => Some(i + o),
+                _ => None,
+            })
+            .map(|t| t as i64)
+    }
+
+    fn to_openai_usage(&self) -> Option<serde_json::Value> {
+        let input = self.input_tokens?;
+        let output = self.output_tokens.unwrap_or(0);
+        let mut usage = serde_json::json!({
+            "prompt_tokens": input,
+            "completion_tokens": output,
+            "total_tokens": self.total_tokens.unwrap_or(input + output),
+        });
+        if let Some(reasoning) = self.reasoning_tokens {
+            usage["completion_tokens_details"] =
+                serde_json::json!({ "reasoning_tokens": reasoning });
+        }
+        if let Some(cached) = self.cached_tokens {
+            usage["prompt_tokens_details"] = serde_json::json!({ "cached_tokens": cached });
+        }
+        Some(usage)
+    }
+}
+
+/// 上游返回真实 usage 后，与预估扣减对账：多退少补。
+async fn settle_quota_with_actual_usage(
+    state: &AppState,
+    ctx: &crate::auth::quota::TokenQuotaContext,
+    estimated_tokens: i64,
+    usage: &UsageAccumulator,
+) {
+    let Some(actual_total) = usage.total() else {
+        return;
+    };
+    let delta = actual_total - estimated_tokens;
+    if delta == 0 {
+        return;
+    }
+    if let Err(e) = crate::auth::quota::adjust_usage(&state.db, ctx, delta).await {
+        tracing::warn!(
+            token_id = ctx.token_id,
+            delta,
+            "failed to settle quota with actual usage: {e}"
+        );
+    }
+}
+
+/// 流式路径共享的 usage 累积句柄。
+type UsageHandle = std::sync::Arc<tokio::sync::Mutex<UsageAccumulator>>;
 
 fn stream_to_sse(
     stream: impl Stream<Item = Result<LMResponsePart, String>> + Send + 'static,
     model: String,
+    usage_handle: UsageHandle,
 ) -> impl Stream<Item = Result<Event, axum::Error>> + Send + 'static {
-    stream.map(move |item| {
-        match item {
-            Ok(part) => {
-                let mut delta = serde_json::Map::new();
+    stream.map(move |item| map_part_to_sse(item, &model, usage_handle.clone()))
+}
 
-                let finish_reason = match &part {
-                    LMResponsePart::Text(t) => {
-                        delta.insert(
-                            "content".to_string(),
-                            serde_json::Value::String(t.value.clone()),
-                        );
-                        None
-                    }
-                    LMResponsePart::Thinking(t) => {
-                        // Reasoning/thinking content — exposed as `reasoning_content` per DeepSeek / OpenAI extended format.
-                        let text = flatten_thinking_value_for_sse(&t.value);
-                        delta.insert(
-                            "reasoning_content".to_string(),
-                            serde_json::Value::String(text),
-                        );
-                        None
-                    }
-                    LMResponsePart::ToolCall(tc) => {
-                        delta.insert(
-                            "tool_calls".to_string(),
-                            serde_json::json!([{
-                                "index": 0,
-                                "id": tc.call_id,
-                                "type": "function",
-                                "function": {
-                                    "name": tc.name,
-                                    "arguments": serde_json::to_string(&tc.input)
-                                        .unwrap_or_default(),
-                                }
-                            }]),
-                        );
-                        Some("tool_calls")
-                    }
-                    _ => None,
-                };
+fn map_part_to_sse(
+    item: Result<LMResponsePart, String>,
+    model: &str,
+    usage_acc: UsageHandle,
+) -> Result<Event, axum::Error> {
+    match item {
+        Ok(part) => {
+            let mut delta = serde_json::Map::new();
+            let mut usage_json: Option<serde_json::Value> = None;
 
+            let finish_reason = match &part {
+                LMResponsePart::Text(t) => {
+                    delta.insert(
+                        "content".to_string(),
+                        serde_json::Value::String(t.value.clone()),
+                    );
+                    None
+                }
+                LMResponsePart::Thinking(t) => {
+                    // Reasoning/thinking content — exposed as `reasoning_content` per DeepSeek / OpenAI extended format.
+                    let text = flatten_thinking_value_for_sse(&t.value);
+                    delta.insert(
+                        "reasoning_content".to_string(),
+                        serde_json::Value::String(text),
+                    );
+                    None
+                }
+                LMResponsePart::ToolCall(tc) => {
+                    delta.insert(
+                        "tool_calls".to_string(),
+                        serde_json::json!([{
+                            "index": 0,
+                            "id": tc.call_id,
+                            "type": "function",
+                            "function": {
+                                "name": tc.name,
+                                "arguments": serde_json::to_string(&tc.input)
+                                    .unwrap_or_default(),
+                            }
+                        }]),
+                    );
+                    Some("tool_calls")
+                }
+                LMResponsePart::Usage(u) => {
+                    // 聚合供流后结算
+                    if let Ok(mut acc) = usage_acc.try_lock() {
+                        acc.merge(u);
+                    }
+                    // OpenAI include_usage 格式：choices 为空数组的 usage-only chunk
+                    if u.input_tokens.is_some() {
+                        usage_json = Some(serde_json::json!({
+                            "prompt_tokens": u.input_tokens,
+                            "completion_tokens": u.output_tokens.unwrap_or(0),
+                            "total_tokens": u.total_tokens,
+                        }));
+                    }
+                    // finish_reason 由下方 chunk 的 choices 携带
+                    u.finish_reason.as_deref()
+                }
+                _ => None,
+            };
+
+            // usage-only chunk（OpenAI 格式：choices 为空）
+            if let Some(usage) = usage_json {
                 let chunk = serde_json::json!({
                     "id": "chatcmpl-llm-bridge",
                     "object": "chat.completion.chunk",
                     "created": 0,
                     "model": model,
-                    "choices": [{
-                        "index": 0,
-                        "delta": delta,
-                        "finish_reason": finish_reason,
-                    }]
+                    "choices": [],
+                    "usage": usage,
                 });
+                return Ok(Event::default().data(serde_json::to_string(&chunk).unwrap_or_default()));
+            }
 
-                Ok(Event::default().data(serde_json::to_string(&chunk).unwrap_or_default()))
-            }
-            Err(e) => {
-                let error_chunk = serde_json::json!({
-                    "error": {
-                        "message": e,
-                        "type": "provider_error"
-                    }
-                });
-                Ok(Event::default().data(serde_json::to_string(&error_chunk).unwrap_or_default()))
-            }
+            let chunk = serde_json::json!({
+                "id": "chatcmpl-llm-bridge",
+                "object": "chat.completion.chunk",
+                "created": 0,
+                "model": model,
+                "choices": [{
+                    "index": 0,
+                    "delta": delta,
+                    "finish_reason": finish_reason,
+                }]
+            });
+
+            Ok(Event::default().data(serde_json::to_string(&chunk).unwrap_or_default()))
         }
-    })
+        Err(e) => {
+            let error_chunk = serde_json::json!({
+                "error": {
+                    "message": e,
+                    "type": "provider_error"
+                }
+            });
+            Ok(Event::default().data(serde_json::to_string(&error_chunk).unwrap_or_default()))
+        }
+    }
 }
 
 #[allow(clippy::result_large_err)]
@@ -586,11 +732,13 @@ fn convert_messages(messages: &[OpenAiMessage]) -> Result<Vec<LanguageModelChatM
                 for tc in tool_calls {
                     let input = serde_json::from_str(&tc.function.arguments)
                         .unwrap_or(serde_json::Value::String(tc.function.arguments.clone()));
-                    parts.push(LanguageModelInputPart::ToolCall(LanguageModelToolCallPart {
-                        call_id: tc.id.clone(),
-                        name: tc.function.name.clone(),
-                        input,
-                    }));
+                    parts.push(LanguageModelInputPart::ToolCall(
+                        LanguageModelToolCallPart {
+                            call_id: tc.id.clone(),
+                            name: tc.function.name.clone(),
+                            input,
+                        },
+                    ));
                 }
             }
 

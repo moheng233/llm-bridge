@@ -1596,6 +1596,9 @@ async fn test_model_provider_reply(
         )],
         tools: None,
         tool_choice: None,
+        temperature: None,
+        max_tokens: None,
+        top_p: None,
     };
 
     let started = std::time::Instant::now();
