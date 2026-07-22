@@ -18,7 +18,7 @@ impl RuntimeSettings {
         Ok(Self {
             gateway_id: env_or_default("LLM_BRIDGE_GATEWAY_ID", "llm-bridge-v1"),
             server: ServerConfig::from_env()?,
-            store_path: env_or_default("LLM_BRIDGE_STORE_PATH", "./data/llm-bridge"),
+            store_path: env_or_default("LLM_BRIDGE_STORE_PATH", "./data/"),
             oidc: OidcConfig::from_env_optional()?,
         })
     }

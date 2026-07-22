@@ -42,7 +42,7 @@ async fn run_server() -> MainResult {
     // Phase 3: Store 现在由 toasty Db 构建，不再用 JSON 文件
     let db = db::init(
         db::all_models(),
-        &format!("sqlite:{}/llm-bridge.db", settings.store_path),
+        &format!("sqlite:{}/sqlite.db", settings.store_path),
     )
     .await
     .map_err(|e| std::io::Error::other(e.to_string()))?;
