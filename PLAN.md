@@ -1,6 +1,6 @@
 # LLM-Bridge 开发计划
 
-> 最后更新：2026-07-21
+> 最后更新：2026-07-22
 > 项目定位：homelab / 小型工作室的私有化 OpenRouter
 
 ---
@@ -195,6 +195,8 @@ Provider 多协议架构已落地：Provider → ProviderProtocol（协议 + bas
 
 ### 表结构（`llm_request_traces`，toasty model 注册 `all_models()`）
 
+> ✅ **表结构已落地（2026-07-22）**：`src/db/models.rs` 新增 `LlmRequestTrace` / `UsageDaily` 两个 toasty model（含 `TraceInterface` / `TraceStatus` Embed 枚举、`is_final()` 辅助方法），已注册 `all_models()`（7 → 9 张表），附 2 个集成测试验证 JSON 列、唯一/普通索引与枚举持久化。`interface` / `status` 字段实现为 `toasty::Embed` 枚举而非裸 String（类型安全，对齐 `ProviderCompatibility` 既有模式）。
+
 | 字段 | 类型 | 说明 |
 |---|---|---|
 | `id` | u64 PK auto | |
@@ -214,7 +216,7 @@ Provider 多协议架构已落地：Provider → ProviderProtocol（协议 + bas
 | `created_at` / `first_chunk_at` / `completed_at` | Timestamp / Option×2 | 时间线；`ttft_ms`、`latency_ms` 派生存储 |
 | `request_messages` / `response_parts` | Option\<Json\> | **内容快照（决策：包含）**，`Vec<LanguageModelChatMessage>` / 聚合后 `LMResponsePart` 序列；Opt-In 写入（见隐私分级） |
 
-**预聚合表 `usage_daily`**：`day` × `token_id` × `model` 的 rollup（request_count、五元组 tokens、cost_usd 合计），由 finalize 事件同事务更新——仪表盘聚合查询不全表扫。
+**预聚合表 `usage_daily`** ✅ 已落地（2026-07-22，同上）：`day` × `token_id` × `model` 三索引的 rollup（request_count、五元组 tokens、cost_usd 合计），由 finalize 事件同事务更新——仪表盘聚合查询不全表扫。
 
 ### 隐私分级与保留
 
@@ -236,9 +238,9 @@ Provider 多协议架构已落地：Provider → ProviderProtocol（协议 + bas
 
 | # | 阶段 | 内容 | 依赖 |
 |---|------|------|------|
-| O1 | 请求标识 | 手写 `RequestId` 中间件 + `x-request-id` 回传 + span 字段 + stdout fmt 层 trace_id 输出 + **span context 断点修复**（`openai_api.rs` SSE 转发与结算 `tokio::spawn` 挂回请求 span，`.instrument()`） | — |
+| O1 | 请求标识 | ✅ **已完成（2026-07-22）**：手写 `RequestId` 中间件（`src/middleware/request_id.rs`，from_fn 风格对齐 `no_auth_middleware`）+ `x-request-id` 回传 + span 字段记录（中间件记录连接级 span、`chat_completions` handler 记录请求级 span）+ otel feature 下 stdout fmt 层 trace_id 输出（`OpenTelemetrySpanExt`）+ **span context 断点修复**（`openai_api.rs` SSE 结算 `tokio::spawn` 以 `.instrument(Span::current())` 挂回请求 span）。中间件置于路由最外层覆盖 WS upgrade 路径；含 3 个测试（UUID 合法性 / Display / 端到端 extension 注入与响应头一致性） | — |
 | O2 | GenAI span/metrics | span 属性补齐 + meter 接线 + 三个 GenAI metrics | O1 |
-| O3 | trace 持久化 | `llm_request_traces` + `usage_daily` 表 + 异步写入器（mpsc + 批量落盘）+ finalize 挂钩（复用 `settle_quota_with_actual_usage` 汇集点，流式/非流式两路径均汇于此）+ 内容快照 Opt-In。**与 §4 阶段 B/C 同期**（WS handler 复用同一 `prepare_chat_request` 挂钩点，`interface` 字段区分来源，避免二次改动） | O1，与 §4.B/C 并行 |
+| O3 | trace 持久化 | **🔶 部分完成（2026-07-22）**：`llm_request_traces` + `usage_daily` 表结构与注册已落地；剩余：异步写入器（mpsc + 批量落盘）+ finalize 挂钩（复用 `settle_quota_with_actual_usage` 汇集点，流式/非流式两路径均汇于此）+ 内容快照 Opt-In 写入。**与 §4 阶段 B/C 同期**（WS handler 复用同一 `prepare_chat_request` 挂钩点，`interface` 字段区分来源，避免二次改动） | O1，与 §4.B/C 并行 |
 | O4 | 成本与查询 | 成本计算（读 `model_providers` 定价）+ `GET /api/v1/usage/summary` / `/api/v1/usage/traces`（分页/按 token/模型/时间筛选）+ 前端仪表盘页（对应 §2 P2#9） | O3 |
 | O5 | 内容追踪 UI | trace 详情页（messages/parts 快照展示）+ 保留策略后台任务 | O3 |
 

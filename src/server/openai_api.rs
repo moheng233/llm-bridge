@@ -11,7 +11,7 @@ use futures_util::stream::Stream;
 use ractor::Actor;
 use serde::{Deserialize, Serialize};
 use tokio_stream::StreamExt;
-use tracing::instrument;
+use tracing::{Instrument, instrument};
 
 use crate::actors::provider::adapters::openai_chat_completions::flatten_thinking_value_for_sse;
 use crate::actors::provider::{
@@ -369,12 +369,19 @@ pub struct OpenAiStreamOptions {
     pub include_usage: Option<bool>,
 }
 
-#[instrument(level = "info", skip(state, token), fields(model = %req.model, stream = req.stream))]
+#[instrument(
+    level = "info",
+    skip(state, token),
+    fields(model = %req.model, stream = req.stream, request_id = tracing::field::Empty)
+)]
 pub async fn chat_completions(
     State(state): State<AppState>,
     TokenAuth(token): TokenAuth,
+    request_id: crate::middleware::request_id::RequestId,
     Json(req): Json<ChatCompletionRequest>,
 ) -> Result<Response, Response> {
+    // 将 request_id 记录到本 handler 的请求 span（中间件记录的是连接级 span）。
+    tracing::Span::current().record("request_id", request_id.as_str());
     // Check model access
     let allowed: Vec<String> = serde_json::from_str(&token.allowed_models).unwrap_or_default();
     if !allowed.is_empty() && !allowed.iter().any(|a| a == &req.model) {
@@ -539,15 +546,26 @@ pub async fn chat_completions(
         );
 
         // Spawn cleanup after stream is consumed.
+        // span context 断点修复（PLAN.md §5 O1）：spawn 的流消费任务在响应返回后才被
+        // poll，此时请求 span 已关闭；捕获当前 span 并 .instrument() 挂回，使 SSE 阶段
+        // 的结算日志保留 request_id / model 等上下文字段。
         let settle_state = state.clone();
         let settle_ctx = crate::auth::quota::TokenQuotaContext::from_token(&token);
-        tokio::spawn(async move {
-            cleanup_ref.stop(None);
-            let _ = cleanup_handle.await;
-            let usage = usage_handle.lock().await.clone();
-            settle_quota_with_actual_usage(&settle_state, &settle_ctx, estimated_tokens, &usage)
+        tokio::spawn(
+            async move {
+                cleanup_ref.stop(None);
+                let _ = cleanup_handle.await;
+                let usage = usage_handle.lock().await.clone();
+                settle_quota_with_actual_usage(
+                    &settle_state,
+                    &settle_ctx,
+                    estimated_tokens,
+                    &usage,
+                )
                 .await;
-        });
+            }
+            .instrument(tracing::Span::current()),
+        );
 
         Ok(Sse::new(sse_stream).into_response())
     } else {

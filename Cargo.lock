@@ -1862,6 +1862,7 @@ dependencies = [
  "toasty-cli",
  "tokio",
  "tokio-stream",
+ "tower",
  "tower-sessions",
  "tracing",
  "tracing-opentelemetry",

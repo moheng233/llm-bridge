@@ -143,6 +143,12 @@ pub async fn start_server(state: AppState, host: &str, port: u16) -> Result<(), 
             .layer(session_layer);
     }
 
+    // request_id 中间件置于最外层：覆盖全部路由（含未来 §4 WS upgrade 路径），
+    // 且先于 session/no_auth 中间件执行，确保鉴权日志同样携带 request_id。
+    let app = app.layer(axum::middleware::from_fn(
+        crate::middleware::request_id::request_id_middleware,
+    ));
+
     let addr = format!("{}:{}", host, port);
     info!("Starting server on {}", addr);
 
