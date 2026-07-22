@@ -4,6 +4,7 @@ use tracing_subscriber::EnvFilter;
 use tracing_subscriber::prelude::*;
 
 pub mod genai;
+pub mod trace_writer;
 
 /// Holds observability resources for graceful shutdown.
 ///

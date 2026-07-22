@@ -492,6 +492,9 @@ pub struct LlmRequestTrace {
 /// 已聚合无 PII，永久保留（不受 trace retention 影响）。
 #[derive(Debug, toasty::Model)]
 #[table = "usage_daily"]
+// 复合唯一约束（toasty 结构级 `#[unique(...)]`）：同一 (day, token_id, model)
+// 仅一行 rollup，DB 层兜底防重。生成 `filter_by_day_and_token_id_and_model` 等前缀方法。
+#[unique(day, token_id, model)]
 pub struct UsageDaily {
     #[key]
     #[auto]

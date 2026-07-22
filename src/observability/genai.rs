@@ -114,6 +114,26 @@ pub fn record_finalize(f: &GenAiFinalize) {
 #[inline(always)]
 pub fn record_finalize(_f: &GenAiFinalize) {}
 
+/// trace writer 背压丢弃计数（`dropped_traces_total`，PLAN.md §5 写入路径）。
+///
+/// 以 u64 counter 累加；`total` 为当前累计丢弃数（写入器已自增）。
+#[cfg(feature = "otel")]
+pub fn record_dropped_trace(_total: u64) {
+    use opentelemetry::{KeyValue, global};
+
+    let meter = global::meter(env!("CARGO_PKG_NAME"));
+    let counter = meter
+        .u64_counter("dropped_traces_total")
+        .with_description("Trace events dropped due to a full writer channel.")
+        .build();
+    counter.add(1, &[KeyValue::new("component", "trace_writer")]);
+}
+
+/// trace writer 背压丢弃计数（无 otel 时的零开销空实现）。
+#[cfg(not(feature = "otel"))]
+#[inline(always)]
+pub fn record_dropped_trace(_total: u64) {}
+
 #[cfg(test)]
 mod tests {
     use super::*;

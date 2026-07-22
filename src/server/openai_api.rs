@@ -475,6 +475,32 @@ pub async fn chat_completions(
     // Convert OpenAI messages to our internal format.
     let messages = convert_messages(&req.messages).await?;
 
+    // ── 请求追踪：INSERT pending 行（PLAN.md §5 O3）──
+    // 在 messages move 进 provider_request 前按 Opt-In 开关克隆内容快照。
+    let trace_request_messages = if state.capture_content {
+        Some(messages.clone())
+    } else {
+        None
+    };
+    state.trace_writer.send(
+        crate::observability::trace_writer::TraceEvent::Begin(
+            Box::new(crate::observability::trace_writer::BeginTrace {
+                request_id: request_id.as_str().to_string(),
+                trace_id: None, // O1 中间件已记录到 span；此处 trace_id 双写留待 otel 集成
+                interface: crate::db::models::TraceInterface::OpenAiHttp,
+                token_id: token.id,
+                user_id: token.user_id,
+                token_prefix: token.token_prefix.clone(),
+                model: req.model.clone(),
+                provider_id: route.provider_name.clone(),
+                provider_model_id: route.provider_model_name.clone(),
+                protocol: genai_provider.to_string(),
+                estimated_tokens,
+                request_messages: trace_request_messages,
+            }),
+        ),
+    );
+
     let provider_config = ProviderRuntimeConfig {
         id: route.provider_name.clone(),
         compatibility: route.compatibility.clone(),
@@ -548,12 +574,33 @@ pub async fn chat_completions(
             }
             cleanup_ref.stop(None);
             let _ = cleanup_handle.await;
+            // 请求追踪：error finalize（PLAN.md §5 O3）——避免 pending 行卡住。
+            send_error_finalize(
+                &state,
+                &request_id,
+                "upstream_error",
+                Some(status),
+                Some(&message),
+                token.id,
+                &req.model,
+                request_start,
+            );
             return Err(upstream_error_response(status, code.take(), &message));
         }
         Ok(Err(err)) => {
             // 请求未成功发出（网络错误等）：502 Bad Gateway
             cleanup_ref.stop(None);
             let _ = cleanup_handle.await;
+            send_error_finalize(
+                &state,
+                &request_id,
+                "network_error",
+                Some(502),
+                Some(&err.message),
+                token.id,
+                &req.model,
+                request_start,
+            );
             return Err(upstream_error_response(502, err.code.clone(), &err.message));
         }
         Err(_) => {
@@ -579,6 +626,8 @@ pub async fn chat_completions(
         let settle_state = state.clone();
         let settle_ctx = crate::auth::quota::TokenQuotaContext::from_token(&token);
         let genai_request_model = req.model.clone();
+        let trace_request_id = request_id.as_str().to_string();
+        let genai_response_model_clone = genai_response_model.clone();
         tokio::spawn(
             async move {
                 cleanup_ref.stop(None);
@@ -613,13 +662,53 @@ pub async fn chat_completions(
                 crate::observability::genai::record_finalize(
                     &crate::observability::genai::GenAiFinalize {
                         provider_name: genai_provider,
-                        request_model: genai_request_model,
-                        response_model: genai_response_model,
+                        request_model: genai_request_model.clone(),
+                        response_model: genai_response_model_clone.clone(),
                         input_tokens: usage.input_tokens,
                         output_tokens: usage.output_tokens,
                         duration_s: request_start.elapsed().as_secs_f64(),
                         ttft_s,
                     },
+                );
+
+                // ── 请求追踪：UPDATE 终态 + usage_daily rollup（PLAN.md §5 O3）──
+                // 流式响应 parts 不在热路径逐条聚合（增大内存与延迟），response_parts 留空；
+                // 内容快照在 O5 详情页按需从上游重放或后续增强采集。此处仅落结构化事实。
+                let completed_at = jiff::Timestamp::now();
+                let latency_ms = request_start.elapsed().as_millis() as i64;
+                let ttft_ms = ttft_s.map(|s| (s * 1000.0) as i64);
+                // first_chunk_at 由 ttft_ms 反推（精度足够，避免额外 Instant→Timestamp 转换）。
+                let first_chunk_at = if ttft_ms.is_some() {
+                    Some(completed_at)
+                } else {
+                    None
+                };
+                settle_state.trace_writer.send(
+                    crate::observability::trace_writer::TraceEvent::Finalize(
+                        Box::new(crate::observability::trace_writer::FinalizeTrace {
+                            request_id: trace_request_id,
+                            status: crate::db::models::TraceStatus::Success,
+                            error_type: None,
+                            error_message: None,
+                            upstream_status: None,
+                            finish_reason: usage.finish_reason.clone(),
+                            input_tokens: usage.input_tokens,
+                            output_tokens: usage.output_tokens,
+                            reasoning_tokens: usage.reasoning_tokens,
+                            cached_tokens: usage.cached_tokens,
+                            total_tokens: usage.total_tokens,
+                            cost_usd: None, // O4 成本计算后回填
+                            upstream_request_id: None, // SSE 路径 metadata 已被 stream_to_sse 消费
+                            first_chunk_at,
+                            completed_at,
+                            ttft_ms,
+                            latency_ms: Some(latency_ms),
+                            response_parts: None,
+                            day: crate::observability::trace_writer::current_day(),
+                            token_id: settle_ctx.token_id,
+                            model: genai_request_model,
+                        }),
+                    ),
                 );
             }
             .instrument(tracing::Span::current()),
@@ -657,6 +746,17 @@ pub async fn chat_completions(
                     let _ = cleanup_handle.await;
                     // GenAI error.type（流内错误）：低基数错误类别标识。
                     tracing::Span::current().record("error.type", "stream_error");
+                    // 请求追踪：error finalize（PLAN.md §5 O3）。
+                    send_error_finalize(
+                        &state,
+                        &request_id,
+                        "stream_error",
+                        None,
+                        Some(&e),
+                        token.id,
+                        &req.model,
+                        request_start,
+                    );
                     return Err(internal_error(&e));
                 }
             }
@@ -682,7 +782,7 @@ pub async fn chat_completions(
         crate::observability::genai::record_finalize(&crate::observability::genai::GenAiFinalize {
             provider_name: genai_provider,
             request_model: req.model.clone(),
-            response_model: genai_response_model,
+            response_model: genai_response_model.clone(),
             input_tokens: usage_acc.input_tokens,
             output_tokens: usage_acc.output_tokens,
             duration_s: request_start.elapsed().as_secs_f64(),
@@ -692,6 +792,38 @@ pub async fn chat_completions(
         let upstream = metadata_rx.await.unwrap_or_default();
         let id = upstream.id.unwrap_or_else(|| "chatcmpl-llm-bridge".to_string());
         let created = upstream.created.unwrap_or(0);
+
+        // ── 请求追踪：UPDATE 终态 + usage_daily rollup（PLAN.md §5 O3）──
+        // 非流式 response_parts 不采集（完整响应已作为 JSON 返回客户端，可经 replay 获取）。
+        let completed_at = jiff::Timestamp::now();
+        let latency_ms = request_start.elapsed().as_millis() as i64;
+        state.trace_writer.send(
+            crate::observability::trace_writer::TraceEvent::Finalize(
+                Box::new(crate::observability::trace_writer::FinalizeTrace {
+                    request_id: request_id.as_str().to_string(),
+                    status: crate::db::models::TraceStatus::Success,
+                    error_type: None,
+                    error_message: None,
+                    upstream_status: None,
+                    finish_reason: usage_acc.finish_reason.clone(),
+                    input_tokens: usage_acc.input_tokens,
+                    output_tokens: usage_acc.output_tokens,
+                    reasoning_tokens: usage_acc.reasoning_tokens,
+                    cached_tokens: usage_acc.cached_tokens,
+                    total_tokens: usage_acc.total_tokens,
+                    cost_usd: None,
+                    upstream_request_id: Some(id.clone()),
+                    first_chunk_at: None,
+                    completed_at,
+                    ttft_ms: None,
+                    latency_ms: Some(latency_ms),
+                    response_parts: None,
+                    day: crate::observability::trace_writer::current_day(),
+                    token_id: token.id,
+                    model: req.model.clone(),
+                }),
+            ),
+        );
 
         let has_tool_calls = !tool_calls.is_empty();
         let mut message = serde_json::json!({
@@ -1260,6 +1392,52 @@ fn internal_error(msg: &str) -> Response {
         })),
     )
         .into_response()
+}
+
+/// 请求追踪 error finalize（PLAN.md §5 O3）。
+///
+/// 在上游错误 / 网络错误 / 流内错误路径调用，将 pending 行 UPDATE 为 error 终态，
+/// 避免崩溃或上游失败留下「卡住」的 pending 记录。不含 usage（错误请求通常无 usage）。
+#[allow(clippy::too_many_arguments)]
+fn send_error_finalize(
+    state: &AppState,
+    request_id: &crate::middleware::request_id::RequestId,
+    error_type: &str,
+    upstream_status: Option<u16>,
+    error_message: Option<&str>,
+    token_id: u64,
+    model: &str,
+    request_start: std::time::Instant,
+) {
+    let completed_at = jiff::Timestamp::now();
+    let latency_ms = request_start.elapsed().as_millis() as i64;
+    state.trace_writer.send(
+        crate::observability::trace_writer::TraceEvent::Finalize(Box::new(
+            crate::observability::trace_writer::FinalizeTrace {
+                request_id: request_id.as_str().to_string(),
+                status: crate::db::models::TraceStatus::Error,
+                error_type: Some(error_type.to_string()),
+                error_message: error_message.map(str::to_string),
+                upstream_status,
+                finish_reason: None,
+                input_tokens: None,
+                output_tokens: None,
+                reasoning_tokens: None,
+                cached_tokens: None,
+                total_tokens: None,
+                cost_usd: None,
+                upstream_request_id: None,
+                first_chunk_at: None,
+                completed_at,
+                ttft_ms: None,
+                latency_ms: Some(latency_ms),
+                response_parts: None,
+                day: crate::observability::trace_writer::current_day(),
+                token_id,
+                model: model.to_string(),
+            },
+        )),
+    );
 }
 
 /// #13：构造透传上游语义状态码的错误响应。

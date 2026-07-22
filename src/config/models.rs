@@ -11,6 +11,7 @@ pub struct RuntimeSettings {
     pub server: ServerConfig,
     pub store_path: String,
     pub oidc: Option<OidcConfig>,
+    pub observability: ObservabilityConfig,
 }
 
 impl RuntimeSettings {
@@ -20,6 +21,30 @@ impl RuntimeSettings {
             server: ServerConfig::from_env()?,
             store_path: env_or_default("LLM_BRIDGE_STORE_PATH", "./data/"),
             oidc: OidcConfig::from_env_optional()?,
+            observability: ObservabilityConfig::from_env()?,
+        })
+    }
+}
+
+// ── 可观察性配置（PLAN.md §5）──
+
+/// 请求追踪 / GenAI 遥测的运行时开关（环境变量，不存数据库）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ObservabilityConfig {
+    /// 内容快照开关：`request_messages` / `response_parts` 仅在 true 时写入（Opt-In，对齐 OTel
+    /// `gen_ai.input.messages` 的 Opt-In 约定）。默认 false。
+    pub capture_content: bool,
+    /// trace 表保留天数（后台定期 `DELETE WHERE created_at < ?`）；`usage_daily` 永久保留。
+    /// 默认 30。（保留策略任务在 O5 实现，此处先落配置。）
+    pub trace_retention_days: u32,
+}
+
+impl ObservabilityConfig {
+    fn from_env() -> Result<Self, String> {
+        Ok(Self {
+            capture_content: parse_env_or_default("LLM_BRIDGE_OBS_CAPTURE_CONTENT", false)?,
+            trace_retention_days: parse_env_or_default("LLM_BRIDGE_OBS_TRACE_RETENTION_DAYS", 30)?,
         })
     }
 }

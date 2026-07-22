@@ -81,13 +81,24 @@ async fn run_server() -> MainResult {
     .await
     .map_err(|error| std::io::Error::other(error.to_string()))?;
 
+    let trace_writer = llm_bridge::observability::trace_writer::TraceWriter::spawn(db.clone());
+    let capture_content = settings.observability.capture_content;
+
     let state = AppState {
         gateway_manager,
         store,
         auth_token: settings.server.auth_token.clone(),
         auth: auth_state,
         db: db.clone(),
+        trace_writer,
+        capture_content,
     };
+
+    info!(
+        capture_content,
+        trace_retention_days = settings.observability.trace_retention_days,
+        "observability: trace writer started"
+    );
 
     let server_result = start_server(state, &settings.server.host, settings.server.port).await;
 

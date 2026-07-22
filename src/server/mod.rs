@@ -45,6 +45,10 @@ pub struct AppState {
     pub auth: Option<AuthState>,
     /// SQLite 数据库句柄（始终可用）
     pub db: db::Db,
+    /// 请求追踪异步写入器（PLAN.md §5 O3）。
+    pub trace_writer: crate::observability::trace_writer::TraceWriter,
+    /// 内容快照开关（`LLM_BRIDGE_OBS_CAPTURE_CONTENT`）。
+    pub capture_content: bool,
 }
 
 // ── Route definitions (all via ApiRouter for TS client generation) ──
