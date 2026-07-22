@@ -1,13 +1,7 @@
 <script setup lang="ts">
-// 重定向到 /models
+// 占位页面：/ 由 router/index.ts 的全局前置守卫重定向到 /dashboard
 </script>
 
 <template>
   <div />
 </template>
-
-<route lang="json">
-{
-  "redirect": "/models"
-}
-</route>

@@ -10,6 +10,8 @@ import {
   Sun,
   Moon,
   Boxes,
+  LayoutDashboard,
+  ScrollText,
   PanelLeftClose,
   PanelLeftOpen,
 } from "@lucide/vue";
@@ -17,7 +19,6 @@ import {
 import { useAuthStore } from "~/stores/auth";
 import { useThemeStore } from "~/stores/theme";
 
-const router = useRouter();
 const route = useRoute();
 const authStore = useAuthStore();
 const themeStore = useThemeStore();
@@ -31,12 +32,8 @@ function toggleSidebar() {
   localStorage.setItem("llm-bridge:sidebar-collapsed", String(sidebarCollapsed.value));
 }
 
-// Resolve current page path for active nav highlighting
-const currentPath = computed(() => {
-  const p = route.path;
-  if (p === "/" || p === "/models") return "/models";
-  return p;
-});
+// 当前路由（供 header 标题用）
+const routePath = computed(() => route.path);
 
 const isAdminRoute = computed(() => {
   return route.meta.requiresAdmin === true;
@@ -45,8 +42,10 @@ const isAdminRoute = computed(() => {
 const accessDenied = computed(() => isAdminRoute.value && !isAdmin.value);
 
 const memberNavItems = [
+  { path: "/dashboard", label: "用量仪表盘", icon: LayoutDashboard },
   { path: "/models", label: "模型目录", icon: Cpu },
   { path: "/tokens", label: "API Token", icon: Key },
+  { path: "/traces", label: "请求追踪", icon: ScrollText },
 ];
 
 const adminNavItems = [
@@ -56,14 +55,11 @@ const adminNavItems = [
 ];
 
 const currentLabel = computed(() => {
-  return (
-    [...memberNavItems, ...adminNavItems].find((n) => n.path === currentPath.value)?.label || ""
-  );
+  const p = routePath.value;
+  const match = (path: string) =>
+    path === "/dashboard" ? p === "/" || p.startsWith("/dashboard") : p.startsWith(path);
+  return [...memberNavItems, ...adminNavItems].find((n) => match(n.path))?.label || "";
 });
-
-function navigate(path: string) {
-  router.push(path);
-}
 
 function handleLogout() {
   authStore.logout();
@@ -111,37 +107,19 @@ function handleLogout() {
             >菜单</span
           >
         </div>
-        <button
+        <RouterLink
           v-for="item in memberNavItems"
           :key="item.path"
-          @click="navigate(item.path)"
-          :title="sidebarCollapsed ? item.label : ''"
-          :class="[
-            'mb-0.5 flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors',
-            currentPath === item.path
-              ? 'bg-accent font-medium text-accent-foreground'
-              : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
-            sidebarCollapsed ? 'justify-center' : '',
-          ]"
+          :to="item.path"
+          custom
+          v-slot="{ navigate: nav, isActive }"
         >
-          <component :is="item.icon" class="h-4 w-4 shrink-0" />
-          <span v-if="!sidebarCollapsed" class="whitespace-nowrap">{{ item.label }}</span>
-        </button>
-
-        <template v-if="isAdmin">
-          <div class="mt-4 mb-1 px-2">
-            <span v-if="!sidebarCollapsed" class="px-2 text-xs font-medium text-muted-foreground"
-              >管理</span
-            >
-          </div>
           <button
-            v-for="item in adminNavItems"
-            :key="item.path"
-            @click="navigate(item.path)"
+            @click="nav"
             :title="sidebarCollapsed ? item.label : ''"
             :class="[
               'mb-0.5 flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors',
-              currentPath === item.path
+              isActive || (item.path === '/dashboard' && routePath === '/')
                 ? 'bg-accent font-medium text-accent-foreground'
                 : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
               sidebarCollapsed ? 'justify-center' : '',
@@ -150,6 +128,36 @@ function handleLogout() {
             <component :is="item.icon" class="h-4 w-4 shrink-0" />
             <span v-if="!sidebarCollapsed" class="whitespace-nowrap">{{ item.label }}</span>
           </button>
+        </RouterLink>
+
+        <template v-if="isAdmin">
+          <div class="mt-4 mb-1 px-2">
+            <span v-if="!sidebarCollapsed" class="px-2 text-xs font-medium text-muted-foreground"
+              >管理</span
+            >
+          </div>
+          <RouterLink
+            v-for="item in adminNavItems"
+            :key="item.path"
+            :to="item.path"
+            custom
+            v-slot="{ navigate: nav, isActive }"
+          >
+            <button
+              @click="nav"
+              :title="sidebarCollapsed ? item.label : ''"
+              :class="[
+                'mb-0.5 flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors',
+                isActive
+                  ? 'bg-accent font-medium text-accent-foreground'
+                  : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
+                sidebarCollapsed ? 'justify-center' : '',
+              ]"
+            >
+              <component :is="item.icon" class="h-4 w-4 shrink-0" />
+              <span v-if="!sidebarCollapsed" class="whitespace-nowrap">{{ item.label }}</span>
+            </button>
+          </RouterLink>
         </template>
       </nav>
 
@@ -203,7 +211,7 @@ function handleLogout() {
         <UnauthorizedPage v-if="accessDenied" />
         <router-view v-else v-slot="{ Component, route }">
           <Transition name="page" mode="out-in">
-            <div class="mx-auto w-full max-w-5xl" :key="route.path">
+            <div class="mx-auto flex min-h-0 w-full max-w-5xl flex-1 flex-col" :key="route.path">
               <component :is="Component" />
             </div>
           </Transition>

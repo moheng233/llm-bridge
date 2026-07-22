@@ -7,6 +7,11 @@ export const router = createRouter({
   resolver,
 });
 
+// 根路径统一跳转到用量仪表盘
+router.beforeEach((to) => {
+  if (to.path === "/") return { path: "/dashboard", replace: true };
+});
+
 if (import.meta.hot) {
   handleHotUpdate(router);
 }
