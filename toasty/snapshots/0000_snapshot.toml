@@ -641,3 +641,357 @@ id = { table = 6, index = 1 }
 name = "index_provider_protocols_by_provider_id"
 on = 6
 columns = [{ column = { table = 6, index = 1 }, op = "Eq", scope = "Partition" }]
+
+[[schema.tables]]
+id = 7
+name = "llm_request_traces"
+primary_key = { columns = [{ table = 7, index = 0 }], index = { table = 7, index = 0 } }
+
+[[schema.tables.columns]]
+id = { table = 7, index = 0 }
+name = "id"
+ty = "U64"
+storage_ty = { UnsignedInteger = 4 }
+auto_increment = true
+
+[[schema.tables.columns]]
+id = { table = 7, index = 1 }
+name = "request_id"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 7, index = 2 }
+name = "trace_id"
+ty = "String"
+storage_ty = "Text"
+nullable = true
+
+[[schema.tables.columns]]
+id = { table = 7, index = 3 }
+name = "interface"
+ty = "String"
+storage_ty = { Enum = { name = "trace_interface", variants = [{ name = "open_ai_http" }, { name = "ws_rpc" }] } }
+
+[[schema.tables.columns]]
+id = { table = 7, index = 4 }
+name = "token_id"
+ty = "U64"
+storage_ty = { UnsignedInteger = 8 }
+
+[[schema.tables.columns]]
+id = { table = 7, index = 5 }
+name = "user_id"
+ty = "U64"
+storage_ty = { UnsignedInteger = 8 }
+
+[[schema.tables.columns]]
+id = { table = 7, index = 6 }
+name = "token_prefix"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 7, index = 7 }
+name = "model"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 7, index = 8 }
+name = "provider_id"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 7, index = 9 }
+name = "provider_model_id"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 7, index = 10 }
+name = "protocol"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 7, index = 11 }
+name = "status"
+ty = "String"
+storage_ty = { Enum = { name = "trace_status", variants = [{ name = "pending" }, { name = "streaming" }, { name = "success" }, { name = "error" }, { name = "cancelled" }] } }
+
+[[schema.tables.columns]]
+id = { table = 7, index = 12 }
+name = "error_type"
+ty = "String"
+storage_ty = "Text"
+nullable = true
+
+[[schema.tables.columns]]
+id = { table = 7, index = 13 }
+name = "error_message"
+ty = "String"
+storage_ty = "Text"
+nullable = true
+
+[[schema.tables.columns]]
+id = { table = 7, index = 14 }
+name = "upstream_status"
+ty = "U16"
+storage_ty = { UnsignedInteger = 2 }
+nullable = true
+
+[[schema.tables.columns]]
+id = { table = 7, index = 15 }
+name = "finish_reason"
+ty = "String"
+storage_ty = "Text"
+nullable = true
+
+[[schema.tables.columns]]
+id = { table = 7, index = 16 }
+name = "estimated_tokens"
+ty = "I64"
+storage_ty = { Integer = 8 }
+
+[[schema.tables.columns]]
+id = { table = 7, index = 17 }
+name = "input_tokens"
+ty = "U64"
+storage_ty = { UnsignedInteger = 8 }
+nullable = true
+
+[[schema.tables.columns]]
+id = { table = 7, index = 18 }
+name = "output_tokens"
+ty = "U64"
+storage_ty = { UnsignedInteger = 8 }
+nullable = true
+
+[[schema.tables.columns]]
+id = { table = 7, index = 19 }
+name = "reasoning_tokens"
+ty = "U64"
+storage_ty = { UnsignedInteger = 8 }
+nullable = true
+
+[[schema.tables.columns]]
+id = { table = 7, index = 20 }
+name = "cached_tokens"
+ty = "U64"
+storage_ty = { UnsignedInteger = 8 }
+nullable = true
+
+[[schema.tables.columns]]
+id = { table = 7, index = 21 }
+name = "total_tokens"
+ty = "U64"
+storage_ty = { UnsignedInteger = 8 }
+nullable = true
+
+[[schema.tables.columns]]
+id = { table = 7, index = 22 }
+name = "cost_usd"
+ty = "F64"
+storage_ty = { Float = 8 }
+nullable = true
+
+[[schema.tables.columns]]
+id = { table = 7, index = 23 }
+name = "upstream_request_id"
+ty = "String"
+storage_ty = "Text"
+nullable = true
+
+[[schema.tables.columns]]
+id = { table = 7, index = 24 }
+name = "created_at"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 7, index = 25 }
+name = "first_chunk_at"
+ty = "String"
+storage_ty = "Text"
+nullable = true
+
+[[schema.tables.columns]]
+id = { table = 7, index = 26 }
+name = "completed_at"
+ty = "String"
+storage_ty = "Text"
+nullable = true
+
+[[schema.tables.columns]]
+id = { table = 7, index = 27 }
+name = "ttft_ms"
+ty = "I64"
+storage_ty = { Integer = 8 }
+nullable = true
+
+[[schema.tables.columns]]
+id = { table = 7, index = 28 }
+name = "latency_ms"
+ty = "I64"
+storage_ty = { Integer = 8 }
+nullable = true
+
+[[schema.tables.columns]]
+id = { table = 7, index = 29 }
+name = "request_messages"
+ty = "String"
+storage_ty = "Text"
+nullable = true
+
+[[schema.tables.columns]]
+id = { table = 7, index = 30 }
+name = "response_parts"
+ty = "String"
+storage_ty = "Text"
+nullable = true
+
+[[schema.tables.indices]]
+id = { table = 7, index = 0 }
+name = "index_llm_request_traces_by_id"
+on = 7
+columns = [{ column = { table = 7, index = 0 }, op = "Eq", scope = "Partition" }]
+unique = true
+primary_key = true
+
+[[schema.tables.indices]]
+id = { table = 7, index = 1 }
+name = "index_llm_request_traces_by_request_id"
+on = 7
+columns = [{ column = { table = 7, index = 1 }, op = "Eq", scope = "Partition" }]
+unique = true
+
+[[schema.tables.indices]]
+id = { table = 7, index = 2 }
+name = "index_llm_request_traces_by_token_id"
+on = 7
+columns = [{ column = { table = 7, index = 4 }, op = "Eq", scope = "Partition" }]
+
+[[schema.tables.indices]]
+id = { table = 7, index = 3 }
+name = "index_llm_request_traces_by_user_id"
+on = 7
+columns = [{ column = { table = 7, index = 5 }, op = "Eq", scope = "Partition" }]
+
+[[schema.tables.indices]]
+id = { table = 7, index = 4 }
+name = "index_llm_request_traces_by_model"
+on = 7
+columns = [{ column = { table = 7, index = 7 }, op = "Eq", scope = "Partition" }]
+
+[[schema.tables]]
+id = 8
+name = "usage_daily"
+primary_key = { columns = [{ table = 8, index = 0 }], index = { table = 8, index = 0 } }
+
+[[schema.tables.columns]]
+id = { table = 8, index = 0 }
+name = "id"
+ty = "U64"
+storage_ty = { UnsignedInteger = 4 }
+auto_increment = true
+
+[[schema.tables.columns]]
+id = { table = 8, index = 1 }
+name = "day"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 8, index = 2 }
+name = "token_id"
+ty = "U64"
+storage_ty = { UnsignedInteger = 8 }
+
+[[schema.tables.columns]]
+id = { table = 8, index = 3 }
+name = "model"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.columns]]
+id = { table = 8, index = 4 }
+name = "request_count"
+ty = "I64"
+storage_ty = { Integer = 8 }
+
+[[schema.tables.columns]]
+id = { table = 8, index = 5 }
+name = "input_tokens"
+ty = "I64"
+storage_ty = { Integer = 8 }
+
+[[schema.tables.columns]]
+id = { table = 8, index = 6 }
+name = "output_tokens"
+ty = "I64"
+storage_ty = { Integer = 8 }
+
+[[schema.tables.columns]]
+id = { table = 8, index = 7 }
+name = "reasoning_tokens"
+ty = "I64"
+storage_ty = { Integer = 8 }
+
+[[schema.tables.columns]]
+id = { table = 8, index = 8 }
+name = "cached_tokens"
+ty = "I64"
+storage_ty = { Integer = 8 }
+
+[[schema.tables.columns]]
+id = { table = 8, index = 9 }
+name = "total_tokens"
+ty = "I64"
+storage_ty = { Integer = 8 }
+
+[[schema.tables.columns]]
+id = { table = 8, index = 10 }
+name = "cost_usd"
+ty = "F64"
+storage_ty = { Float = 8 }
+
+[[schema.tables.columns]]
+id = { table = 8, index = 11 }
+name = "updated_at"
+ty = "String"
+storage_ty = "Text"
+
+[[schema.tables.indices]]
+id = { table = 8, index = 0 }
+name = "index_usage_daily_by_id"
+on = 8
+columns = [{ column = { table = 8, index = 0 }, op = "Eq", scope = "Partition" }]
+unique = true
+primary_key = true
+
+[[schema.tables.indices]]
+id = { table = 8, index = 1 }
+name = "index_usage_daily_by_day_and_token_id_and_model"
+on = 8
+columns = [{ column = { table = 8, index = 1 }, op = "Eq", scope = "Partition" }, { column = { table = 8, index = 2 }, op = "Eq", scope = "Local" }, { column = { table = 8, index = 3 }, op = "Eq", scope = "Local" }]
+unique = true
+
+[[schema.tables.indices]]
+id = { table = 8, index = 2 }
+name = "index_usage_daily_by_day"
+on = 8
+columns = [{ column = { table = 8, index = 1 }, op = "Eq", scope = "Partition" }]
+
+[[schema.tables.indices]]
+id = { table = 8, index = 3 }
+name = "index_usage_daily_by_token_id"
+on = 8
+columns = [{ column = { table = 8, index = 2 }, op = "Eq", scope = "Partition" }]
+
+[[schema.tables.indices]]
+id = { table = 8, index = 4 }
+name = "index_usage_daily_by_model"
+on = 8
+columns = [{ column = { table = 8, index = 3 }, op = "Eq", scope = "Partition" }]
