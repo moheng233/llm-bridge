@@ -1,0 +1,60 @@
+# syntax=docker/dockerfile:1
+
+# ─────────────────────────────────────────────────────────────────────────────
+# LLM-Bridge 构建基础镜像
+#
+# 内容：Ubuntu 24.04 + Node.js 24(LTS) + pnpm + rustup(nightly) + cargo-chef
+# 用途：作为主 Dockerfile 的 builder/planner 基础镜像，把工具链固化、可复用。
+#
+# 构建：podman build -t llm-bridge-base -f Dockerfile.base .
+# （构建上下文任意，本镜像不 COPY 任何项目文件）
+# ─────────────────────────────────────────────────────────────────────────────
+
+FROM docker.io/library/ubuntu:24.04
+
+ARG NODE_VERSION=24.18.0
+ARG TARGETARCH
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    RUSTUP_HOME=/usr/local/rustup \
+    CARGO_HOME=/usr/local/cargo \
+    PATH=/usr/local/cargo/bin:/usr/local/bin:$PATH
+
+# ── 系统依赖 ─────────────────────────────────────────────────────────────────
+# build-essential/pkg-config：编译 Rust 原生 crate（ring 等）
+# curl/ca-certificates/xz-utils：下载并解压 Node、rustup
+# git：cargo 可能从 git 拉依赖
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential \
+        pkg-config \
+        curl \
+        ca-certificates \
+        xz-utils \
+        git \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── Node.js 24 (LTS) + corepack(pnpm) ────────────────────────────────────────
+# 使用官方二进制 tarball（与 node 官方镜像同源），装到 /usr/local。
+# corepack 随 Node 分发，启用后即可用 pnpm。
+RUN arch="$(uname -m)" \
+    && case "$arch" in \
+        x86_64) node_arch='x64' ;; \
+        aarch64) node_arch='arm64' ;; \
+        *) echo "unsupported arch: $arch" >&2; exit 1 ;; \
+    esac \
+    && curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${node_arch}.tar.xz" \
+        | tar -xJ -C /usr/local --strip-components=1 --no-same-owner \
+    && corepack enable \
+    && corepack prepare pnpm@latest --activate \
+    && node --version && npm --version && pnpm --version
+
+# ── rustup + nightly 工具链 + cargo-chef ────────────────────────────────────
+# rust-toolchain.toml 在项目里指定 nightly；rustup 首次调用会自动安装。
+# 预装 nightly 并装 cargo-chef，避免主构建时重复下载。
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+        | sh -s -- -y --default-toolchain nightly --profile minimal \
+    && cargo install cargo-chef --locked \
+    && rustc --version && cargo chef --version
+
+WORKDIR /app

@@ -1,0 +1,23 @@
+# 构建产物与依赖缓存（镜像内重新构建）
+/target
+/build
+**/node_modules
+frontend/dist
+frontend/node_modules/.types
+
+# 运行时数据与本地配置
+/data
+.env
+.bin/
+
+# 版本控制与编辑器
+.git
+.gitignore
+.dockerignore
+.vscode
+.idea
+
+# 文档（镜像不需要）
+*.md
+LICENSE
+Dockerfile
