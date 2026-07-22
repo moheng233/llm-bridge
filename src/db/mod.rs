@@ -12,10 +12,10 @@ use tracing::{info, warn};
 /// toasty 数据库句柄类型别名。
 pub type Db = toasty::Db;
 
-/// 返回包含所有 7 张核心表的 [`toasty::ModelSet`]。
+/// 返回包含所有 9 张核心表的 [`toasty::ModelSet`]。
 ///
 /// 注册：`User`, `Token`, `UsageRecord`, `LLMModel`, `Provider`, `ModelProvider`,
-/// `ProviderProtocol`。
+/// `ProviderProtocol`, `LlmRequestTrace`, `UsageDaily`。
 /// 配合 [`init`] / [`init_sqlite`] 使用：
 ///
 /// ```ignore
@@ -29,7 +29,9 @@ pub fn all_models() -> toasty::ModelSet {
         models::LLMModel,
         models::Provider,
         models::ModelProvider,
-        models::ProviderProtocol
+        models::ProviderProtocol,
+        models::LlmRequestTrace,
+        models::UsageDaily
     )
 }
 
@@ -149,5 +151,92 @@ mod tests {
             .expect("get_by_id should succeed");
 
         assert_eq!(fetched.email.as_deref(), Some("alice@example.com"));
+    }
+
+    #[tokio::test]
+    async fn insert_and_query_llm_request_trace() {
+        use crate::db::models::{LlmRequestTrace, TraceInterface, TraceStatus};
+        use crate::types::{LanguageModelChatMessage, LanguageModelInputPart, LanguageModelTextPart};
+
+        let mut db = init(all_models(), "sqlite::memory:")
+            .await
+            .expect("database initialization should succeed");
+
+        // 插入一条 pending 状态的 trace（带内容快照）
+        let messages = vec![LanguageModelChatMessage::user(
+            vec![LanguageModelInputPart::Text(LanguageModelTextPart {
+                value: "hello".to_string(),
+            })],
+            None,
+        )];
+
+        let trace = toasty::create!(LlmRequestTrace {
+            request_id: "req-001".to_string(),
+            interface: TraceInterface::OpenAiHttp,
+            token_id: 1,
+            user_id: 1,
+            token_prefix: "lb_ab3x".to_string(),
+            model: "openai/gpt-4o".to_string(),
+            provider_id: "openai".to_string(),
+            provider_model_id: "gpt-4o".to_string(),
+            protocol: "openai".to_string(),
+            status: TraceStatus::Pending,
+            estimated_tokens: 100,
+            request_messages: Some(toasty::Json(messages)),
+        })
+        .exec(&mut db)
+        .await
+        .expect("insert trace should succeed");
+
+        assert_eq!(trace.status, TraceStatus::Pending);
+        assert!(!trace.status.is_final());
+        assert!(trace.request_messages.is_some());
+
+        // 按 request_id 唯一索引查询
+        let fetched = LlmRequestTrace::get_by_request_id(&mut db, &"req-001".to_string())
+            .await
+            .expect("get_by_request_id should succeed");
+
+        assert_eq!(fetched.interface, TraceInterface::OpenAiHttp);
+        assert_eq!(fetched.token_prefix, "lb_ab3x");
+        let msgs = fetched.request_messages.as_ref().expect("messages should exist");
+        assert_eq!(msgs.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn insert_and_query_usage_daily() {
+        use crate::db::models::UsageDaily;
+
+        let mut db = init(all_models(), "sqlite::memory:")
+            .await
+            .expect("database initialization should succeed");
+
+        let daily = toasty::create!(UsageDaily {
+            day: "2026-07-22".to_string(),
+            token_id: 1,
+            model: "openai/gpt-4o".to_string(),
+            request_count: 5,
+            input_tokens: 1200,
+            output_tokens: 3400,
+            reasoning_tokens: 0,
+            cached_tokens: 100,
+            total_tokens: 4600,
+            cost_usd: 0.0123,
+        })
+        .exec(&mut db)
+        .await
+        .expect("insert usage_daily should succeed");
+
+        assert_eq!(daily.request_count, 5);
+        assert_eq!(daily.total_tokens, 4600);
+
+        // 按 day 索引查询（filter_by_<field>(value) 返回 Query builder，再 .exec(db)）
+        let rows: Vec<_> = UsageDaily::filter_by_day("2026-07-22")
+            .exec(&mut db)
+            .await
+            .expect("filter_by_day should succeed");
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].input_tokens, 1200);
     }
 }

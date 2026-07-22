@@ -1,7 +1,7 @@
 //! 数据模型定义 — toasty ORM 模型。
 //!
 //! 包含用户、Token、用量记录、模型（规范定义）、提供者、提供者协议、
-//! 模型-提供者关联七张核心表。
+//! 模型-提供者关联七张核心表，以及请求追踪（可观察性）两张表。
 //! 所有模型通过 `toasty::Model` derive 宏生成数据库操作代码。
 //!
 //! ## 核心设计（OpenRouter 风格）
@@ -340,6 +340,188 @@ pub struct ModelProvider {
 
     #[auto]
     pub created_at: Timestamp,
+    #[auto]
+    pub updated_at: Timestamp,
+}
+
+// ── 请求追踪（可观察性）──
+
+/// 请求来源接口。
+///
+/// 对应 PLAN.md §5 的 `interface` 字段：区分 OpenAI 兼容 HTTP 与 WS RPC 两种传输绑定。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, toasty::Embed)]
+pub enum TraceInterface {
+    /// `POST /v1/chat/completions`（OpenAI 兼容 HTTP）
+    OpenAiHttp,
+    /// `GET /v1/ws`（协议无关 WebSocket RPC，§4）
+    WsRpc,
+}
+
+/// 请求生命周期状态机：`pending → streaming → finalized`。
+///
+/// 请求开始时 INSERT（pending），首个 chunk 到达后转 streaming，
+/// 结束时 upsert 为终态（success / error / cancelled）。
+/// 中途崩溃时记录停留在 pending/streaming，可见「卡住」的请求而非丢记录
+///（Langfuse observation upsert 模式）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, toasty::Embed)]
+pub enum TraceStatus {
+    /// 请求已受理，尚未产生任何 chunk
+    Pending,
+    /// 已收到首个上游 chunk，流式进行中
+    Streaming,
+    /// 正常完成
+    Success,
+    /// 失败（含上游错误与内部错误）
+    Error,
+    /// 被客户端取消（WS cancel / 断连）
+    Cancelled,
+}
+
+impl TraceStatus {
+    /// 是否为终态（success / error / cancelled）。
+    pub fn is_final(self) -> bool {
+        matches!(self, Self::Success | Self::Error | Self::Cancelled)
+    }
+}
+
+// ── 请求追踪表 ──
+
+/// LLM 请求追踪 — 一次请求生命周期的全部结构化事实落为一行记录（单一事实源）。
+///
+/// metrics 是其流式投影、计费查询是其 SQL 聚合、内容快照是其可空大字段——
+/// 不建三套采集管线。语义遵循 OpenTelemetry GenAI 语义约定。
+///
+/// 写入路径：handler 热路径只发 mpsc 事件，专用后台任务批量落盘；
+/// mpsc 满则丢弃并计数（观察性数据可丢，业务请求不可阻塞）。
+#[derive(Debug, toasty::Model)]
+#[table = "llm_request_traces"]
+pub struct LlmRequestTrace {
+    #[key]
+    #[auto]
+    pub id: u64,
+
+    /// 网关生成的请求 ID（UUID），响应头 `x-request-id` 回传，
+    /// 贯穿 stdout 日志 / OTel / DB 三方互查。
+    #[unique]
+    pub request_id: String,
+
+    /// OTel trace id（otel 启用时双写互查）。
+    pub trace_id: Option<String>,
+
+    /// 请求来源接口（`openai_http` / `ws_rpc`）。
+    pub interface: TraceInterface,
+
+    // ── 归属 ──
+    /// 发起请求的 Token ID（`token_hash` 永不进表）。
+    #[index]
+    pub token_id: u64,
+    /// Token 归属的用户 ID。
+    #[index]
+    pub user_id: u64,
+    /// Token 前缀（UI 识别用，冗余存储避免 join）。
+    pub token_prefix: String,
+
+    // ── 路由结果 ──
+    /// 规范模型名（如 `"openai/gpt-4o"`）。
+    #[index]
+    pub model: String,
+    /// 路由命中的提供者 ID（`providers.provider_id`）。
+    pub provider_id: String,
+    /// 提供者侧的实际模型 ID（`model_providers.provider_model_id`）。
+    pub provider_model_id: String,
+    /// 路由命中的协议（`openai` / `anthropic` / …）。
+    pub protocol: String,
+
+    // ── 生命周期 ──
+    /// 生命周期状态机。
+    pub status: TraceStatus,
+    /// 错误类型（`provider_error` / `quota_exceeded` / …）。
+    pub error_type: Option<String>,
+    /// 错误消息（截断存储）。
+    pub error_message: Option<String>,
+    /// 上游 HTTP 状态码。
+    pub upstream_status: Option<u16>,
+    /// 上游真实 finish_reason（stop / length / tool_calls / …）。
+    pub finish_reason: Option<String>,
+
+    // ── 用量与计费 ──
+    /// 预扣量（解释配额结算 delta）。
+    pub estimated_tokens: i64,
+    /// 输入 tokens（`LanguageModelUsagePart` 持久化形态）。
+    pub input_tokens: Option<u64>,
+    /// 输出 tokens。
+    pub output_tokens: Option<u64>,
+    /// 推理 tokens（thinking）。
+    pub reasoning_tokens: Option<u64>,
+    /// 缓存命中 tokens。
+    pub cached_tokens: Option<u64>,
+    /// 总 tokens。
+    pub total_tokens: Option<u64>,
+    /// 成本（`model_providers` 定价 × usage，派生）。
+    pub cost_usd: Option<f64>,
+
+    // ── 上游元数据 ──
+    /// 上游请求 ID（`ProviderResponseMetadata.id`）。
+    pub upstream_request_id: Option<String>,
+
+    // ── 时间线 ──
+    /// 请求开始时间。
+    #[auto]
+    pub created_at: Timestamp,
+    /// 首个 chunk 到达时间。
+    pub first_chunk_at: Option<Timestamp>,
+    /// 请求完成时间。
+    pub completed_at: Option<Timestamp>,
+    /// 首 chunk 延迟（毫秒，派生存储）。
+    pub ttft_ms: Option<i64>,
+    /// 总延迟（毫秒，派生存储）。
+    pub latency_ms: Option<i64>,
+
+    // ── 内容快照（PII 敏感，Opt-In）──
+    /// 请求消息快照，仅当 `LLM_BRIDGE_OBS_CAPTURE_CONTENT=true` 时写入。
+    pub request_messages: Option<toasty::Json<Vec<crate::types::LanguageModelChatMessage>>>,
+    /// 聚合后响应 parts 快照，同上 Opt-In。
+    pub response_parts: Option<toasty::Json<Vec<crate::types::LMResponsePart>>>,
+}
+
+// ── 日度用量预聚合表 ──
+
+/// 日度用量聚合 — `day` × `token_id` × `model` 的 rollup。
+///
+/// 由 finalize 事件同事务更新，仪表盘聚合查询不全表扫 trace 表。
+/// 已聚合无 PII，永久保留（不受 trace retention 影响）。
+#[derive(Debug, toasty::Model)]
+#[table = "usage_daily"]
+pub struct UsageDaily {
+    #[key]
+    #[auto]
+    pub id: u64,
+
+    /// 日期（`"YYYY-MM-DD"` 格式，UTC）。
+    #[index]
+    pub day: String,
+    /// 发起请求的 Token ID。
+    #[index]
+    pub token_id: u64,
+    /// 规范模型名。
+    #[index]
+    pub model: String,
+
+    /// 当日请求总数。
+    pub request_count: i64,
+    /// 当日输入 tokens 合计。
+    pub input_tokens: i64,
+    /// 当日输出 tokens 合计。
+    pub output_tokens: i64,
+    /// 当日推理 tokens 合计。
+    pub reasoning_tokens: i64,
+    /// 当日缓存命中 tokens 合计。
+    pub cached_tokens: i64,
+    /// 当日总 tokens 合计。
+    pub total_tokens: i64,
+    /// 当日成本合计（美元）。
+    pub cost_usd: f64,
+
     #[auto]
     pub updated_at: Timestamp,
 }
