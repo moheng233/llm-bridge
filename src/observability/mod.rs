@@ -3,6 +3,8 @@ use tracing_subscriber::EnvFilter;
 #[cfg(feature = "otel")]
 use tracing_subscriber::prelude::*;
 
+pub mod genai;
+
 /// Holds observability resources for graceful shutdown.
 ///
 /// Without the `otel` feature, this is a unit struct — `shutdown()` is a no-op.
@@ -10,6 +12,7 @@ use tracing_subscriber::prelude::*;
 pub struct ObservabilityGuard {
     logger_provider: opentelemetry_sdk::logs::SdkLoggerProvider,
     tracer_provider: opentelemetry_sdk::trace::SdkTracerProvider,
+    meter_provider: opentelemetry_sdk::metrics::SdkMeterProvider,
 }
 
 /// Holds observability resources for graceful shutdown.
@@ -44,13 +47,29 @@ pub fn init(_service_name: &str) -> Result<ObservabilityGuard, Box<dyn std::erro
             .build();
 
         let tracer_provider = opentelemetry_sdk::trace::SdkTracerProvider::builder()
-            .with_resource(resource)
+            .with_resource(resource.clone())
             .with_batch_exporter(
                 opentelemetry_otlp::SpanExporter::builder()
                     .with_http()
                     .build()?,
             )
             .build();
+
+        // Meter（PLAN.md §5 O2）：GenAI metrics 经 OTLP 周期推送。
+        // record 走 `opentelemetry::global::meter`，故须注册为全局 provider。
+        let meter_provider = opentelemetry_sdk::metrics::SdkMeterProvider::builder()
+            .with_resource(resource)
+            .with_reader(
+                opentelemetry_sdk::metrics::periodic_reader_with_async_runtime::PeriodicReader::builder(
+                    opentelemetry_otlp::MetricExporter::builder()
+                        .with_http()
+                        .build()?,
+                    opentelemetry_sdk::runtime::Tokio,
+                )
+                .build(),
+            )
+            .build();
+        opentelemetry::global::set_meter_provider(meter_provider.clone());
 
         let subscriber = tracing_subscriber::fmt()
             .with_env_filter(
@@ -75,6 +94,7 @@ pub fn init(_service_name: &str) -> Result<ObservabilityGuard, Box<dyn std::erro
         return Ok(ObservabilityGuard {
             logger_provider,
             tracer_provider,
+            meter_provider,
         });
     }
 
@@ -101,6 +121,10 @@ impl ObservabilityGuard {
         {
             if let Err(error) = self.tracer_provider.shutdown() {
                 tracing::warn!(error = %error, "failed to shut down tracer provider");
+            }
+
+            if let Err(error) = self.meter_provider.shutdown() {
+                tracing::warn!(error = %error, "failed to shut down meter provider");
             }
 
             if let Err(error) = self.logger_provider.shutdown() {

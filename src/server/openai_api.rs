@@ -370,9 +370,25 @@ pub struct OpenAiStreamOptions {
 }
 
 #[instrument(
+    name = "chat_completions",
     level = "info",
     skip(state, token),
-    fields(model = %req.model, stream = req.stream, request_id = tracing::field::Empty)
+    fields(
+        model = %req.model,
+        stream = req.stream,
+        request_id = tracing::field::Empty,
+        // ── GenAI 语义约定属性（PLAN.md §5 O2）──
+        gen_ai.operation.name = "chat",
+        gen_ai.provider.name = tracing::field::Empty,
+        gen_ai.request.model = %req.model,
+        gen_ai.request.stream = req.stream,
+        gen_ai.response.model = tracing::field::Empty,
+        gen_ai.response.finish_reasons = tracing::field::Empty,
+        gen_ai.usage.input_tokens = tracing::field::Empty,
+        gen_ai.usage.output_tokens = tracing::field::Empty,
+        gen_ai.response.time_to_first_chunk = tracing::field::Empty,
+        error.type = tracing::field::Empty,
+    )
 )]
 pub async fn chat_completions(
     State(state): State<AppState>,
@@ -427,6 +443,15 @@ pub async fn chat_completions(
 
     // Take the first (highest priority) route.
     let route = &routes[0];
+
+    // GenAI span 属性：provider 与上游模型名在路由选定后即可确定。
+    let genai_provider = crate::observability::genai::provider_name(&route.compatibility);
+    let genai_response_model = route.provider_model_name.clone();
+    tracing::Span::current().record("gen_ai.provider.name", genai_provider);
+    tracing::Span::current().record("gen_ai.response.model", genai_response_model.as_str());
+
+    // 请求开始计时（duration / TTFT 基准）。
+    let request_start = std::time::Instant::now();
 
     // Phase 2: Quota check and deduct (before making upstream call)
     let estimated_tokens = estimate_token_count(&req.messages, req.tools.as_deref());
@@ -538,11 +563,13 @@ pub async fn chat_completions(
 
     if req.stream {
         let usage_handle = UsageHandle::default();
+        let ttft_slot: TtftSlot = Default::default();
         let sse_stream = stream_to_sse(
             stream,
             req.model.clone(),
             usage_handle.clone(),
             metadata_rx,
+            ttft_slot.clone(),
         );
 
         // Spawn cleanup after stream is consumed.
@@ -551,6 +578,7 @@ pub async fn chat_completions(
         // 的结算日志保留 request_id / model 等上下文字段。
         let settle_state = state.clone();
         let settle_ctx = crate::auth::quota::TokenQuotaContext::from_token(&token);
+        let genai_request_model = req.model.clone();
         tokio::spawn(
             async move {
                 cleanup_ref.stop(None);
@@ -563,6 +591,36 @@ pub async fn chat_completions(
                     &usage,
                 )
                 .await;
+
+                // GenAI finalize：TTFT + usage 记录到请求 span 并投影 metrics。
+                let ttft_s = ttft_slot
+                    .lock()
+                    .await
+                    .map(|t| t.duration_since(request_start).as_secs_f64());
+                let span = tracing::Span::current();
+                if let Some(ttft) = ttft_s {
+                    span.record("gen_ai.response.time_to_first_chunk", ttft);
+                }
+                if let Some(reason) = usage.finish_reason.as_deref() {
+                    span.record("gen_ai.response.finish_reasons", reason);
+                }
+                if let Some(input) = usage.input_tokens {
+                    span.record("gen_ai.usage.input_tokens", input);
+                }
+                if let Some(output) = usage.output_tokens {
+                    span.record("gen_ai.usage.output_tokens", output);
+                }
+                crate::observability::genai::record_finalize(
+                    &crate::observability::genai::GenAiFinalize {
+                        provider_name: genai_provider,
+                        request_model: genai_request_model,
+                        response_model: genai_response_model,
+                        input_tokens: usage.input_tokens,
+                        output_tokens: usage.output_tokens,
+                        duration_s: request_start.elapsed().as_secs_f64(),
+                        ttft_s,
+                    },
+                );
             }
             .instrument(tracing::Span::current()),
         );
@@ -597,6 +655,8 @@ pub async fn chat_completions(
                 Err(e) => {
                     cleanup_ref.stop(None);
                     let _ = cleanup_handle.await;
+                    // GenAI error.type（流内错误）：低基数错误类别标识。
+                    tracing::Span::current().record("error.type", "stream_error");
                     return Err(internal_error(&e));
                 }
             }
@@ -607,6 +667,27 @@ pub async fn chat_completions(
         // 按真实 usage 结算配额：多退少补（相对预估）
         let settle_ctx = crate::auth::quota::TokenQuotaContext::from_token(&token);
         settle_quota_with_actual_usage(&state, &settle_ctx, estimated_tokens, &usage_acc).await;
+
+        // GenAI finalize（非流式，无 TTFT）：usage/finish_reason 记录到 span 并投影 metrics。
+        let span = tracing::Span::current();
+        if let Some(reason) = usage_acc.finish_reason.as_deref() {
+            span.record("gen_ai.response.finish_reasons", reason);
+        }
+        if let Some(input) = usage_acc.input_tokens {
+            span.record("gen_ai.usage.input_tokens", input);
+        }
+        if let Some(output) = usage_acc.output_tokens {
+            span.record("gen_ai.usage.output_tokens", output);
+        }
+        crate::observability::genai::record_finalize(&crate::observability::genai::GenAiFinalize {
+            provider_name: genai_provider,
+            request_model: req.model.clone(),
+            response_model: genai_response_model,
+            input_tokens: usage_acc.input_tokens,
+            output_tokens: usage_acc.output_tokens,
+            duration_s: request_start.elapsed().as_secs_f64(),
+            ttft_s: None,
+        });
 
         let upstream = metadata_rx.await.unwrap_or_default();
         let id = upstream.id.unwrap_or_else(|| "chatcmpl-llm-bridge".to_string());
@@ -771,6 +852,9 @@ async fn settle_quota_with_actual_usage(
 /// 流式路径共享的 usage 累积句柄。
 type UsageHandle = std::sync::Arc<tokio::sync::Mutex<UsageAccumulator>>;
 
+/// 流式路径共享的首 chunk 时间槽（`None` = 尚未产生首 chunk）。
+type TtftSlot = std::sync::Arc<tokio::sync::Mutex<Option<std::time::Instant>>>;
+
 /// 用于在流式 SSE 中共享上游 metadata（id/created）与角色发送状态。
 struct SseSharedState {
     usage_acc: UsageHandle,
@@ -803,6 +887,7 @@ fn stream_to_sse(
     model: String,
     usage_handle: UsageHandle,
     metadata_rx: tokio::sync::oneshot::Receiver<ProviderResponseMetadata>,
+    ttft_slot: TtftSlot,
 ) -> impl Stream<Item = Result<Event, axum::Error>> + Send + 'static {
     let shared = std::sync::Arc::new(tokio::sync::Mutex::new(SseSharedState {
         usage_acc: usage_handle,
@@ -815,7 +900,16 @@ fn stream_to_sse(
     let mapped = stream.then(move |item| {
         let shared = shared.clone();
         let model = model.clone();
-        async move { map_part_to_sse(item, &model, shared).await }
+        let ttft_slot = ttft_slot.clone();
+        async move {
+            // TTFT（PLAN.md §5 O2）：上游产生首个 item 即视为首 chunk，一次性写入。
+            if let Ok(mut slot) = ttft_slot.try_lock()
+                && slot.is_none()
+            {
+                *slot = Some(std::time::Instant::now());
+            }
+            map_part_to_sse(item, &model, shared).await
+        }
     });
 
     use futures_util::stream;
