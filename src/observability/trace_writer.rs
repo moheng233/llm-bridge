@@ -377,7 +377,11 @@ mod tests {
             .exec(&mut db.clone())
             .await
             .expect("query daily");
-        assert_eq!(rows.len(), 1, "same (day,token_id,model) must rollup to one row");
+        assert_eq!(
+            rows.len(),
+            1,
+            "same (day,token_id,model) must rollup to one row"
+        );
         assert_eq!(rows[0].request_count, 2);
         assert_eq!(rows[0].input_tokens, 20);
         assert_eq!(rows[0].total_tokens, 60);

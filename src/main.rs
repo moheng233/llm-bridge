@@ -84,6 +84,12 @@ async fn run_server() -> MainResult {
     let trace_writer = llm_bridge::observability::trace_writer::TraceWriter::spawn(db.clone());
     let capture_content = settings.observability.capture_content;
 
+    // 保留策略后台任务（PLAN.md §5 O5）：定期清理过期 trace；usage_daily 永久保留。
+    let retention_handle = llm_bridge::observability::retention::spawn_retention_task(
+        db.clone(),
+        settings.observability.trace_retention_days,
+    );
+
     let state = AppState {
         gateway_manager,
         store,
@@ -104,6 +110,9 @@ async fn run_server() -> MainResult {
 
     info!("stopping gateway manager actor");
     gateway_handle.abort();
+    if let Some(h) = retention_handle {
+        h.abort();
+    }
 
     server_result.map_err(Into::into)
 }

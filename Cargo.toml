@@ -36,7 +36,6 @@ rustls = { version = "0.23.42", default-features = false, features = [
 ] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.150"
-serde_repr = "0.1.21"
 thiserror = "2.0.19"
 time = { version = "0.3.53", features = ["serde", "std"] }
 toasty = { version = "0.8.0", features = ["jiff", "serde", "sqlite"] }
@@ -52,7 +51,7 @@ tower-sessions = "0.15.0"
 tracing = "0.1.44"
 tracing-opentelemetry = { version = "0.33.0", optional = true }
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
-ts-rs = { version = "12.0.1", features = ["serde_json", "tokio", "uuid","jiff-impl"] }
+ts-rs = { version = "12.0.1", features = ["serde-json-impl", "tokio-impl", "uuid-impl","jiff-impl"] }
 uuid = { version = "1.24.0", features = ["serde", "v4"] }
 vite-rs = "0.3.0"
 vite-rs-axum-0-8 = "0.3.0"

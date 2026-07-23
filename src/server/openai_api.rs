@@ -279,7 +279,9 @@ where
             })
             .collect::<Result<Vec<_>, _>>()
             .map(Some),
-        _ => Err(D::Error::custom("stop must be a string or an array of strings")),
+        _ => Err(D::Error::custom(
+            "stop must be a string or an array of strings",
+        )),
     }
 }
 
@@ -482,8 +484,9 @@ pub async fn chat_completions(
     } else {
         None
     };
-    state.trace_writer.send(
-        crate::observability::trace_writer::TraceEvent::Begin(
+    state
+        .trace_writer
+        .send(crate::observability::trace_writer::TraceEvent::Begin(
             Box::new(crate::observability::trace_writer::BeginTrace {
                 request_id: request_id.as_str().to_string(),
                 trace_id: None, // O1 中间件已记录到 span；此处 trace_id 双写留待 otel 集成
@@ -498,8 +501,7 @@ pub async fn chat_completions(
                 estimated_tokens,
                 request_messages: trace_request_messages,
             }),
-        ),
-    );
+        ));
 
     let provider_config = ProviderRuntimeConfig {
         id: route.provider_name.clone(),
@@ -536,16 +538,12 @@ pub async fn chat_completions(
         .await
         .map_err(|e| internal_error(&e.to_string()))?;
 
-    let (metadata_tx, metadata_rx) =
-        tokio::sync::oneshot::channel::<ProviderResponseMetadata>();
-    let (started_tx, started_rx) =
-        tokio::sync::oneshot::channel::<ProviderStartSignal>();
+    let (metadata_tx, metadata_rx) = tokio::sync::oneshot::channel::<ProviderResponseMetadata>();
+    let (started_tx, started_rx) = tokio::sync::oneshot::channel::<ProviderStartSignal>();
 
     let stream = ractor::call_t!(
         provider_ref,
-        |reply| {
-            ProviderMessage::ChatRequest(provider_request, reply, metadata_tx, started_tx)
-        },
+        |reply| { ProviderMessage::ChatRequest(provider_request, reply, metadata_tx, started_tx) },
         30_000
     )
     .map_err(|e| internal_error(&e.to_string()))?
@@ -684,8 +682,8 @@ pub async fn chat_completions(
                     None
                 };
                 settle_state.trace_writer.send(
-                    crate::observability::trace_writer::TraceEvent::Finalize(
-                        Box::new(crate::observability::trace_writer::FinalizeTrace {
+                    crate::observability::trace_writer::TraceEvent::Finalize(Box::new(
+                        crate::observability::trace_writer::FinalizeTrace {
                             request_id: trace_request_id,
                             status: crate::db::models::TraceStatus::Success,
                             error_type: None,
@@ -697,7 +695,7 @@ pub async fn chat_completions(
                             reasoning_tokens: usage.reasoning_tokens,
                             cached_tokens: usage.cached_tokens,
                             total_tokens: usage.total_tokens,
-                            cost_usd: None, // O4 成本计算后回填
+                            cost_usd: None,            // O4 成本计算后回填
                             upstream_request_id: None, // SSE 路径 metadata 已被 stream_to_sse 消费
                             first_chunk_at,
                             completed_at,
@@ -707,8 +705,8 @@ pub async fn chat_completions(
                             day: crate::observability::trace_writer::current_day(),
                             token_id: settle_ctx.token_id,
                             model: genai_request_model,
-                        }),
-                    ),
+                        },
+                    )),
                 );
             }
             .instrument(tracing::Span::current()),
@@ -790,15 +788,18 @@ pub async fn chat_completions(
         });
 
         let upstream = metadata_rx.await.unwrap_or_default();
-        let id = upstream.id.unwrap_or_else(|| "chatcmpl-llm-bridge".to_string());
+        let id = upstream
+            .id
+            .unwrap_or_else(|| "chatcmpl-llm-bridge".to_string());
         let created = upstream.created.unwrap_or(0);
 
         // ── 请求追踪：UPDATE 终态 + usage_daily rollup（PLAN.md §5 O3）──
         // 非流式 response_parts 不采集（完整响应已作为 JSON 返回客户端，可经 replay 获取）。
         let completed_at = jiff::Timestamp::now();
         let latency_ms = request_start.elapsed().as_millis() as i64;
-        state.trace_writer.send(
-            crate::observability::trace_writer::TraceEvent::Finalize(
+        state
+            .trace_writer
+            .send(crate::observability::trace_writer::TraceEvent::Finalize(
                 Box::new(crate::observability::trace_writer::FinalizeTrace {
                     request_id: request_id.as_str().to_string(),
                     status: crate::db::models::TraceStatus::Success,
@@ -822,8 +823,7 @@ pub async fn chat_completions(
                     token_id: token.id,
                     model: req.model.clone(),
                 }),
-            ),
-        );
+            ));
 
         let has_tool_calls = !tool_calls.is_empty();
         let mut message = serde_json::json!({
@@ -880,16 +880,15 @@ fn merge_reasoning(
         return None;
     }
 
-    Some(crate::types::LanguageModelReasoningConfig {
-        effort,
-        max_tokens,
-    })
+    Some(crate::types::LanguageModelReasoningConfig { effort, max_tokens })
 }
 
 impl From<OpenAiResponseFormat> for crate::types::LanguageModelResponseFormat {
     fn from(value: OpenAiResponseFormat) -> Self {
         match value {
-            OpenAiResponseFormat::JsonObject => crate::types::LanguageModelResponseFormat::JsonObject,
+            OpenAiResponseFormat::JsonObject => {
+                crate::types::LanguageModelResponseFormat::JsonObject
+            }
             OpenAiResponseFormat::JsonSchema { json_schema } => {
                 crate::types::LanguageModelResponseFormat::JsonSchema { json_schema }
             }
@@ -1286,10 +1285,7 @@ async fn resolve_image_url(url: &str) -> Result<crate::types::LanguageModelDataP
         let (meta, payload) = data_uri
             .split_once(',')
             .ok_or_else(|| bad_request("invalid data URI for image_url"))?;
-        let mime_type = meta
-            .strip_suffix(";base64")
-            .unwrap_or(meta)
-            .to_string();
+        let mime_type = meta.strip_suffix(";base64").unwrap_or(meta).to_string();
         if !mime_type.starts_with("image/") {
             return Err(bad_request(&format!(
                 "unsupported data URI mime type for image_url: {mime_type}"
@@ -1310,7 +1306,11 @@ async fn resolve_image_url(url: &str) -> Result<crate::types::LanguageModelDataP
     if url.starts_with("http://") || url.starts_with("https://") {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(10))
-            .user_agent(concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION")))
+            .user_agent(concat!(
+                env!("CARGO_PKG_NAME"),
+                "/",
+                env!("CARGO_PKG_VERSION")
+            ))
             .build()
             .map_err(|e| internal_error(&format!("failed to build http client: {e}")))?;
         let response = client
@@ -1411,9 +1411,10 @@ fn send_error_finalize(
 ) {
     let completed_at = jiff::Timestamp::now();
     let latency_ms = request_start.elapsed().as_millis() as i64;
-    state.trace_writer.send(
-        crate::observability::trace_writer::TraceEvent::Finalize(Box::new(
-            crate::observability::trace_writer::FinalizeTrace {
+    state
+        .trace_writer
+        .send(crate::observability::trace_writer::TraceEvent::Finalize(
+            Box::new(crate::observability::trace_writer::FinalizeTrace {
                 request_id: request_id.as_str().to_string(),
                 status: crate::db::models::TraceStatus::Error,
                 error_type: Some(error_type.to_string()),
@@ -1435,9 +1436,8 @@ fn send_error_finalize(
                 day: crate::observability::trace_writer::current_day(),
                 token_id,
                 model: model.to_string(),
-            },
-        )),
-    );
+            }),
+        ));
 }
 
 /// #13：构造透传上游语义状态码的错误响应。

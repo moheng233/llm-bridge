@@ -52,8 +52,7 @@ pub async fn stream_chat(
     let response = match req_builder.json(&payload).send().await {
         Ok(response) => response,
         Err(error) => {
-            let err =
-                ProviderError::plain(format!("openai responses request failed: {error}"));
+            let err = ProviderError::plain(format!("openai responses request failed: {error}"));
             if let Some(tx) = started_tx.take() {
                 let _ = tx.send(Err(err.clone()));
             }
@@ -141,10 +140,14 @@ fn build_request_body(request: &ProviderChatRequest) -> Result<Value, String> {
 
     // Responses API 不支持的参数：warn 并忽略。
     if request.stop.is_some() {
-        tracing::warn!("openai responses adapter: stop parameter is not supported and will be ignored");
+        tracing::warn!(
+            "openai responses adapter: stop parameter is not supported and will be ignored"
+        );
     }
     if request.frequency_penalty.is_some() || request.presence_penalty.is_some() {
-        tracing::warn!("openai responses adapter: frequency_penalty/presence_penalty are not supported and will be ignored");
+        tracing::warn!(
+            "openai responses adapter: frequency_penalty/presence_penalty are not supported and will be ignored"
+        );
     }
     if request.logit_bias.is_some() {
         tracing::warn!("openai responses adapter: logit_bias is not supported and will be ignored");

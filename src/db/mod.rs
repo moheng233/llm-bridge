@@ -156,7 +156,9 @@ mod tests {
     #[tokio::test]
     async fn insert_and_query_llm_request_trace() {
         use crate::db::models::{LlmRequestTrace, TraceInterface, TraceStatus};
-        use crate::types::{LanguageModelChatMessage, LanguageModelInputPart, LanguageModelTextPart};
+        use crate::types::{
+            LanguageModelChatMessage, LanguageModelInputPart, LanguageModelTextPart,
+        };
 
         let mut db = init(all_models(), "sqlite::memory:")
             .await
@@ -199,7 +201,10 @@ mod tests {
 
         assert_eq!(fetched.interface, TraceInterface::OpenAiHttp);
         assert_eq!(fetched.token_prefix, "lb_ab3x");
-        let msgs = fetched.request_messages.as_ref().expect("messages should exist");
+        let msgs = fetched
+            .request_messages
+            .as_ref()
+            .expect("messages should exist");
         assert_eq!(msgs.len(), 1);
     }
 

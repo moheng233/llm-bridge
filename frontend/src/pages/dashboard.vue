@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { type TraceSummary } from "@bindings/TraceSummary";
+import { type UsageSummaryResponse } from "@bindings/UsageSummaryResponse";
 import {
   Activity,
   AlertTriangle,
@@ -10,16 +12,12 @@ import {
   Zap,
 } from "@lucide/vue";
 
-import { formatTokens } from "~/lib/api";
-import {
-  MOCK_TRACES,
-  MOCK_USAGE_DAILY,
-  aggregateByDay,
-  rankModels,
-  summarizeUsage,
-} from "~/lib/observability-mock";
+import { useApiCall } from "~/composables/useApiCall";
+import { formatTokens, getApi } from "~/lib/api";
 
-// ── 数据源（示例数据，O4 API 就绪后替换）──
+const api = getApi();
+
+// ── 数据源（O4 后端 API）──
 
 const RANGE_OPTIONS = [
   { value: "7", label: "近 7 天" },
@@ -28,12 +26,48 @@ const RANGE_OPTIONS = [
 ] as const;
 
 const rangeDays = ref("14");
+const summary = ref<UsageSummaryResponse | null>(null);
+const recentTraces = ref<TraceSummary[]>([]);
 
-const filteredDaily = computed(() => MOCK_USAGE_DAILY.slice(-Number(rangeDays.value) * 6));
-const daily = computed(() => aggregateByDay(filteredDaily.value));
-const kpis = computed(() => summarizeUsage(filteredDaily.value, MOCK_TRACES));
-const ranking = computed(() => rankModels(filteredDaily.value).slice(0, 6));
-const recentTraces = computed(() => MOCK_TRACES.slice(0, 5));
+const {
+  loading,
+  error,
+  execute: fetchSummary,
+} = useApiCall((days: number) => api.usage.getUsageSummary({ days }));
+const { execute: fetchRecent } = useApiCall(() =>
+  api.usage.listTraces({
+    status: null,
+    model: null,
+    tokenId: null,
+    interface: null,
+    search: null,
+    page: 0,
+    pageSize: 5,
+  }),
+);
+
+async function load() {
+  const s = await fetchSummary(Number(rangeDays.value));
+  if (s) summary.value = s;
+  const r = await fetchRecent();
+  if (r) recentTraces.value = r.items;
+}
+
+watch(rangeDays, load);
+watchEffect(load);
+
+const daily = computed(() => summary.value?.daily ?? []);
+const ranking = computed(() => (summary.value?.modelRanking ?? []).slice(0, 6));
+const kpis = computed(
+  () =>
+    summary.value ?? {
+      totalRequests: 0,
+      totalTokens: 0,
+      totalCostUsd: 0,
+      errorRate: 0,
+      avgTtftMs: null,
+    },
+);
 
 const maxTokens = computed(() =>
   Math.max(...daily.value.map((d) => d.inputTokens + d.outputTokens + d.cachedTokens), 1),
@@ -48,13 +82,13 @@ function formatCost(usd: number): string {
 
 function statusBadge(status: string): { label: string; cls: string } {
   switch (status) {
-    case "Success":
+    case "success":
       return { label: "成功", cls: "text-cta border-cta/30 bg-cta/10" };
-    case "Error":
+    case "error":
       return { label: "失败", cls: "text-destructive border-destructive/30 bg-destructive/10" };
-    case "Cancelled":
+    case "cancelled":
       return { label: "已取消", cls: "text-muted-foreground border-border bg-muted" };
-    case "Streaming":
+    case "streaming":
       return { label: "进行中", cls: "text-chart-2 border-chart-2/30 bg-chart-2/10" };
     default:
       return { label: "等待中", cls: "text-chart-4 border-chart-4/30 bg-chart-4/10" };
@@ -89,8 +123,13 @@ function cacheRate(d: { inputTokens: number; cachedTokens: number }): string {
       </template>
     </SectionHeader>
 
+    <ErrorState v-if="error" :error="error" inline @retry="load" />
+
     <!-- KPI 卡片 -->
-    <div class="grid grid-cols-2 gap-4 xl:grid-cols-4">
+    <div v-if="loading && !summary" class="grid grid-cols-2 gap-4 xl:grid-cols-4">
+      <Skeleton v-for="i in 4" :key="i" class="h-24 w-full rounded-xl" />
+    </div>
+    <div v-else class="grid grid-cols-2 gap-4 xl:grid-cols-4">
       <Card class="gap-2 py-4">
         <CardHeader class="px-4 pb-0">
           <div class="flex items-center justify-between">
@@ -218,7 +257,7 @@ function cacheRate(d: { inputTokens: number; cachedTokens: number }): string {
             v-for="(d, i) in daily"
             :key="d.day"
             class="min-w-0 flex-1 truncate text-center font-mono text-[10px] text-muted-foreground"
-            >{{ i % 2 === 0 ? d.label : "" }}</span
+            >{{ i % 2 === 0 ? d.day.slice(5) : "" }}</span
           >
         </div>
       </CardContent>
@@ -269,9 +308,9 @@ function cacheRate(d: { inputTokens: number; cachedTokens: number }): string {
         <CardContent class="flex flex-col px-4 pt-1">
           <button
             v-for="t in recentTraces"
-            :key="t.id"
+            :key="t.requestId"
             class="-mx-2 flex cursor-pointer items-center justify-between gap-2 rounded-md px-2 py-2 text-left transition-colors hover:bg-accent/50"
-            @click="$router.push(`/traces/${t.id}`)"
+            @click="$router.push(`/traces/${t.requestId}`)"
           >
             <div class="flex min-w-0 items-center gap-2">
               <Badge variant="outline" :class="['shrink-0 text-[10px]', statusBadge(t.status).cls]">

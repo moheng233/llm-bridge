@@ -15,14 +15,19 @@ import { type ProtocolView } from "./ProtocolView";
 import { type ProviderModelResponse } from "./ProviderModelResponse";
 import { type ProviderQuotaResponse } from "./ProviderQuotaResponse";
 import { type ProviderResponse } from "./ProviderResponse";
+import { type SummaryQuery } from "./SummaryQuery";
 import { type TestModelProviderRequest } from "./TestModelProviderRequest";
 import { type TestModelProviderResponse } from "./TestModelProviderResponse";
 import { type TokenListItem } from "./TokenListItem";
+import { type TraceDetail } from "./TraceDetail";
+import { type TraceListResponse } from "./TraceListResponse";
+import { type TracesQuery } from "./TracesQuery";
 import { type UpdateModelProviderRequest } from "./UpdateModelProviderRequest";
 import { type UpdateModelRequest } from "./UpdateModelRequest";
 import { type UpdateProviderRequest } from "./UpdateProviderRequest";
 import { type UpdateRoleRequest } from "./UpdateRoleRequest";
 import { type UpdateTokenRequest } from "./UpdateTokenRequest";
+import { type UsageSummaryResponse } from "./UsageSummaryResponse";
 import { type UserResponse } from "./UserResponse";
 
 export class ApiError extends Error {
@@ -229,6 +234,15 @@ export function createApiClient(options: ApiClientOptions) {
         request<TokenListItem>(`/api/v1/tokens/${id}`, { method: "PATCH", auth: true, body }),
       deleteToken: (id: string) =>
         request<void>(`/api/v1/tokens/${id}`, { method: "DELETE", auth: true }),
+    },
+
+    usage: {
+      getUsageSummary: (query?: SummaryQuery) =>
+        request<UsageSummaryResponse>("/api/v1/usage/summary", { auth: true, query }),
+      listTraces: (query?: TracesQuery) =>
+        request<TraceListResponse>("/api/v1/usage/traces", { auth: true, query }),
+      getTrace: (request_id: string) =>
+        request<TraceDetail>(`/api/v1/usage/traces/${request_id}`, { auth: true }),
     },
   };
 }

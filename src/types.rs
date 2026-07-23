@@ -1,57 +1,68 @@
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
-use serde_repr::{Deserialize_repr, Serialize_repr};
 use ts_rs::TS;
 
-/// 消息角色，对应 LanguageModelChatMessageRole 枚举（User = 1, Assistant = 2, System = 3, Developer = 4）
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize_repr, Deserialize_repr, TS)]
+/// 消息角色，对应 LanguageModelChatMessageRole 枚举。
+/// JSON 序列化为小写字符串（`"user"` / `"assistant"` / `"system"` / `"developer"`），
+/// 与 OpenAI 协议及 ts-rs 生成的字符串字面量联合类型一致，前端无需数字→字符串映射。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "lowercase")]
 #[ts(export)]
-#[repr(u8)]
 pub enum LanguageModelChatMessageRole {
-    User = 1,
-    Assistant = 2,
-    System = 3,
-    Developer = 4,
+    User,
+    Assistant,
+    System,
+    Developer,
 }
 
 /// 纯文本消息部分，对应 LanguageModelTextPart
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub struct LanguageModelTextPart {
     pub value: String,
 }
 
 /// Thinking 内容的值类型，可以是单个字符串或字符串数组
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(untagged)]
+#[ts(export, untagged)]
 pub enum LanguageModelThinkingValue {
     String(String),
     Array(Vec<String>),
 }
 
 /// 思考/推理内容部分，对应 LanguageModelThinkingPart
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase")]
 pub struct LanguageModelThinkingPart {
     pub value: LanguageModelThinkingValue,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub metadata: Option<Value>,
 }
 
 /// Prompt TSX 消息部分，对应 LanguageModelPromptTsxPart
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub struct LanguageModelPromptTsxPart {
     pub value: Value,
 }
 
 /// 协议无关的工具（函数）定义，对应 OpenAI `tools[].function` 的核心字段。
 /// 各上游适配器负责将其序列化为各自的协议格式。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase")]
 pub struct LanguageModelTool {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub description: Option<String>,
     /// JSON Schema 参数定义，对应 OpenAI 的 `parameters` / Anthropic 的 `input_schema`
     #[serde(default)]
@@ -59,17 +70,22 @@ pub struct LanguageModelTool {
 }
 
 /// 协议无关的推理配置：effort（OpenAI）与 max_tokens（Anthropic budget_tokens）至少其一非空。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase")]
 pub struct LanguageModelReasoningConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub effort: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub max_tokens: Option<u32>,
 }
 
 /// 协议无关的结构化输出配置。
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum LanguageModelResponseFormat {
     JsonObject,
@@ -77,36 +93,48 @@ pub enum LanguageModelResponseFormat {
 }
 
 /// 协议无关的 token 用量统计，由适配器在上游响应末尾发出。
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase")]
 pub struct LanguageModelUsagePart {
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub input_tokens: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub output_tokens: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub total_tokens: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub reasoning_tokens: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub cached_tokens: Option<u64>,
     /// 上游真实的 finish_reason（stop / length / tool_calls / content_filter / end_turn / max_tokens …）
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
     pub finish_reason: Option<String>,
 }
 
 /// 二进制数据消息部分，对应 LanguageModelDataPart
 /// `data` 对应 Uint8Array，序列化为数字数组
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase")]
 pub struct LanguageModelDataPart {
     pub mime_type: String,
     pub data: Vec<u8>,
 }
 
 /// 工具调用部分，对应 LanguageModelToolCallPart
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase")]
 pub struct LanguageModelToolCallPart {
     pub call_id: String,
     pub name: String,
@@ -115,8 +143,9 @@ pub struct LanguageModelToolCallPart {
 }
 
 /// 工具结果内容的各种可能类型
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(untagged)]
+#[ts(export, untagged)]
 pub enum LanguageModelToolResultContent {
     Text(LanguageModelTextPart),
     PromptTsx(LanguageModelPromptTsxPart),
@@ -126,8 +155,10 @@ pub enum LanguageModelToolResultContent {
 }
 
 /// 工具结果部分，对应 LanguageModelToolResultPart
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
 #[serde(rename_all = "camelCase")]
+#[ts(rename_all = "camelCase")]
 pub struct LanguageModelToolResultPart {
     pub call_id: String,
     pub content: Vec<LanguageModelToolResultContent>,
@@ -135,8 +166,9 @@ pub struct LanguageModelToolResultPart {
 
 /// 消息输入部分的联合类型，对应 LanguageModelInputPart:
 /// LanguageModelTextPart | LanguageModelToolResultPart | LanguageModelToolCallPart | LanguageModelDataPart | LanguageModelThinkingPart
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(untagged)]
+#[ts(export, untagged)]
 pub enum LanguageModelInputPart {
     Text(LanguageModelTextPart),
     ToolResult(LanguageModelToolResultPart),
@@ -147,8 +179,9 @@ pub enum LanguageModelInputPart {
 
 /// 语言模型响应部分的联合类型，对应 LMResponsePart:
 /// LanguageModelTextPart | LanguageModelToolCallPart | LanguageModelDataPart | LanguageModelThinkingPart | LanguageModelToolResultPart | LanguageModelUsagePart
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[serde(untagged)]
+#[ts(export, untagged)]
 pub enum LMResponsePart {
     Text(LanguageModelTextPart),
     ToolCall(LanguageModelToolCallPart),
@@ -159,7 +192,8 @@ pub enum LMResponsePart {
 }
 
 /// 聊天消息，对应 LanguageModelChatMessage
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub struct LanguageModelChatMessage {
     pub role: LanguageModelChatMessageRole,
     pub content: Vec<LanguageModelInputPart>,

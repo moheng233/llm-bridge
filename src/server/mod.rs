@@ -15,6 +15,7 @@ pub mod admin;
 pub mod auth;
 pub mod openai_api;
 pub mod tokens;
+pub mod usage;
 
 use std::sync::Arc;
 
@@ -109,6 +110,7 @@ pub fn all_api_routes() -> ApiRouter<AppState> {
         .merge(openai_routes())
         .merge(token_routes())
         .merge(auth_routes())
+        .merge(usage::usage_routes())
 }
 
 /// Start the HTTP server on the given host:port.

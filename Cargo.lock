@@ -1854,7 +1854,6 @@ dependencies = [
  "rustls",
  "serde",
  "serde_json",
- "serde_repr",
  "tempfile",
  "thiserror 2.0.19",
  "time",
@@ -3342,17 +3341,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9ce1fc6db65a611022b23a0dec6975d63fb80a302cb3388835ff02c097258d50"
 dependencies = [
  "serde",
-]
-
-[[package]]
-name = "serde_repr"
-version = "0.1.21"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8d3b1629de253c70a0508c3899572da79ca359fdab27c7920ff00406df418906"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 3.0.1",
 ]
 
 [[package]]

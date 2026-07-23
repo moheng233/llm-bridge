@@ -1,51 +1,77 @@
 <script setup lang="ts">
-import { ChevronRight, ListFilter, ScrollText, Search } from "@lucide/vue";
+import { type TraceSummary } from "@bindings/TraceSummary";
+import { ChevronRight, ScrollText, Search } from "@lucide/vue";
 
-import { formatTokens } from "~/lib/api";
-import { MOCK_MODELS, MOCK_TOKENS, MOCK_TRACES, type RequestTrace } from "~/lib/observability-mock";
+import { useApiCall } from "~/composables/useApiCall";
+import { formatTokens, getApi } from "~/lib/api";
 
-// ── 筛选状态（示例数据，O4 API 就绪后替换为服务端筛选）──
+const api = getApi();
+
+// ── 筛选状态（服务端筛选）──
 
 const search = ref("");
 const statusFilter = ref("all");
 const modelFilter = ref("all");
-const tokenFilter = ref("all");
 
 const STATUS_OPTIONS = [
   { value: "all", label: "全部状态" },
-  { value: "Success", label: "成功" },
-  { value: "Error", label: "失败" },
-  { value: "Cancelled", label: "已取消" },
-  { value: "Streaming", label: "进行中" },
-  { value: "Pending", label: "等待中" },
+  { value: "success", label: "成功" },
+  { value: "error", label: "失败" },
+  { value: "cancelled", label: "已取消" },
+  { value: "streaming", label: "进行中" },
+  { value: "pending", label: "等待中" },
 ];
 
-const filtered = computed(() => {
-  return MOCK_TRACES.filter((t) => {
-    if (statusFilter.value !== "all" && t.status !== statusFilter.value) return false;
-    if (modelFilter.value !== "all" && t.model !== modelFilter.value) return false;
-    if (tokenFilter.value !== "all" && t.tokenId !== Number(tokenFilter.value)) return false;
-    if (search.value.trim()) {
-      const q = search.value.trim().toLowerCase();
-      return (
-        t.requestId.toLowerCase().includes(q) ||
-        t.model.toLowerCase().includes(q) ||
-        (t.errorMessage ?? "").toLowerCase().includes(q)
-      );
-    }
-    return true;
-  });
-});
+const traces = ref<TraceSummary[]>([]);
+const total = ref(0);
 
-function statusBadge(t: RequestTrace): { label: string; cls: string } {
+const {
+  loading,
+  error,
+  execute: fetchTraces,
+} = useApiCall(() =>
+  api.usage.listTraces({
+    status: statusFilter.value === "all" ? null : statusFilter.value,
+    model: modelFilter.value === "all" ? null : modelFilter.value,
+    tokenId: null,
+    interface: null,
+    search: search.value.trim() || null,
+    page: 0,
+    pageSize: 200,
+  }),
+);
+
+async function load() {
+  const r = await fetchTraces();
+  if (r) {
+    traces.value = r.items;
+    total.value = r.total;
+  }
+}
+
+// 筛选变更立即重新查询；搜索输入防抖 300ms
+watch([statusFilter, modelFilter], load);
+let searchTimer: ReturnType<typeof setTimeout> | undefined;
+watch(search, () => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(load, 300);
+});
+watchEffect(load);
+
+// 模型下拉选项：从当前已加载 trace 动态收集（避免额外表查询）
+const modelOptions = computed(() => [...new Set(traces.value.map((t) => t.model))].sort());
+
+const filtered = computed(() => traces.value);
+
+function statusBadge(t: TraceSummary): { label: string; cls: string } {
   switch (t.status) {
-    case "Success":
+    case "success":
       return { label: "成功", cls: "text-cta border-cta/30 bg-cta/10" };
-    case "Error":
+    case "error":
       return { label: "失败", cls: "text-destructive border-destructive/30 bg-destructive/10" };
-    case "Cancelled":
+    case "cancelled":
       return { label: "已取消", cls: "text-muted-foreground border-border bg-muted" };
-    case "Streaming":
+    case "streaming":
       return { label: "进行中", cls: "text-chart-2 border-chart-2/30 bg-chart-2/10" };
     default:
       return { label: "等待中", cls: "text-chart-4 border-chart-4/30 bg-chart-4/10" };
@@ -67,19 +93,15 @@ function formatCost(usd: number | null): string {
   if (usd == null) return "—";
   return usd >= 0.01 ? `$${usd.toFixed(3)}` : `$${usd.toFixed(4)}`;
 }
-
-function hasSnapshot(t: RequestTrace): boolean {
-  return t.requestMessages != null || t.responseParts != null;
-}
 </script>
 
 <template>
   <PageShell>
     <SectionHeader
       title="请求追踪"
-      description="每次请求的完整生命周期记录（示例数据）"
+      description="每次请求的完整生命周期记录"
       :icon="ScrollText"
-      :count="filtered.length"
+      :count="total"
       count-label="条"
     />
 
@@ -105,27 +127,20 @@ function hasSnapshot(t: RequestTrace): boolean {
         </SelectTrigger>
         <SelectContent>
           <SelectItem value="all">全部模型</SelectItem>
-          <SelectItem v-for="m in MOCK_MODELS" :key="m" :value="m">{{ m }}</SelectItem>
+          <SelectItem v-for="m in modelOptions" :key="m" :value="m">{{ m }}</SelectItem>
         </SelectContent>
       </Select>
-      <Select v-model="tokenFilter">
-        <SelectTrigger class="w-40">
-          <SelectValue placeholder="全部 Token" />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="all">全部 Token</SelectItem>
-          <SelectItem v-for="t in MOCK_TOKENS" :key="t.id" :value="String(t.id)">
-            {{ t.name }}
-          </SelectItem>
-        </SelectContent>
-      </Select>
-      <Button variant="outline" size="icon" class="cursor-pointer" title="更多筛选（待后端支持）">
-        <ListFilter class="h-4 w-4" />
-      </Button>
+    </div>
+
+    <ErrorState v-if="error" :error="error" inline @retry="load" />
+
+    <!-- Loading -->
+    <div v-if="loading" class="flex flex-col gap-3">
+      <Skeleton v-for="i in 6" :key="i" class="h-12 w-full rounded-lg" />
     </div>
 
     <!-- 空态 -->
-    <EmptyState v-if="filtered.length === 0" :icon="ScrollText" title="没有匹配的请求记录" />
+    <EmptyState v-else-if="filtered.length === 0" :icon="ScrollText" title="没有匹配的请求记录" />
 
     <!-- 追踪表格：撑满剩余高度，表格内部滚动，表头吸顶 -->
     <Card v-else class="min-h-0 flex-1 gap-0 overflow-hidden py-0">
@@ -146,9 +161,9 @@ function hasSnapshot(t: RequestTrace): boolean {
         <TableBody>
           <TableRow
             v-for="t in filtered"
-            :key="t.id"
+            :key="t.requestId"
             class="cursor-pointer transition-colors"
-            @click="$router.push(`/traces/${t.id}`)"
+            @click="$router.push(`/traces/${t.requestId}`)"
           >
             <TableCell>
               <Badge variant="outline" :class="['text-[10px]', statusBadge(t).cls]">
@@ -162,12 +177,12 @@ function hasSnapshot(t: RequestTrace): boolean {
               <div class="flex items-center gap-1.5">
                 <span class="truncate font-mono text-xs">{{ t.model }}</span>
                 <Badge
-                  v-if="t.interface === 'WsRpc'"
+                  v-if="t.interface === 'ws_rpc'"
                   variant="secondary"
                   class="shrink-0 px-1 text-[9px]"
                   >WS</Badge
                 >
-                <TooltipProvider v-if="hasSnapshot(t)">
+                <TooltipProvider v-if="t.hasSnapshot">
                   <Tooltip>
                     <TooltipTrigger as-child>
                       <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-chart-4" />

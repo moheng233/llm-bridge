@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { type TraceDetail } from "@bindings/TraceDetail";
 import {
   ArrowLeft,
   Bot,
@@ -13,9 +14,9 @@ import {
   Wrench,
 } from "@lucide/vue";
 
-import { formatTokens } from "~/lib/api";
+import { useApiCall } from "~/composables/useApiCall";
+import { formatTokens, getApi } from "~/lib/api";
 import {
-  MOCK_TRACES,
   ROLE_ASSISTANT,
   ROLE_DEVELOPER,
   ROLE_SYSTEM,
@@ -25,15 +26,29 @@ import {
   isToolCallPart,
   isToolResultPart,
   isUsagePart,
-  type ChatMessageRole,
-  type ToolResultPart,
-} from "~/lib/observability-mock";
+  type LanguageModelToolResultPart,
+} from "~/lib/trace-parts";
 
+const api = getApi();
 const route = useRoute();
 const router = useRouter();
 
-// 示例数据查找（O5 API 就绪后替换为按 requestId/id 查询）
-const trace = computed(() => MOCK_TRACES.find((t) => t.id === Number(route.params.id)) ?? null);
+// 按 requestId 查询（路由参数即 request_id）
+const trace = ref<TraceDetail | null>(null);
+const { loading, error, execute: fetchTrace } = useApiCall((id: string) => api.usage.getTrace(id));
+
+async function load() {
+  // 路由为 /traces/[id]，params.id 必为 string（typed-router 在非精确匹配时可能宽化为 never）
+  const id = (route.params as { id?: string }).id ?? "";
+  const t = await fetchTrace(id);
+  if (t) trace.value = t;
+}
+watchEffect(load);
+
+/** 内容快照。untagged union 在 Vue 模板深层类型推断会触发 TS2589，
+ * 故以 any 透传，运行时由 trace-parts 类型守卫保证正确性。 */
+const requestMessages = computed<any[] | null>(() => trace.value?.requestMessages ?? null);
+const responseParts = computed<any[] | null>(() => trace.value?.responseParts ?? null);
 
 const copiedField = ref<string | null>(null);
 async function copyText(key: string, text: string) {
@@ -46,20 +61,21 @@ async function copyText(key: string, text: string) {
 
 function statusBadge(status: string): { label: string; cls: string } {
   switch (status) {
-    case "Success":
+    case "success":
       return { label: "成功", cls: "text-cta border-cta/30 bg-cta/10" };
-    case "Error":
+    case "error":
       return { label: "失败", cls: "text-destructive border-destructive/30 bg-destructive/10" };
-    case "Cancelled":
+    case "cancelled":
       return { label: "已取消", cls: "text-muted-foreground border-border bg-muted" };
-    case "Streaming":
+    case "streaming":
       return { label: "进行中", cls: "text-chart-2 border-chart-2/30 bg-chart-2/10" };
     default:
       return { label: "等待中", cls: "text-chart-4 border-chart-4/30 bg-chart-4/10" };
   }
 }
 
-function roleMeta(role: ChatMessageRole): { label: string; icon: any; cls: string } {
+function roleMeta(role: unknown): { label: string; icon: any; cls: string } {
+  // role 恒为字符串字面量（后端字符串序列化），unknown 仅因快照字段 any 透传
   switch (role) {
     case ROLE_SYSTEM:
     case ROLE_DEVELOPER:
@@ -109,7 +125,7 @@ function thinkingText(v: string | string[]): string {
   return Array.isArray(v) ? v.join("\n") : v;
 }
 
-function toolResultText(p: ToolResultPart): string {
+function toolResultText(p: LanguageModelToolResultPart): string {
   return p.content
     .map((c) => (isTextPart(c) ? c.value : isDataPart(c) ? `[${c.mimeType}]` : JSON.stringify(c)))
     .join("\n");
@@ -126,7 +142,16 @@ function toggleThinking(i: number) {
 </script>
 
 <template>
-  <PageShell v-if="trace">
+  <!-- Loading -->
+  <PageShell v-if="loading">
+    <div class="flex flex-col gap-4">
+      <Skeleton class="h-10 w-full rounded-lg" />
+      <Skeleton class="h-24 w-full rounded-xl" />
+      <Skeleton class="h-48 w-full rounded-xl" />
+    </div>
+  </PageShell>
+
+  <PageShell v-else-if="trace">
     <!-- 头部：返回 + 标题 + 状态（固定不滚动） -->
     <div class="flex shrink-0 items-center gap-3">
       <Button
@@ -142,7 +167,7 @@ function toggleThinking(i: number) {
         <Badge variant="outline" :class="['shrink-0 text-[10px]', statusBadge(trace.status).cls]">
           {{ statusBadge(trace.status).label }}
         </Badge>
-        <Badge v-if="trace.interface === 'WsRpc'" variant="secondary" class="shrink-0 text-[10px]">
+        <Badge v-if="trace.interface === 'ws_rpc'" variant="secondary" class="shrink-0 text-[10px]">
           WS RPC
         </Badge>
       </div>
@@ -245,16 +270,16 @@ function toggleThinking(i: number) {
       </Card>
 
       <!-- 请求消息 -->
-      <Card v-if="trace.requestMessages" class="shrink-0 gap-3 py-4">
+      <Card v-if="requestMessages" class="shrink-0 gap-3 py-4">
         <CardHeader class="px-4 pb-0">
           <CardTitle class="text-sm font-medium">请求消息</CardTitle>
           <CardDescription class="text-xs">
-            {{ trace.requestMessages.length }} 条消息（内容快照，Opt-In 采集）
+            {{ requestMessages?.length ?? 0 }} 条消息（内容快照，Opt-In 采集）
           </CardDescription>
         </CardHeader>
         <CardContent class="flex flex-col gap-3 px-4 pt-1">
           <div
-            v-for="(msg, i) in trace.requestMessages"
+            v-for="(msg, i) in requestMessages ?? []"
             :key="i"
             class="rounded-lg border border-border/60 bg-muted/20 px-4 py-3"
           >
@@ -317,15 +342,15 @@ function toggleThinking(i: number) {
       </Card>
 
       <!-- 响应 parts -->
-      <Card v-if="trace.responseParts" class="shrink-0 gap-3 py-4">
+      <Card v-if="responseParts" class="shrink-0 gap-3 py-4">
         <CardHeader class="px-4 pb-0">
           <CardTitle class="text-sm font-medium">响应内容</CardTitle>
           <CardDescription class="text-xs">
-            聚合后的 LMResponsePart 序列（{{ trace.responseParts.length }} 个 part）
+            聚合后的 LMResponsePart 序列（{{ responseParts?.length ?? 0 }} 个 part）
           </CardDescription>
         </CardHeader>
         <CardContent class="flex flex-col gap-2 px-4 pt-1">
-          <template v-for="(part, i) in trace.responseParts" :key="i">
+          <template v-for="(part, i) in responseParts ?? []" :key="i">
             <!-- Text -->
             <div
               v-if="isTextPart(part)"
@@ -419,10 +444,7 @@ function toggleThinking(i: number) {
       </Card>
 
       <!-- 无快照提示 -->
-      <Alert
-        v-if="!trace.requestMessages && !trace.responseParts"
-        class="shrink-0 border-border bg-muted/20"
-      >
+      <Alert v-if="!requestMessages && !responseParts" class="shrink-0 border-border bg-muted/20">
         <AlertDescription class="text-xs text-muted-foreground">
           此请求未采集内容快照。设置
           <code class="font-mono">LLM_BRIDGE_OBS_CAPTURE_CONTENT=true</code>
@@ -432,9 +454,10 @@ function toggleThinking(i: number) {
     </div>
   </PageShell>
 
-  <!-- 未找到 -->
+  <!-- 未找到 / 加载失败 -->
   <PageShell v-else>
-    <EmptyState :icon="ScrollText" title="未找到该请求记录" />
+    <ErrorState v-if="error" :error="error" inline @retry="load" />
+    <EmptyState v-else :icon="ScrollText" title="未找到该请求记录" />
     <div class="flex justify-center">
       <Button variant="outline" class="cursor-pointer" @click="router.push('/traces')">
         <ArrowLeft class="mr-1 h-4 w-4" /> 返回请求追踪

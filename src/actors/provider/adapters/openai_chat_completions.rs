@@ -50,9 +50,8 @@ pub async fn stream_chat(
     let response = match req_builder.json(&payload).send().await {
         Ok(response) => response,
         Err(error) => {
-            let err = ProviderError::plain(format!(
-                "openai chat completions request failed: {error}"
-            ));
+            let err =
+                ProviderError::plain(format!("openai chat completions request failed: {error}"));
             if let Some(tx) = started_tx.take() {
                 let _ = tx.send(Err(err.clone()));
             }

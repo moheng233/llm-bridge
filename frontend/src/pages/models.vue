@@ -70,7 +70,6 @@ async function load() {
 }
 
 watchEffect(() => {
-  onlyAvailable.value;
   load();
 });
 

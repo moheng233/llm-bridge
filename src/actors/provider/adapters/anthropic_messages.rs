@@ -45,7 +45,9 @@ pub async fn stream_chat(
         tracing::warn!("anthropic adapter: seed parameter is not supported and will be ignored");
     }
     if request.frequency_penalty.is_some() || request.presence_penalty.is_some() {
-        tracing::warn!("anthropic adapter: frequency_penalty/presence_penalty are not supported and will be ignored");
+        tracing::warn!(
+            "anthropic adapter: frequency_penalty/presence_penalty are not supported and will be ignored"
+        );
     }
     if request.logit_bias.is_some() {
         tracing::warn!("anthropic adapter: logit_bias is not supported and will be ignored");
@@ -86,8 +88,7 @@ pub async fn stream_chat(
     let response = match req_builder.json(&payload).send().await {
         Ok(response) => response,
         Err(error) => {
-            let err =
-                ProviderError::plain(format!("anthropic messages request failed: {error}"));
+            let err = ProviderError::plain(format!("anthropic messages request failed: {error}"));
             if let Some(tx) = started_tx.take() {
                 let _ = tx.send(Err(err.clone()));
             }
@@ -124,8 +125,7 @@ pub async fn stream_chat(
                 let parts = map_event(&data, &mut stream_state)?;
 
                 // Capture upstream id from message_start.
-                if let (Some(tx), Some(id)) =
-                    (metadata_tx.take(), stream_state.upstream_id.clone())
+                if let (Some(tx), Some(id)) = (metadata_tx.take(), stream_state.upstream_id.clone())
                 {
                     let _ = tx.send(ProviderResponseMetadata {
                         id: Some(id),

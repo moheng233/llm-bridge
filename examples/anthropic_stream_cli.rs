@@ -68,8 +68,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let (tx, mut rx) = mpsc::channel(64);
     tokio::spawn(async move {
-        let (metadata_tx, _metadata_rx) =
-            tokio::sync::oneshot::channel::<llm_bridge::actors::provider::ProviderResponseMetadata>();
+        let (metadata_tx, _metadata_rx) = tokio::sync::oneshot::channel::<
+            llm_bridge::actors::provider::ProviderResponseMetadata,
+        >();
         let (started_tx, _started_rx) =
             tokio::sync::oneshot::channel::<llm_bridge::actors::provider::ProviderStartSignal>();
         if let Err(error) =
