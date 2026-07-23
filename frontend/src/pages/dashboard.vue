@@ -36,7 +36,7 @@ const ranking = computed(() => rankModels(filteredDaily.value).slice(0, 6));
 const recentTraces = computed(() => MOCK_TRACES.slice(0, 5));
 
 const maxTokens = computed(() =>
-  Math.max(...daily.value.map((d) => d.inputTokens + d.outputTokens), 1),
+  Math.max(...daily.value.map((d) => d.inputTokens + d.outputTokens + d.cachedTokens), 1),
 );
 const maxRankTokens = computed(() => Math.max(...ranking.value.map((r) => r.totalTokens), 1));
 
@@ -59,6 +59,12 @@ function statusBadge(status: string): { label: string; cls: string } {
     default:
       return { label: "等待中", cls: "text-chart-4 border-chart-4/30 bg-chart-4/10" };
   }
+}
+
+/** 缓存率 = 缓存 tokens / 输入 tokens（缓存命中是输入前缀的重用） */
+function cacheRate(d: { inputTokens: number; cachedTokens: number }): string {
+  if (d.inputTokens <= 0) return "0.0";
+  return ((d.cachedTokens / d.inputTokens) * 100).toFixed(1);
 }
 </script>
 
@@ -157,7 +163,9 @@ function statusBadge(status: string): { label: string; cls: string } {
         <div class="flex items-center justify-between">
           <div>
             <CardTitle class="text-sm font-medium">Token 消耗趋势</CardTitle>
-            <CardDescription class="text-xs">按日聚合输入 / 输出 tokens（含推理）</CardDescription>
+            <CardDescription class="text-xs"
+              >按日聚合输入 / 输出（含推理）/ 缓存 tokens</CardDescription
+            >
           </div>
           <div class="flex items-center gap-4 text-xs text-muted-foreground">
             <span class="flex items-center gap-1.5">
@@ -165,6 +173,9 @@ function statusBadge(status: string): { label: string; cls: string } {
             </span>
             <span class="flex items-center gap-1.5">
               <span class="h-2.5 w-2.5 rounded-sm bg-chart-2" /> 输出
+            </span>
+            <span class="flex items-center gap-1.5">
+              <span class="h-2.5 w-2.5 rounded-sm bg-chart-4" /> 缓存
             </span>
           </div>
         </div>
@@ -175,13 +186,18 @@ function statusBadge(status: string): { label: string; cls: string } {
             <Tooltip>
               <TooltipTrigger as-child>
                 <div class="group flex h-full min-w-0 flex-1 flex-col justify-end gap-0.5">
+                  <!-- 堆叠顺序（自下而上）：缓存 → 输入 → 输出 -->
                   <div
                     class="w-full rounded-t-sm bg-chart-2 transition-opacity group-hover:opacity-80"
                     :style="{ height: `${(d.outputTokens / maxTokens) * 100}%` }"
                   />
                   <div
-                    class="w-full rounded-t-sm bg-cta transition-opacity group-hover:opacity-80"
+                    class="w-full bg-cta transition-opacity group-hover:opacity-80"
                     :style="{ height: `${(d.inputTokens / maxTokens) * 100}%` }"
+                  />
+                  <div
+                    class="w-full bg-chart-4 transition-opacity group-hover:opacity-80"
+                    :style="{ height: `${(d.cachedTokens / maxTokens) * 100}%` }"
                   />
                 </div>
               </TooltipTrigger>
@@ -190,6 +206,7 @@ function statusBadge(status: string): { label: string; cls: string } {
                   <span class="font-semibold">{{ d.day }}</span>
                   <span>输入 {{ formatTokens(d.inputTokens) }}</span>
                   <span>输出 {{ formatTokens(d.outputTokens) }}</span>
+                  <span> 缓存 {{ formatTokens(d.cachedTokens) }}（{{ cacheRate(d) }}%） </span>
                   <span>{{ d.requests }} 次请求 · {{ formatCost(d.costUsd) }}</span>
                 </div>
               </TooltipContent>

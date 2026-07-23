@@ -181,7 +181,9 @@ export const MOCK_USAGE_DAILY: UsageDailyRow[] = (() => {
       const input = count * inPer + Math.round(Math.random() * 500);
       const output = count * outPer + Math.round(Math.random() * 200);
       const reasoning = model.includes("gemini") ? Math.round(output * 0.4) : 0;
-      const cached = model.includes("claude") ? Math.round(input * 0.15) : 0;
+      // 演示缓存命中：各协议均有缓存层（Anthropic prompt cache / OpenAI 自动缓存），
+      // 命中率 ~64%（业务高峰期长上下文重复前缀场景）
+      const cached = Math.round(input * (0.6 + Math.random() * 0.08));
       rows.push({
         day,
         tokenId: 1 + (dayIdx % MOCK_TOKENS.length),
@@ -649,6 +651,7 @@ export interface DailyPoint {
   label: string; // MM-DD
   inputTokens: number;
   outputTokens: number;
+  cachedTokens: number;
   requests: number;
   costUsd: number;
 }
@@ -663,11 +666,13 @@ export function aggregateByDay(rows: UsageDailyRow[]): DailyPoint[] {
         label: r.day.slice(5),
         inputTokens: 0,
         outputTokens: 0,
+        cachedTokens: 0,
         requests: 0,
         costUsd: 0,
       } satisfies DailyPoint);
     e.inputTokens += r.inputTokens;
     e.outputTokens += r.outputTokens + r.reasoningTokens;
+    e.cachedTokens += r.cachedTokens;
     e.requests += r.requestCount;
     e.costUsd += r.costUsd;
     map.set(r.day, e);
