@@ -35,18 +35,18 @@ rustls = { version = "0.23.42", default-features = false, features = [
   "std"
 ] }
 serde = { version = "1.0.229", features = ["derive"] }
-serde_json = "1.0.150"
+serde_json = "1.0.151"
 thiserror = "2.0.19"
-time = { version = "0.3.53", features = ["serde", "std"] }
+time = { version = "0.3.54", features = ["serde", "std"] }
 toasty = { version = "0.8.0", features = ["jiff", "serde", "sqlite"] }
 toasty-cli = "0.8.0"
-tokio = { version = "1.53.0", features = [
+tokio = { version = "1.53.1", features = [
   "macros",
   "rt-multi-thread",
   "sync",
   "time"
 ] }
-tokio-stream = { version = "0.1.18", features = ["sync"] }
+tokio-stream = { version = "0.1.19", features = ["sync"] }
 tower-sessions = "0.15.0"
 tracing = "0.1.44"
 tracing-opentelemetry = { version = "0.33.0", optional = true }
