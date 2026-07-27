@@ -1,0 +1,20 @@
+{
+  "name": "models-dev-catalog",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "generate": "bun src/generate.ts",
+    "test": "bun test"
+  },
+  "module": "index.ts",
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^7.0.2"
+  },
+  "dependencies": {
+    "smol-toml": "^1.7.1"
+  }
+}

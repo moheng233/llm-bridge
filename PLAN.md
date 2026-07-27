@@ -1,6 +1,6 @@
 # LLM-Bridge 开发计划
 
-> 最后更新：2026-07-22
+> 最后更新：2026-07-24
 > 项目定位：homelab / 小型工作室的私有化 OpenRouter
 
 ---
@@ -266,3 +266,114 @@ Provider 多协议架构已落地：Provider → ProviderProtocol（协议 + bas
 - 一次性 Token 下载/二次确认
 - 国际化（i18n）
 - E2E 测试（§4 的 WS 契约测试为协议级集成测试，不在此限）
+
+---
+
+## 7. 从 models.dev 派生 JSON 的三层导入管道（2026-07-24 决策定稿）
+
+> 目标：在管理界面增加导入功能，把 models.dev 的模型/提供者/模型链接三层数据导入 llm-bridge。**不消费 models.dev 官方 models.json/api.json**（api.json 的 provider 侧裸 id 无法无歧义映射回规范模型——`github-models` 源 `xai/grok-3` 会错误拼成 `github-models/xai/grok-3` 而非 `xai/grok-3`，属 models.dev 缺陷）；改为基于 `anomalyco/models.dev` `dev` 分支的三表 TOML 源（官方 `base_model` 外键）**自建派生 JSON 管道**，脚本与 Actions 全部落在**本仓库**，GitHub Pages 托管，程序以单一可覆盖 URL 为数据源。
+
+### 7.1 总体架构
+
+```
+anomalyco/models.dev (dev 分支, TOML 三层)
+   models/{family}/{model}.toml          → LLMModel（provider 无关标称数据）
+   providers/{id}/provider.toml          → Provider + ProviderProtocol
+   providers/{id}/models/{model}.toml    → ModelProvider（价格 + provider 侧 id + 覆盖）
+        │  base_model = "{family}/{model}"（官方外键，消除 id 歧义）
+        ▼
+本仓库 scripts/models-dev-catalog/（Node 20+ TypeScript，Bun 运行）
+   扫描源 TOML → 三层合并（provider model 继承 base_model 元数据，本地字段优先）
+        ▼
+GitHub Actions（.github/workflows/models-dev-catalog.yml）
+   定时 cron（每日）+ workflow_dispatch + 源仓库 push 触发
+        ▼
+GitHub Pages（本仓库 gh-pages 分支）
+   https://moheng233.github.io/llm-bridge/catalog.json  ← 默认数据源 URL
+   https://moheng233.github.io/llm-bridge/contract.json ← schema 契约
+        ▼
+llm-bridge 运行时：modelsImport.sourceUrl（配置文件 + LLM_BRIDGE_MODELS_IMPORT_URL 覆盖）
+   admin 手动触发预览/导入 → 幂等 upsert LLMModel / Provider / ProviderProtocol / ModelProvider
+```
+
+### 7.2 已验证的源 schema（anomalyco/models.dev dev 分支，2026-07-24 第一手核实）
+
+| 源 | 关键字段 |
+|----|---------|
+| `models/{family}/{model}.toml` | `name, family, release_date, last_updated, knowledge?, attachment, reasoning, tool_call, structured_output?, temperature?, open_weights, license?, [limit]{context?, input?, output?}, [modalities]{input[], output[]}, links?/weights?/benchmarks?` |
+| `providers/{id}/provider.toml` | `name, npm, env[], doc, api?`（`api` 仅 `@ai-sdk/openai-compatible` 时必有） |
+| `providers/{id}/models/{model}.toml` | `base_model="{family}/{model}"`, `[cost]{input, output, reasoning?, cache_read?, cache_write?, input_audio?, output_audio?}`（USD/1M tokens）, 可选 `[limit]`/`[modalities]` 覆盖, `status?`(alpha/beta/deprecated), `base_model_omit?` |
+
+### 7.3 派生 JSON 契约（直接对齐 llm-bridge 导入需求）
+
+`catalog.json`：
+
+```jsonc
+{
+  "generatedAt": "RFC3339",
+  "sourceRev": "anomalyco/models.dev commit sha",
+  "schemaVersion": 1,
+  "models":    [{ "modelName": "openai/gpt-5.4", "displayName": "GPT-5.4", "description?": "...",
+                  "maxInputTokens": 272000, "maxOutputTokens": 128000,
+                  "toolCalling": true, "vision": true, "thinking": true, "adaptiveThinking": false }],
+  "providers": [{ "providerId": "openai", "displayName": "OpenAI",
+                  "baseUrl": "https://api.openai.com/v1", "compat": "openAiChatCompletions" }],
+  "links":     [{ "providerId": "openai", "protocolKey": "openAiChatCompletions|https://api.openai.com/v1",
+                  "modelName": "openai/gpt-5.4", "providerModelId": "gpt-5.4",
+                  "inputPricePer1m?": 1.25, "outputPricePer1m?": 10.0, "cacheReadPricePer1m?": 0.125,
+                  "enabled": true }]
+}
+```
+
+映射规则（决策已定）：
+- `modelName = {family}/{id}`（源 `models/` 路径）；`providerModelId` = provider 侧原始 id。
+- `maxInputTokens = limit.input ?? limit.context ?? 4096`；`maxOutputTokens = limit.output ?? 4096`。
+- `vision = modalities.input 含 "image"`；`thinking = reasoning`；`adaptiveThinking` 恒 `false`。
+- `compat`：`npm` 含 `anthropic` → `anthropicMessages`，否则 → `openAiChatCompletions`（保守默认）。
+- `links.enabled`：`status == "deprecated"` → `false`，其余 → `true`。
+- **缺口显式记录**：`cache_write` 在 `ModelProvider` 无对应列，丢弃；`reasoning/input_audio/output_audio` 同理丢弃。
+
+`contract.json`：`{ "schemaVersion": 1, "fields": {...} }`，供 llm-bridge 拉取时校验兼容性，未来升版不破坏旧消费方。
+
+### 7.4 本仓库内落地（派生管道）
+
+| 组件 | 说明 |
+|------|------|
+| `scripts/models-dev-catalog/` | 独立 Node/TS 子包（Bun 运行）：`fetch`（git sparse checkout 或 GitHub tarball 拉源 dev 分支）→ `parse`（TOML）→ `merge`（base_model 继承合并）→ `emit`（写 `dist/catalog.json` + `dist/contract.json`）→ `validate`（schema 校验 + 引用完整性：每条 link 的 modelName 必须存在于 models） |
+| `.github/workflows/models-dev-catalog.yml` | `on: schedule(cron: "17 3 * * *")`（UTC 每日）+ `workflow_dispatch`；检出本仓库 → Bun 安装依赖 → 跑生成脚本 → 校验 → 将 `dist/` 发布到 `gh-pages` 分支（`peaceiris/actions-gh-pages@v4` 或 `actions/deploy-pages`） |
+| Pages 开启 | 仓库 Settings → Pages → Source = `gh-pages` 分支根目录（一次性手工设置） |
+
+幂等性：同一 sourceRev 重复运行产出字节级一致 JSON（键排序固定、时间戳唯一变动字段），Pages diff 仅含真实数据变化。
+
+### 7.5 llm-bridge 侧导入
+
+**配置**：`RuntimeSettings` 新增 `modelsImport.sourceUrl`（默认 `https://moheng233.github.io/llm-bridge/catalog.json`），环境变量 `LLM_BRIDGE_MODELS_IMPORT_URL` 覆盖。
+
+**Store 新增**（`src/store/mod.rs`，均为按业务键 upsert，幂等）：
+- `get_model_by_name` / `upsert_model_by_name(ModelInput)`（model_name unique）
+- `upsert_protocol_by_key(provider_id, protocol, base_url)`（ProviderProtocol 无 unique 约束，先查后插；同 protocol+base_url 复用）
+- `upsert_model_provider(model_id, protocol_id, link fields)`（按 `(model_id, protocol_id)` 唯一键查；存在→更新价格/启用/覆盖字段，不存在→create）
+- **不直接复用** `add_provider_model`（无脑 create，重导入必撞 `(model_id, protocol_id)` 唯一约束）与 `ensure_model`（存在即返回、不更新标称字段——导入场景需要覆盖式 upsert）。
+
+**端点**（`src/server/models_dev.rs` 新文件，挂 `admin_crud_routes()`，`AdminAuth`）：
+- `GET /api/v1/admin/models-import/preview`：拉 catalog.json（reqwest，参考 `src/quota/adapters/umans.rs:54` 模板；`If-None-Match`/`If-Modified-Since` 条件拉取）→ 与 DB diff → 返回三层预览项（各标 `exists: bool` → 新建/更新）。
+- `POST /api/v1/admin/models-import`：请求体 `{ models: Vec<modelName>, providers: Vec<providerId>, links: Vec<linkKey> }`；单事务逐层 upsert（providers → protocols → models → links），响应 `{ created, updated, skipped, errors }`。
+- **api_keys 保留策略**：`upsert_provider` 会整列覆盖 `api_keys`（已核实 `src/store/mod.rs:91-135`）——导入 provider 时**永不携带 api_keys**（派生 JSON 本无密钥），新建 provider 时置空数组，由管理员在 UI 手工补 key；不得因导入清空已有 key → 实现时 upsert 路径对已有 provider **不传 api_keys 字段**（只更新 display_name/enabled/priority），新建才给空。
+
+**前端**：
+- 共享组件 `components/models/CatalogImportDialog.vue`（预览 + 搜索 + 前缀筛选 + 三层分组 checkbox + 全选/清空 + 导入进度 toast）。
+- 入口 1：`pages/admin/models.vue` `SectionHeader #actions` 加「从 models.dev 目录导入」（模型视角：勾选 models 时联动带出可选 links）。
+- 入口 2：`pages/providers.vue` `SectionHeader #actions` 加同按钮（提供者视角：勾选 providers/links 时联动校验依赖 models）。
+- 绑定：`cargo test export_bindings` + `cargo test generate_ts_client` 重新生成。
+
+### 7.6 实施步骤
+
+- [ ] **Phase 1 — 派生管道**：`scripts/models-dev-catalog/`（含单测：合并规则、引用完整性、idempotency 快照）+ workflow + 开启 Pages → 手动触发一次产出首批 catalog.json/contract.json 并 curl 验证。
+- [ ] **Phase 2 — 后端**：`RuntimeSettings.modelsImport`、`src/server/models_dev.rs`（fetch + diff + 两个端点）、store 四个 upsert 方法（含 api_keys 保留逻辑）+ 单测（upsert 幂等、api_keys 不被清空、link 冲突转更新）。
+- [ ] **Phase 3 — 前端**：`CatalogImportDialog.vue` + 两个入口接线 + 绑定重生成 → 端到端手动验证（导入 → 重导入显示全「更新」、DB 无重复行、已有 provider 的 api_keys 保留）。
+
+### 7.7 排除项与遗留
+
+- 不做定时自动同步到 DB（仅 admin 手动触发）；不消费 models.dev 官方 models.json/api.json；不导入 benchmarks/links/weights/license/open_weights（无目标列，超范围）。
+- 遗留（需 migration 时才做）：`ModelProvider.cache_write_price_per_1m` 列；`status`（deprecated 当前仅映射到 `enabled=false`，不入库 status 文本）。
+- GitHub Actions/Pages 的可用性以 `origin = moheng233/llm-bridge` 私有/公开属性为准：若仓库为 private 且未启用 Pages，Phase 1 验收时需先确认 Pages 可公开访问 catalog.json（private 仓库的 Pages 默认仍公开）。

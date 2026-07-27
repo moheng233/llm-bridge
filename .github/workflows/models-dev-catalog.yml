@@ -1,0 +1,70 @@
+name: models-dev-catalog
+
+# 从 anomalyco/models.dev (dev 分支) 生成 llm-bridge 导入契约 JSON，
+# 发布到 gh-pages 分支，经 GitHub Pages 公开：
+#   https://moheng233.github.io/llm-bridge/catalog.json
+#   https://moheng233.github.io/llm-bridge/contract.json
+
+on:
+  schedule:
+    # 每日 UTC 03:17（错开整点高峰）
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+  # 源仓库 push 到 dev 分支时无法直接感知（跨仓库），
+  # 由每日 cron 兜底；如需更及时可在源仓库加 webhook 调 repository_dispatch。
+
+permissions:
+  contents: write # 推送 gh-pages 分支所需
+
+concurrency:
+  group: models-dev-catalog
+  cancel-in-progress: true
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout llm-bridge（脚本所在仓库）
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.13"
+
+      - name: Install dependencies
+        working-directory: scripts/models-dev-catalog
+        run: bun install --frozen-lockfile
+
+      - name: Generate catalog.json + contract.json
+        working-directory: scripts/models-dev-catalog
+        run: bun src/generate.ts --out dist
+
+      - name: 校验产物
+        working-directory: scripts/models-dev-catalog
+        run: |
+          test -s dist/catalog.json || { echo "catalog.json 缺失或为空"; exit 1; }
+          test -s dist/contract.json || { echo "contract.json 缺失或为空"; exit 1; }
+          bun -e '
+            const c = require("./dist/catalog.json");
+            const contract = require("./dist/contract.json");
+            if (contract.schemaVersion !== 1) throw new Error("schemaVersion 不为 1");
+            if (!Array.isArray(c.models) || !Array.isArray(c.providers) || !Array.isArray(c.links))
+              throw new Error("catalog 三层字段缺失");
+            const modelNames = new Set(c.models.map(m => m.modelName));
+            const providerIds = new Set(c.providers.map(p => p.providerId));
+            for (const l of c.links) {
+              if (!modelNames.has(l.modelName)) throw new Error(`link 引用不存在 model: ${l.modelName}`);
+              if (!providerIds.has(l.providerId)) throw new Error(`link 引用不存在 provider: ${l.providerId}`);
+            }
+            console.log(`ok: models=${c.models.length} providers=${c.providers.length} links=${c.links.length}`);
+          '
+
+      - name: 发布到 gh-pages 分支
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: scripts/models-dev-catalog/dist
+          publish_branch: gh-pages
+          commit_message: "chore(catalog): ${{ github.sha }} 生成 models-dev catalog"
+          # 幂等：同 sourceRev 重复运行产物字节一致，gh-pages 仅在数据真实变化时产生新 commit
