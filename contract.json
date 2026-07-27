@@ -1,0 +1,62 @@
+{
+  "schemaVersion": 1,
+  "source": {
+    "repo": "anomalyco/models.dev",
+    "ref": "dev"
+  },
+  "fields": {
+    "models": [
+      "modelName",
+      "displayName",
+      "description?",
+      "maxInputTokens",
+      "maxOutputTokens",
+      "toolCalling",
+      "vision",
+      "thinking",
+      "adaptiveThinking"
+    ],
+    "providers": [
+      "providerId",
+      "displayName",
+      "baseUrl",
+      "compat"
+    ],
+    "links": [
+      "providerId",
+      "protocolKey",
+      "modelName",
+      "providerModelId",
+      "inputPricePer1m?",
+      "outputPricePer1m?",
+      "cacheReadPricePer1m?",
+      "enabled"
+    ]
+  },
+  "droppedSourceFields": {
+    "reason": "llm-bridge 目标表无对应列，显式丢弃（不静默简化：此处记录缺口）",
+    "model": [
+      "family",
+      "release_date",
+      "last_updated",
+      "knowledge",
+      "attachment",
+      "structured_output",
+      "temperature",
+      "open_weights",
+      "license",
+      "links",
+      "weights",
+      "benchmarks"
+    ],
+    "cost": [
+      "reasoning",
+      "cache_write",
+      "input_audio",
+      "output_audio"
+    ],
+    "providerModel": [
+      "status（映射为 enabled = status != 'deprecated'）"
+    ]
+  }
+}
