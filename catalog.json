@@ -1,6 +1,6 @@
 {
-  "generatedAt": "2026-08-09T03:52:14.435Z",
-  "sourceRev": "99470dd0d232ab57267ddfec194d6ff4be2d7e25",
+  "generatedAt": "2026-08-10T03:58:49.790Z",
+  "sourceRev": "cb009a51717eb14ee2cf6532ee8c41528b7ef1b3",
   "schemaVersion": 1,
   "models": [
     {
@@ -13526,16 +13526,6 @@
     {
       "providerId": "llmgateway",
       "protocolKey": "openAiChatCompletions|https://api.llmgateway.io/v1",
-      "modelName": "openai/gpt-5.2-chat-latest",
-      "providerModelId": "gpt-5.2-chat-latest",
-      "inputPricePer1m": 1.75,
-      "outputPricePer1m": 14,
-      "cacheReadPricePer1m": 0.175,
-      "enabled": true
-    },
-    {
-      "providerId": "llmgateway",
-      "protocolKey": "openAiChatCompletions|https://api.llmgateway.io/v1",
       "modelName": "openai/gpt-5.2-codex",
       "providerModelId": "gpt-5.2-codex",
       "inputPricePer1m": 1.75,
@@ -13557,16 +13547,6 @@
       "protocolKey": "openAiChatCompletions|https://api.llmgateway.io/v1",
       "modelName": "openai/gpt-5.2",
       "providerModelId": "gpt-5.2",
-      "inputPricePer1m": 1.75,
-      "outputPricePer1m": 14,
-      "cacheReadPricePer1m": 0.175,
-      "enabled": true
-    },
-    {
-      "providerId": "llmgateway",
-      "protocolKey": "openAiChatCompletions|https://api.llmgateway.io/v1",
-      "modelName": "openai/gpt-5.3-chat-latest",
-      "providerModelId": "gpt-5.3-chat-latest",
       "inputPricePer1m": 1.75,
       "outputPricePer1m": 14,
       "cacheReadPricePer1m": 0.175,
@@ -18945,6 +18925,16 @@
       "enabled": true
     },
     {
+      "providerId": "ofox",
+      "protocolKey": "openAiChatCompletions|https://api.ofox.ai/v1",
+      "modelName": "zhipuai/glm-5v-turbo",
+      "providerModelId": "z-ai/glm-5v-turbo",
+      "inputPricePer1m": 1.2,
+      "outputPricePer1m": 4,
+      "cacheReadPricePer1m": 0.24,
+      "enabled": true
+    },
+    {
       "providerId": "ollama-cloud",
       "protocolKey": "openAiChatCompletions|https://ollama.com/v1",
       "modelName": "deepseek/deepseek-v4-flash-0731",
@@ -19512,9 +19502,9 @@
       "protocolKey": "openAiChatCompletions|https://openrouter.ai/api/v1",
       "modelName": "deepseek/deepseek-v3.2",
       "providerModelId": "deepseek/deepseek-v3.2",
-      "inputPricePer1m": 0.26,
-      "outputPricePer1m": 0.38,
-      "cacheReadPricePer1m": 0.13,
+      "inputPricePer1m": 0.269,
+      "outputPricePer1m": 0.4,
+      "cacheReadPricePer1m": 0.1345,
       "enabled": true
     },
     {
@@ -19719,8 +19709,9 @@
       "protocolKey": "openAiChatCompletions|https://openrouter.ai/api/v1",
       "modelName": "google/gemma-4-26b-a4b-it",
       "providerModelId": "google/gemma-4-26b-a4b-it",
-      "inputPricePer1m": 0.07,
-      "outputPricePer1m": 0.34,
+      "inputPricePer1m": 0.12,
+      "outputPricePer1m": 0.4,
+      "cacheReadPricePer1m": 0.05,
       "enabled": true
     },
     {
@@ -19901,9 +19892,9 @@
       "protocolKey": "openAiChatCompletions|https://openrouter.ai/api/v1",
       "modelName": "moonshotai/kimi-k2.6",
       "providerModelId": "moonshotai/kimi-k2.6",
-      "inputPricePer1m": 0.5795,
-      "outputPricePer1m": 2.44,
-      "cacheReadPricePer1m": 0.0976,
+      "inputPricePer1m": 0.95,
+      "outputPricePer1m": 4,
+      "cacheReadPricePer1m": 0.16,
       "enabled": true
     },
     {
@@ -19933,7 +19924,7 @@
       "providerModelId": "nvidia/nemotron-3-nano-30b-a3b",
       "inputPricePer1m": 0.05,
       "outputPricePer1m": 0.2,
-      "cacheReadPricePer1m": 0.03,
+      "cacheReadPricePer1m": 0.025,
       "enabled": true
     },
     {
@@ -19959,8 +19950,8 @@
       "protocolKey": "openAiChatCompletions|https://openrouter.ai/api/v1",
       "modelName": "nvidia/nemotron-3-super-120b-a12b",
       "providerModelId": "nvidia/nemotron-3-super-120b-a12b",
-      "inputPricePer1m": 0.3,
-      "outputPricePer1m": 0.9,
+      "inputPricePer1m": 0.085,
+      "outputPricePer1m": 0.4,
       "enabled": true
     },
     {
@@ -20896,9 +20887,9 @@
       "protocolKey": "openAiChatCompletions|https://openrouter.ai/api/v1",
       "modelName": "zhipuai/glm-5.1",
       "providerModelId": "z-ai/glm-5.1",
-      "inputPricePer1m": 0.952,
-      "outputPricePer1m": 2.992,
-      "cacheReadPricePer1m": 0.1768,
+      "inputPricePer1m": 1.4,
+      "outputPricePer1m": 4.4,
+      "cacheReadPricePer1m": 0.26,
       "enabled": true
     },
     {
@@ -20906,9 +20897,9 @@
       "protocolKey": "openAiChatCompletions|https://openrouter.ai/api/v1",
       "modelName": "zhipuai/glm-5.2",
       "providerModelId": "z-ai/glm-5.2",
-      "inputPricePer1m": 0.098,
-      "outputPricePer1m": 0.308,
-      "cacheReadPricePer1m": 0.0182,
+      "inputPricePer1m": 0.76,
+      "outputPricePer1m": 2.42,
+      "cacheReadPricePer1m": 0.14,
       "enabled": true
     },
     {
@@ -24179,15 +24170,6 @@
       "providerModelId": "gpt-oss-safeguard-120b",
       "inputPricePer1m": 0.15,
       "outputPricePer1m": 0.6,
-      "enabled": true
-    },
-    {
-      "providerId": "tinfoil",
-      "protocolKey": "openAiChatCompletions|https://inference.tinfoil.sh/v1",
-      "modelName": "moonshotai/kimi-k2.6",
-      "providerModelId": "kimi-k2-6",
-      "inputPricePer1m": 1.5,
-      "outputPricePer1m": 5.25,
       "enabled": true
     },
     {
