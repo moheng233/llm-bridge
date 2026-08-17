@@ -1,6 +1,6 @@
 {
-  "generatedAt": "2026-08-16T03:34:53.445Z",
-  "sourceRev": "c7516b5f79b44e93df33a41740f5e3bbd724e3ed",
+  "generatedAt": "2026-08-17T03:34:33.969Z",
+  "sourceRev": "12bbfd88ca612efb8ab812c41fd088911e605482",
   "schemaVersion": 1,
   "models": [
     {
@@ -429,6 +429,17 @@
       "maxOutputTokens": 64000,
       "toolCalling": true,
       "vision": true,
+      "thinking": true,
+      "adaptiveThinking": false
+    },
+    {
+      "modelName": "alibaba/qwen3.8-2.4t-a95b",
+      "displayName": "Qwen3.8 2.4T A95B",
+      "description": "Open-weight sparse MoE (2.4T total, 95B active), the open-weight twin of Qwen3.8 Max for coding, research, complex reasoning, and agentic workflows",
+      "maxInputTokens": 262144,
+      "maxOutputTokens": 131072,
+      "toolCalling": true,
+      "vision": false,
       "thinking": true,
       "adaptiveThinking": false
     },
@@ -946,6 +957,17 @@
       "maxOutputTokens": 64000,
       "toolCalling": true,
       "vision": false,
+      "thinking": true,
+      "adaptiveThinking": false
+    },
+    {
+      "modelName": "deepreinforce/ornith-1.0-35b",
+      "displayName": "Ornith 1.0 35B",
+      "description": "Large coding-reasoning model for agentic software tasks and RL search",
+      "maxInputTokens": 262144,
+      "maxOutputTokens": 4096,
+      "toolCalling": true,
+      "vision": true,
       "thinking": true,
       "adaptiveThinking": false
     },
@@ -1874,6 +1896,17 @@
       "adaptiveThinking": false
     },
     {
+      "modelName": "mistral/voxtral-small-latest",
+      "displayName": "Voxtral Small (latest)",
+      "description": "Instruct model with native audio input for speech understanding and tool use",
+      "maxInputTokens": 32000,
+      "maxOutputTokens": 32000,
+      "toolCalling": true,
+      "vision": false,
+      "thinking": false,
+      "adaptiveThinking": false
+    },
+    {
       "modelName": "moonshotai/kimi-k2-thinking",
       "displayName": "Kimi K2 Thinking",
       "description": "Thinking Kimi model for slower research passes, planning, and hard technical questions",
@@ -2754,6 +2787,17 @@
       "adaptiveThinking": false
     },
     {
+      "modelName": "perplexity/sonar-deep-research",
+      "displayName": "Sonar Deep Research",
+      "description": "Sonar search model for autonomous research and citation-backed long-form reports",
+      "maxInputTokens": 128000,
+      "maxOutputTokens": 32768,
+      "toolCalling": false,
+      "vision": false,
+      "thinking": true,
+      "adaptiveThinking": false
+    },
+    {
       "modelName": "perplexity/sonar-pro",
       "displayName": "Sonar Pro",
       "description": "Deeper Sonar search model with broader retrieval and stronger synthesis",
@@ -2897,6 +2941,17 @@
       "adaptiveThinking": false
     },
     {
+      "modelName": "swiss-ai/apertus-8b",
+      "displayName": "Apertus 8B",
+      "description": "Fully open 8B multilingual LLM supporting 1800+ languages with 65K context. Trained on compliant open data. Apache 2.0, EU AI Act compliant.",
+      "maxInputTokens": 65536,
+      "maxOutputTokens": 8192,
+      "toolCalling": true,
+      "vision": false,
+      "thinking": false,
+      "adaptiveThinking": false
+    },
+    {
       "modelName": "tencent/hy3",
       "displayName": "Hy3",
       "description": "Tencent Hy reasoning model for coding, instruction following, and agent tasks",
@@ -2937,6 +2992,50 @@
       "maxOutputTokens": 1048576,
       "toolCalling": true,
       "vision": true,
+      "thinking": true,
+      "adaptiveThinking": false
+    },
+    {
+      "modelName": "trendyol/asure-12b",
+      "displayName": "Trendyol Asure 12B",
+      "description": "Turkish-language multimodal instruct model built on Gemma 3 12B for e-commerce text, chat, and image-text tasks",
+      "maxInputTokens": 131072,
+      "maxOutputTokens": 4096,
+      "toolCalling": false,
+      "vision": true,
+      "thinking": false,
+      "adaptiveThinking": false
+    },
+    {
+      "modelName": "upstage/solar-pro2",
+      "displayName": "Solar Pro 2",
+      "description": "Flagship model for demanding analysis, coding, and production agent workflows",
+      "maxInputTokens": 65536,
+      "maxOutputTokens": 8192,
+      "toolCalling": true,
+      "vision": false,
+      "thinking": true,
+      "adaptiveThinking": false
+    },
+    {
+      "modelName": "upstage/solar-pro3",
+      "displayName": "Solar Pro 3",
+      "description": "Flagship model for demanding analysis, coding, and production agent workflows",
+      "maxInputTokens": 131072,
+      "maxOutputTokens": 8192,
+      "toolCalling": true,
+      "vision": false,
+      "thinking": true,
+      "adaptiveThinking": false
+    },
+    {
+      "modelName": "upstage/solar-pro4",
+      "displayName": "Solar Pro 4",
+      "description": "Upstage's flagship model, specialized for agentic use",
+      "maxInputTokens": 524288,
+      "maxOutputTokens": 131072,
+      "toolCalling": true,
+      "vision": false,
       "thinking": true,
       "adaptiveThinking": false
     },
@@ -3315,6 +3414,12 @@
       "providerId": "ambient",
       "displayName": "Ambient",
       "baseUrl": "https://api.ambient.xyz/v1",
+      "compat": "openAiChatCompletions"
+    },
+    {
+      "providerId": "amd",
+      "displayName": "AMD",
+      "baseUrl": "https://developer.amd.com.cn/radeon/api/v1",
       "compat": "openAiChatCompletions"
     },
     {
@@ -3933,6 +4038,12 @@
       "providerId": "routing-run",
       "displayName": "routing.run",
       "baseUrl": "https://api.routing.run/v1",
+      "compat": "openAiChatCompletions"
+    },
+    {
+      "providerId": "runinfra",
+      "displayName": "RunInfra",
+      "baseUrl": "https://api.runinfra.ai/v1",
       "compat": "openAiChatCompletions"
     },
     {
@@ -5734,6 +5845,16 @@
       "enabled": true
     },
     {
+      "providerId": "amd",
+      "protocolKey": "openAiChatCompletions|https://developer.amd.com.cn/radeon/api/v1",
+      "modelName": "deepseek/deepseek-v4-flash-0731",
+      "providerModelId": "DeepSeek-V4-Flash",
+      "inputPricePer1m": 0.14,
+      "outputPricePer1m": 0.28,
+      "cacheReadPricePer1m": 0.0028,
+      "enabled": true
+    },
+    {
       "providerId": "anyapi",
       "protocolKey": "openAiChatCompletions|https://api.anyapi.ai/v1",
       "modelName": "anthropic/claude-haiku-4-5",
@@ -6286,6 +6407,16 @@
       "inputPricePer1m": 0.3,
       "outputPricePer1m": 2,
       "cacheReadPricePer1m": 0.029999999999999992,
+      "enabled": true
+    },
+    {
+      "providerId": "chutes",
+      "protocolKey": "openAiChatCompletions|https://llm.chutes.ai/v1",
+      "modelName": "alibaba/qwen3.8-27b",
+      "providerModelId": "Qwen/Qwen3.8-27B-TEE",
+      "inputPricePer1m": 0.4,
+      "outputPricePer1m": 3,
+      "cacheReadPricePer1m": 0.039999999999999994,
       "enabled": true
     },
     {
@@ -7401,6 +7532,16 @@
       "enabled": true
     },
     {
+      "providerId": "cortecs",
+      "protocolKey": "openAiChatCompletions|https://api.cortecs.ai/v1",
+      "modelName": "alibaba/qwen3.8-2.4t-a95b",
+      "providerModelId": "qwen3.8-2.4t-a95b",
+      "inputPricePer1m": 2.5,
+      "outputPricePer1m": 6,
+      "cacheReadPricePer1m": 0.625,
+      "enabled": true
+    },
+    {
       "providerId": "crof",
       "protocolKey": "openAiChatCompletions|https://crof.ai/v1",
       "modelName": "deepseek/deepseek-v4-flash-0731",
@@ -7665,9 +7806,9 @@
       "protocolKey": "openAiChatCompletions|https://api.crossmodel.ai/v1",
       "modelName": "deepseek/deepseek-v4-flash",
       "providerModelId": "deepseek/deepseek-v4-flash",
-      "inputPricePer1m": 0.45,
-      "outputPricePer1m": 1.35,
-      "cacheReadPricePer1m": 0.015,
+      "inputPricePer1m": 0.405,
+      "outputPricePer1m": 1.215,
+      "cacheReadPricePer1m": 0.0135,
       "enabled": true
     },
     {
@@ -7675,9 +7816,9 @@
       "protocolKey": "openAiChatCompletions|https://api.crossmodel.ai/v1",
       "modelName": "deepseek/deepseek-v4-pro",
       "providerModelId": "deepseek/deepseek-v4-pro",
-      "inputPricePer1m": 1.35,
-      "outputPricePer1m": 4.05,
-      "cacheReadPricePer1m": 0.045,
+      "inputPricePer1m": 1.215,
+      "outputPricePer1m": 3.645,
+      "cacheReadPricePer1m": 0.0405,
       "enabled": true
     },
     {
@@ -7758,6 +7899,16 @@
       "inputPricePer1m": 1.5,
       "outputPricePer1m": 7.5,
       "cacheReadPricePer1m": 0.15,
+      "enabled": true
+    },
+    {
+      "providerId": "crossmodel",
+      "protocolKey": "openAiChatCompletions|https://api.crossmodel.ai/v1",
+      "modelName": "google/gemini-3.7-flash",
+      "providerModelId": "gemini/gemini-3.7-flash",
+      "inputPricePer1m": 0.75,
+      "outputPricePer1m": 3.75,
+      "cacheReadPricePer1m": 0.075,
       "enabled": true
     },
     {
@@ -9041,6 +9192,26 @@
     {
       "providerId": "edenai",
       "protocolKey": "openAiChatCompletions|https://api.edenai.run/v3",
+      "modelName": "deepseek/deepseek-v4-flash-0731",
+      "providerModelId": "cloudflare/@cf/deepseek-ai/deepseek-v4-flash-0731",
+      "inputPricePer1m": 0.44,
+      "outputPricePer1m": 1.32,
+      "cacheReadPricePer1m": 0.014,
+      "enabled": true
+    },
+    {
+      "providerId": "edenai",
+      "protocolKey": "openAiChatCompletions|https://api.edenai.run/v3",
+      "modelName": "deepseek/deepseek-v4-pro-0813",
+      "providerModelId": "cloudflare/@cf/deepseek-ai/deepseek-v4-pro-0813",
+      "inputPricePer1m": 1.32,
+      "outputPricePer1m": 3.96,
+      "cacheReadPricePer1m": 0.044,
+      "enabled": true
+    },
+    {
+      "providerId": "edenai",
+      "protocolKey": "openAiChatCompletions|https://api.edenai.run/v3",
       "modelName": "meta/llama-guard-3-8b",
       "providerModelId": "cloudflare/@cf/meta/llama-guard-3-8b",
       "inputPricePer1m": 0.484,
@@ -9193,6 +9364,16 @@
       "inputPricePer1m": 0.08,
       "outputPricePer1m": 0.18,
       "cacheReadPricePer1m": 0.016,
+      "enabled": true
+    },
+    {
+      "providerId": "edenai",
+      "protocolKey": "openAiChatCompletions|https://api.edenai.run/v3",
+      "modelName": "deepseek/deepseek-v4-pro-0813",
+      "providerModelId": "deepinfra/deepseek-ai/DeepSeek-V4-Pro-0813",
+      "inputPricePer1m": 1.3,
+      "outputPricePer1m": 2.6,
+      "cacheReadPricePer1m": 0.1,
       "enabled": true
     },
     {
@@ -9714,8 +9895,8 @@
       "protocolKey": "openAiChatCompletions|https://api.edenai.run/v3",
       "modelName": "meta/llama-3.3-70b-instruct",
       "providerModelId": "ionos/meta-llama/Llama-3.3-70B-Instruct",
-      "inputPricePer1m": 0.74971,
-      "outputPricePer1m": 0.74971,
+      "inputPricePer1m": 0.751855,
+      "outputPricePer1m": 0.751855,
       "enabled": true
     },
     {
@@ -9723,8 +9904,8 @@
       "protocolKey": "openAiChatCompletions|https://api.edenai.run/v3",
       "modelName": "openai/gpt-oss-120b",
       "providerModelId": "ionos/openai/gpt-oss-120b",
-      "inputPricePer1m": 0.17301,
-      "outputPricePer1m": 0.74971,
+      "inputPricePer1m": 0.173505,
+      "outputPricePer1m": 0.751855,
       "enabled": true
     },
     {
@@ -10318,6 +10499,15 @@
     {
       "providerId": "edenai",
       "protocolKey": "openAiChatCompletions|https://api.edenai.run/v3",
+      "modelName": "perplexity/sonar-deep-research",
+      "providerModelId": "perplexityai/sonar-deep-research",
+      "inputPricePer1m": 2,
+      "outputPricePer1m": 8,
+      "enabled": true
+    },
+    {
+      "providerId": "edenai",
+      "protocolKey": "openAiChatCompletions|https://api.edenai.run/v3",
       "modelName": "perplexity/sonar-pro",
       "providerModelId": "perplexityai/sonar-pro",
       "inputPricePer1m": 3,
@@ -10469,6 +10659,16 @@
     {
       "providerId": "edenai",
       "protocolKey": "openAiChatCompletions|https://api.edenai.run/v3",
+      "modelName": "alibaba/qwen3.8-2.4t-a95b",
+      "providerModelId": "qwen/qwen3.8-2.4t-a95b",
+      "inputPricePer1m": 2,
+      "outputPricePer1m": 6,
+      "cacheReadPricePer1m": 0.25,
+      "enabled": true
+    },
+    {
+      "providerId": "edenai",
+      "protocolKey": "openAiChatCompletions|https://api.edenai.run/v3",
       "modelName": "alibaba/qwen3.8-max",
       "providerModelId": "qwen/qwen3.8-max",
       "inputPricePer1m": 2,
@@ -10490,8 +10690,8 @@
       "protocolKey": "openAiChatCompletions|https://api.edenai.run/v3",
       "modelName": "deepseek/deepseek-v4-flash-0731",
       "providerModelId": "scaleway/deepseek-v4-flash-0731",
-      "inputPricePer1m": 0.46136,
-      "outputPricePer1m": 0.92272,
+      "inputPricePer1m": 0.46268,
+      "outputPricePer1m": 0.92536,
       "enabled": true
     },
     {
@@ -10499,8 +10699,8 @@
       "protocolKey": "openAiChatCompletions|https://api.edenai.run/v3",
       "modelName": "openai/gpt-oss-120b",
       "providerModelId": "scaleway/gpt-oss-120b",
-      "inputPricePer1m": 0.17301,
-      "outputPricePer1m": 0.69204,
+      "inputPricePer1m": 0.173505,
+      "outputPricePer1m": 0.69402,
       "enabled": true
     },
     {
@@ -10508,8 +10708,8 @@
       "protocolKey": "openAiChatCompletions|https://api.edenai.run/v3",
       "modelName": "meta/llama-3.3-70b-instruct",
       "providerModelId": "scaleway/llama-3.3-70b-instruct",
-      "inputPricePer1m": 1.03806,
-      "outputPricePer1m": 1.03806,
+      "inputPricePer1m": 1.04103,
+      "outputPricePer1m": 1.04103,
       "enabled": true
     },
     {
@@ -10520,6 +10720,16 @@
       "inputPricePer1m": 0.14,
       "outputPricePer1m": 0.28,
       "cacheReadPricePer1m": 0.03,
+      "enabled": true
+    },
+    {
+      "providerId": "edenai",
+      "protocolKey": "openAiChatCompletions|https://api.edenai.run/v3",
+      "modelName": "deepseek/deepseek-v4-pro-0813",
+      "providerModelId": "together_ai/deepseek-ai/DeepSeek-V4-Pro-0813",
+      "inputPricePer1m": 1.32,
+      "outputPricePer1m": 3.96,
+      "cacheReadPricePer1m": 0.13,
       "enabled": true
     },
     {
@@ -12997,6 +13207,15 @@
     {
       "providerId": "huggingface",
       "protocolKey": "openAiChatCompletions|https://router.huggingface.co/v1",
+      "modelName": "alibaba/qwen3.8-2.4t-a95b",
+      "providerModelId": "Qwen/Qwen3.8-2.4T-A95B",
+      "inputPricePer1m": 2.5,
+      "outputPricePer1m": 6.25,
+      "enabled": true
+    },
+    {
+      "providerId": "huggingface",
+      "protocolKey": "openAiChatCompletions|https://router.huggingface.co/v1",
       "modelName": "xiaomi/mimo-v2.5-pro",
       "providerModelId": "XiaomiMiMo/MiMo-V2.5-Pro",
       "inputPricePer1m": 1,
@@ -13252,9 +13471,9 @@
       "protocolKey": "openAiChatCompletions|https://hyper.charm.land/v1",
       "modelName": "deepseek/deepseek-v4-flash-0731",
       "providerModelId": "deepseek-v4-flash-0731",
-      "inputPricePer1m": 0.152432,
-      "outputPricePer1m": 0.304864,
-      "cacheReadPricePer1m": 0.032664,
+      "inputPricePer1m": 0.2,
+      "outputPricePer1m": 0.4,
+      "cacheReadPricePer1m": 0.04,
       "enabled": true
     },
     {
@@ -13319,6 +13538,15 @@
     {
       "providerId": "hyper",
       "protocolKey": "openAiChatCompletions|https://hyper.charm.land/v1",
+      "modelName": "zhipuai/glm-5",
+      "providerModelId": "glm-5",
+      "inputPricePer1m": 0.76,
+      "outputPricePer1m": 2.356,
+      "enabled": true
+    },
+    {
+      "providerId": "hyper",
+      "protocolKey": "openAiChatCompletions|https://hyper.charm.land/v1",
       "modelName": "openai/gpt-oss-120b",
       "providerModelId": "gpt-oss-120b",
       "inputPricePer1m": 0.16332,
@@ -13359,9 +13587,8 @@
       "protocolKey": "openAiChatCompletions|https://hyper.charm.land/v1",
       "modelName": "moonshotai/kimi-k3",
       "providerModelId": "kimi-k3",
-      "inputPricePer1m": 3.2664,
-      "outputPricePer1m": 16.332,
-      "cacheReadPricePer1m": 0.32664,
+      "inputPricePer1m": 3,
+      "outputPricePer1m": 15,
       "enabled": true
     },
     {
@@ -14297,8 +14524,8 @@
     {
       "providerId": "inferx",
       "protocolKey": "openAiChatCompletions|https://model.inferx.net/endpoints/v1",
-      "modelName": "google/gemma-4-31b-it",
-      "providerModelId": "google/gemma-4-31b-it-fp8",
+      "modelName": "mistral/devstral-2512",
+      "providerModelId": "Devstral-2-123B-Instruct-2512-int4-AutoRound",
       "inputPricePer1m": 0,
       "outputPricePer1m": 0,
       "enabled": true
@@ -14306,8 +14533,8 @@
     {
       "providerId": "inferx",
       "protocolKey": "openAiChatCompletions|https://model.inferx.net/endpoints/v1",
-      "modelName": "alibaba/qwen3.5-122b-a10b",
-      "providerModelId": "qwen/qwen3.5-122b-a10b-nvfp4",
+      "modelName": "deepreinforce/ornith-1.0-35b",
+      "providerModelId": "Ornith-1.0-35B-FP8",
       "inputPricePer1m": 0,
       "outputPricePer1m": 0,
       "enabled": true
@@ -14316,7 +14543,7 @@
       "providerId": "inferx",
       "protocolKey": "openAiChatCompletions|https://model.inferx.net/endpoints/v1",
       "modelName": "alibaba/qwen3.6-27b",
-      "providerModelId": "qwen/qwen3.6-27b-fp8",
+      "providerModelId": "Qwen3.6-27B-FP8",
       "inputPricePer1m": 0,
       "outputPricePer1m": 0,
       "enabled": true
@@ -14325,7 +14552,43 @@
       "providerId": "inferx",
       "protocolKey": "openAiChatCompletions|https://model.inferx.net/endpoints/v1",
       "modelName": "alibaba/qwen3.6-35b-a3b",
-      "providerModelId": "qwen/qwen3.6-35b-a3b-fp8",
+      "providerModelId": "Qwen3.6-35B-A3B-FP8",
+      "inputPricePer1m": 0,
+      "outputPricePer1m": 0,
+      "enabled": true
+    },
+    {
+      "providerId": "inferx",
+      "protocolKey": "openAiChatCompletions|https://model.inferx.net/endpoints/v1",
+      "modelName": "alibaba/qwen3.6-35b-a3b",
+      "providerModelId": "Qwen3.6-35B-A3B-fp8-no-thinking",
+      "inputPricePer1m": 0,
+      "outputPricePer1m": 0,
+      "enabled": true
+    },
+    {
+      "providerId": "inferx",
+      "protocolKey": "openAiChatCompletions|https://model.inferx.net/endpoints/v1",
+      "modelName": "deepseek/deepseek-v4-flash",
+      "providerModelId": "deepseek-v4-flash",
+      "inputPricePer1m": 0,
+      "outputPricePer1m": 0,
+      "enabled": true
+    },
+    {
+      "providerId": "inferx",
+      "protocolKey": "openAiChatCompletions|https://model.inferx.net/endpoints/v1",
+      "modelName": "google/gemma-4-31b-it",
+      "providerModelId": "gemma-4-31B-it-fp8",
+      "inputPricePer1m": 0,
+      "outputPricePer1m": 0,
+      "enabled": true
+    },
+    {
+      "providerId": "inferx",
+      "protocolKey": "openAiChatCompletions|https://model.inferx.net/endpoints/v1",
+      "modelName": "xiaomi/mimo-v2.5",
+      "providerModelId": "mimo-v25",
       "inputPricePer1m": 0,
       "outputPricePer1m": 0,
       "enabled": true
@@ -16055,7 +16318,7 @@
       "protocolKey": "openAiChatCompletions|https://api.kilo.ai/api/gateway",
       "modelName": "alibaba/qwen3.6-35b-a3b",
       "providerModelId": "qwen/qwen3.6-35b-a3b",
-      "inputPricePer1m": 0.15,
+      "inputPricePer1m": 0.14,
       "outputPricePer1m": 1,
       "cacheReadPricePer1m": 0.05,
       "enabled": true
@@ -16120,10 +16383,21 @@
     {
       "providerId": "kilo",
       "protocolKey": "openAiChatCompletions|https://api.kilo.ai/api/gateway",
+      "modelName": "alibaba/qwen3.8-2.4t-a95b",
+      "providerModelId": "qwen/qwen3.8-2.4t-a95b",
+      "inputPricePer1m": 2,
+      "outputPricePer1m": 6,
+      "cacheReadPricePer1m": 0.25,
+      "enabled": true
+    },
+    {
+      "providerId": "kilo",
+      "protocolKey": "openAiChatCompletions|https://api.kilo.ai/api/gateway",
       "modelName": "alibaba/qwen3.8-27b",
       "providerModelId": "qwen/qwen3.8-27b",
       "inputPricePer1m": 0.45,
       "outputPricePer1m": 3.2,
+      "cacheReadPricePer1m": 0.05,
       "enabled": true
     },
     {
@@ -16190,9 +16464,9 @@
       "protocolKey": "openAiChatCompletions|https://api.kilo.ai/api/gateway",
       "modelName": "tencent/hy3",
       "providerModelId": "tencent/hy3",
-      "inputPricePer1m": 0.132,
-      "outputPricePer1m": 0.528,
-      "cacheReadPricePer1m": 0.033,
+      "inputPricePer1m": 0.14,
+      "outputPricePer1m": 0.58,
+      "cacheReadPricePer1m": 0.035,
       "enabled": true
     },
     {
@@ -16320,9 +16594,9 @@
       "protocolKey": "openAiChatCompletions|https://api.kilo.ai/api/gateway",
       "modelName": "zhipuai/glm-4.6",
       "providerModelId": "z-ai/glm-4.6",
-      "inputPricePer1m": 0.55,
-      "outputPricePer1m": 2.2,
-      "cacheReadPricePer1m": 0.11,
+      "inputPricePer1m": 0.5,
+      "outputPricePer1m": 2,
+      "cacheReadPricePer1m": 0.1,
       "enabled": true
     },
     {
@@ -16383,6 +16657,15 @@
       "inputPricePer1m": 1.4,
       "outputPricePer1m": 4.4,
       "cacheReadPricePer1m": 0.26,
+      "enabled": true
+    },
+    {
+      "providerId": "kilo",
+      "protocolKey": "openAiChatCompletions|https://api.kilo.ai/api/gateway",
+      "modelName": "zhipuai/glm-5.2",
+      "providerModelId": "z-ai/glm-5.2:free",
+      "inputPricePer1m": 0,
+      "outputPricePer1m": 0,
       "enabled": true
     },
     {
@@ -17749,10 +18032,274 @@
     {
       "providerId": "llmtr",
       "protocolKey": "openAiChatCompletions|https://llmtr.com/v1",
+      "modelName": "google/gemma-4-31b-it",
+      "providerModelId": "gemma-4",
+      "inputPricePer1m": 2,
+      "outputPricePer1m": 5,
+      "cacheReadPricePer1m": 0.5,
+      "enabled": true
+    },
+    {
+      "providerId": "llmtr",
+      "protocolKey": "openAiChatCompletions|https://llmtr.com/v1",
+      "modelName": "google/gemini-2.5-flash-lite",
+      "providerModelId": "google/gemini-2.5-flash-lite",
+      "inputPricePer1m": 0.1,
+      "outputPricePer1m": 0.1,
+      "enabled": true
+    },
+    {
+      "providerId": "llmtr",
+      "protocolKey": "openAiChatCompletions|https://llmtr.com/v1",
+      "modelName": "meta/muse-spark-1.2",
+      "providerModelId": "meta/muse-spark-1.2-contributor",
+      "inputPricePer1m": 0.1,
+      "outputPricePer1m": 0.2,
+      "enabled": true
+    },
+    {
+      "providerId": "llmtr",
+      "protocolKey": "openAiChatCompletions|https://llmtr.com/v1",
+      "modelName": "xiaomi/mimo-v2.5-pro",
+      "providerModelId": "mimo/mimo-v2.5-pro",
+      "inputPricePer1m": 0.435,
+      "outputPricePer1m": 0.87,
+      "enabled": true
+    },
+    {
+      "providerId": "llmtr",
+      "protocolKey": "openAiChatCompletions|https://llmtr.com/v1",
+      "modelName": "xiaomi/mimo-v2.5",
+      "providerModelId": "mimo/mimo-v2.5",
+      "inputPricePer1m": 0.14,
+      "outputPricePer1m": 0.28,
+      "enabled": true
+    },
+    {
+      "providerId": "llmtr",
+      "protocolKey": "openAiChatCompletions|https://llmtr.com/v1",
+      "modelName": "mistral/voxtral-small-latest",
+      "providerModelId": "mistral/voxtral-small-latest",
+      "inputPricePer1m": 0.1,
+      "outputPricePer1m": 0.3,
+      "enabled": true
+    },
+    {
+      "providerId": "llmtr",
+      "protocolKey": "openAiChatCompletions|https://llmtr.com/v1",
+      "modelName": "meta/muse-glimmer-30b",
+      "providerModelId": "muse-glimmer-30b-tr",
+      "inputPricePer1m": 2,
+      "outputPricePer1m": 5,
+      "cacheReadPricePer1m": 0.5,
+      "enabled": true
+    },
+    {
+      "providerId": "llmtr",
+      "protocolKey": "openAiChatCompletions|https://llmtr.com/v1",
+      "modelName": "perplexity/sonar-deep-research",
+      "providerModelId": "perplexity/sonar-deep-research",
+      "inputPricePer1m": 2,
+      "outputPricePer1m": 8,
+      "enabled": true
+    },
+    {
+      "providerId": "llmtr",
+      "protocolKey": "openAiChatCompletions|https://llmtr.com/v1",
+      "modelName": "poolside/laguna-xs-2.1",
+      "providerModelId": "poolside/laguna-xs-2.1",
+      "inputPricePer1m": 0,
+      "outputPricePer1m": 0,
+      "enabled": true
+    },
+    {
+      "providerId": "llmtr",
+      "protocolKey": "openAiChatCompletions|https://llmtr.com/v1",
+      "modelName": "swiss-ai/apertus-70b",
+      "providerModelId": "publicai/apertus-70b-instruct",
+      "inputPricePer1m": 0.82,
+      "outputPricePer1m": 2.92,
+      "enabled": true
+    },
+    {
+      "providerId": "llmtr",
+      "protocolKey": "openAiChatCompletions|https://llmtr.com/v1",
+      "modelName": "swiss-ai/apertus-8b",
+      "providerModelId": "publicai/apertus-8b-instruct",
+      "inputPricePer1m": 0.1,
+      "outputPricePer1m": 0.2,
+      "enabled": true
+    },
+    {
+      "providerId": "llmtr",
+      "protocolKey": "openAiChatCompletions|https://llmtr.com/v1",
+      "modelName": "alibaba/qwen-flash",
+      "providerModelId": "qwen/qwen-flash",
+      "inputPricePer1m": 0.05,
+      "outputPricePer1m": 0.4,
+      "enabled": true
+    },
+    {
+      "providerId": "llmtr",
+      "protocolKey": "openAiChatCompletions|https://llmtr.com/v1",
+      "modelName": "alibaba/qwen-plus",
+      "providerModelId": "qwen/qwen-plus",
+      "inputPricePer1m": 0.4,
+      "outputPricePer1m": 1.2,
+      "enabled": true
+    },
+    {
+      "providerId": "llmtr",
+      "protocolKey": "openAiChatCompletions|https://llmtr.com/v1",
+      "modelName": "alibaba/qwen3-coder-flash",
+      "providerModelId": "qwen/qwen3-coder-flash",
+      "inputPricePer1m": 0.3,
+      "outputPricePer1m": 1.5,
+      "enabled": true
+    },
+    {
+      "providerId": "llmtr",
+      "protocolKey": "openAiChatCompletions|https://llmtr.com/v1",
+      "modelName": "alibaba/qwen3-coder-plus",
+      "providerModelId": "qwen/qwen3-coder-plus",
+      "inputPricePer1m": 1,
+      "outputPricePer1m": 5,
+      "enabled": true
+    },
+    {
+      "providerId": "llmtr",
+      "protocolKey": "openAiChatCompletions|https://llmtr.com/v1",
+      "modelName": "alibaba/qwen3-max",
+      "providerModelId": "qwen/qwen3-max",
+      "inputPricePer1m": 1.2,
+      "outputPricePer1m": 6,
+      "enabled": true
+    },
+    {
+      "providerId": "llmtr",
+      "protocolKey": "openAiChatCompletions|https://llmtr.com/v1",
+      "modelName": "alibaba/qwen3-vl-plus",
+      "providerModelId": "qwen/qwen3-vl-plus",
+      "inputPricePer1m": 0.2,
+      "outputPricePer1m": 1.6,
+      "enabled": true
+    },
+    {
+      "providerId": "llmtr",
+      "protocolKey": "openAiChatCompletions|https://llmtr.com/v1",
+      "modelName": "alibaba/qwen3.5-397b-a17b",
+      "providerModelId": "qwen/qwen3.5-397b-a17b",
+      "inputPricePer1m": 0.6,
+      "outputPricePer1m": 3.6,
+      "enabled": true
+    },
+    {
+      "providerId": "llmtr",
+      "protocolKey": "openAiChatCompletions|https://llmtr.com/v1",
+      "modelName": "alibaba/qwen3.5-plus",
+      "providerModelId": "qwen/qwen3.5-plus",
+      "inputPricePer1m": 0.4,
+      "outputPricePer1m": 2.4,
+      "enabled": true
+    },
+    {
+      "providerId": "llmtr",
+      "protocolKey": "openAiChatCompletions|https://llmtr.com/v1",
+      "modelName": "alibaba/qwen3.6-flash",
+      "providerModelId": "qwen/qwen3.6-flash",
+      "inputPricePer1m": 0.25,
+      "outputPricePer1m": 1.5,
+      "enabled": true
+    },
+    {
+      "providerId": "llmtr",
+      "protocolKey": "openAiChatCompletions|https://llmtr.com/v1",
+      "modelName": "alibaba/qwen3.6-plus",
+      "providerModelId": "qwen/qwen3.6-plus",
+      "inputPricePer1m": 0.5,
+      "outputPricePer1m": 3,
+      "enabled": true
+    },
+    {
+      "providerId": "llmtr",
+      "protocolKey": "openAiChatCompletions|https://llmtr.com/v1",
+      "modelName": "alibaba/qwen3.7-plus",
+      "providerModelId": "qwen/qwen3.7-plus",
+      "inputPricePer1m": 0.4,
+      "outputPricePer1m": 1.6,
+      "enabled": true
+    },
+    {
+      "providerId": "llmtr",
+      "protocolKey": "openAiChatCompletions|https://llmtr.com/v1",
       "modelName": "alibaba/qwen3.6-35b-a3b",
       "providerModelId": "qwen3-6-35b",
       "inputPricePer1m": 5,
       "outputPricePer1m": 10,
+      "enabled": true
+    },
+    {
+      "providerId": "llmtr",
+      "protocolKey": "openAiChatCompletions|https://llmtr.com/v1",
+      "modelName": "sakana/fugu-ultra",
+      "providerModelId": "sakana/fugu-ultra",
+      "inputPricePer1m": 5,
+      "outputPricePer1m": 30,
+      "enabled": true
+    },
+    {
+      "providerId": "llmtr",
+      "protocolKey": "openAiChatCompletions|https://llmtr.com/v1",
+      "modelName": "thinkingmachines/inkling-small",
+      "providerModelId": "thinkingmachines/inkling-small",
+      "inputPricePer1m": 0.58,
+      "outputPricePer1m": 1.44,
+      "enabled": true
+    },
+    {
+      "providerId": "llmtr",
+      "protocolKey": "openAiChatCompletions|https://llmtr.com/v1",
+      "modelName": "thinkingmachines/inkling",
+      "providerModelId": "thinkingmachines/inkling",
+      "inputPricePer1m": 1.87,
+      "outputPricePer1m": 4.68,
+      "enabled": true
+    },
+    {
+      "providerId": "llmtr",
+      "protocolKey": "openAiChatCompletions|https://llmtr.com/v1",
+      "modelName": "trendyol/asure-12b",
+      "providerModelId": "trendyol-asure-12b",
+      "inputPricePer1m": 0.1,
+      "outputPricePer1m": 0.5,
+      "cacheReadPricePer1m": 0.025,
+      "enabled": true
+    },
+    {
+      "providerId": "llmtr",
+      "protocolKey": "openAiChatCompletions|https://llmtr.com/v1",
+      "modelName": "upstage/solar-pro2",
+      "providerModelId": "upstage/solar-pro2",
+      "inputPricePer1m": 0.15,
+      "outputPricePer1m": 0.6,
+      "enabled": true
+    },
+    {
+      "providerId": "llmtr",
+      "protocolKey": "openAiChatCompletions|https://llmtr.com/v1",
+      "modelName": "upstage/solar-pro3",
+      "providerModelId": "upstage/solar-pro3",
+      "inputPricePer1m": 0.15,
+      "outputPricePer1m": 0.6,
+      "enabled": true
+    },
+    {
+      "providerId": "llmtr",
+      "protocolKey": "openAiChatCompletions|https://llmtr.com/v1",
+      "modelName": "upstage/solar-pro4",
+      "providerModelId": "upstage/solar-pro4",
+      "inputPricePer1m": 0.03,
+      "outputPricePer1m": 0.12,
       "enabled": true
     },
     {
@@ -19654,16 +20201,6 @@
     {
       "providerId": "nano-gpt",
       "protocolKey": "openAiChatCompletions|https://nano-gpt.com/api/v1",
-      "modelName": "deepseek/deepseek-v3.1",
-      "providerModelId": "TEE/deepseek-v3.1",
-      "inputPricePer1m": 1,
-      "outputPricePer1m": 2.5,
-      "cacheReadPricePer1m": 0.5,
-      "enabled": true
-    },
-    {
-      "providerId": "nano-gpt",
-      "protocolKey": "openAiChatCompletions|https://nano-gpt.com/api/v1",
       "modelName": "deepseek/deepseek-v3.2",
       "providerModelId": "TEE/deepseek-v3.2",
       "inputPricePer1m": 0.5,
@@ -19679,6 +20216,26 @@
       "inputPricePer1m": 0.2,
       "outputPricePer1m": 0.4,
       "cacheReadPricePer1m": 0.04,
+      "enabled": true
+    },
+    {
+      "providerId": "nano-gpt",
+      "protocolKey": "openAiChatCompletions|https://nano-gpt.com/api/v1",
+      "modelName": "deepseek/deepseek-v4-pro-0813",
+      "providerModelId": "TEE/deepseek-v4-pro-0813",
+      "inputPricePer1m": 1.32,
+      "outputPricePer1m": 3.96,
+      "cacheReadPricePer1m": 0.132,
+      "enabled": true
+    },
+    {
+      "providerId": "nano-gpt",
+      "protocolKey": "openAiChatCompletions|https://nano-gpt.com/api/v1",
+      "modelName": "deepseek/deepseek-v4-pro-0813",
+      "providerModelId": "TEE/deepseek-v4-pro-0813:thinking",
+      "inputPricePer1m": 1.32,
+      "outputPricePer1m": 3.96,
+      "cacheReadPricePer1m": 0.132,
       "enabled": true
     },
     {
@@ -21820,6 +22377,26 @@
     {
       "providerId": "nano-gpt",
       "protocolKey": "openAiChatCompletions|https://nano-gpt.com/api/v1",
+      "modelName": "alibaba/qwen3.8-27b",
+      "providerModelId": "qwen3.8-27b",
+      "inputPricePer1m": 0.4,
+      "outputPricePer1m": 3,
+      "cacheReadPricePer1m": 0.2,
+      "enabled": true
+    },
+    {
+      "providerId": "nano-gpt",
+      "protocolKey": "openAiChatCompletions|https://nano-gpt.com/api/v1",
+      "modelName": "alibaba/qwen3.8-27b",
+      "providerModelId": "qwen3.8-27b:thinking",
+      "inputPricePer1m": 0.4,
+      "outputPricePer1m": 3,
+      "cacheReadPricePer1m": 0.2,
+      "enabled": true
+    },
+    {
+      "providerId": "nano-gpt",
+      "protocolKey": "openAiChatCompletions|https://nano-gpt.com/api/v1",
       "modelName": "alibaba/qwen3.8-max",
       "providerModelId": "qwen3.8-max",
       "inputPricePer1m": 2,
@@ -21865,6 +22442,16 @@
       "inputPricePer1m": 0.028,
       "outputPricePer1m": 0.111,
       "cacheReadPricePer1m": 0.017,
+      "enabled": true
+    },
+    {
+      "providerId": "nano-gpt",
+      "protocolKey": "openAiChatCompletions|https://nano-gpt.com/api/v1",
+      "modelName": "perplexity/sonar-deep-research",
+      "providerModelId": "sonar-deep-research",
+      "inputPricePer1m": 3.4,
+      "outputPricePer1m": 13.6,
+      "cacheReadPricePer1m": 1.7,
       "enabled": true
     },
     {
@@ -21975,6 +22562,26 @@
       "inputPricePer1m": 1,
       "outputPricePer1m": 4.05,
       "cacheReadPricePer1m": 0.17,
+      "enabled": true
+    },
+    {
+      "providerId": "nano-gpt",
+      "protocolKey": "openAiChatCompletions|https://nano-gpt.com/api/v1",
+      "modelName": "upstage/solar-pro4",
+      "providerModelId": "upstage/solar-pro4",
+      "inputPricePer1m": 0.03,
+      "outputPricePer1m": 0.12,
+      "cacheReadPricePer1m": 0.006,
+      "enabled": true
+    },
+    {
+      "providerId": "nano-gpt",
+      "protocolKey": "openAiChatCompletions|https://nano-gpt.com/api/v1",
+      "modelName": "upstage/solar-pro4",
+      "providerModelId": "upstage/solar-pro4:thinking",
+      "inputPricePer1m": 0.03,
+      "outputPricePer1m": 0.12,
+      "cacheReadPricePer1m": 0.006,
       "enabled": true
     },
     {
@@ -23810,9 +24417,9 @@
       "protocolKey": "openAiChatCompletions|https://api.ofox.ai/v1",
       "modelName": "deepseek/deepseek-v4-flash",
       "providerModelId": "deepseek/deepseek-v4-flash",
-      "inputPricePer1m": 0.14,
-      "outputPricePer1m": 0.28,
-      "cacheReadPricePer1m": 0.0028,
+      "inputPricePer1m": 0.44,
+      "outputPricePer1m": 1.32,
+      "cacheReadPricePer1m": 0.014,
       "enabled": true
     },
     {
@@ -23820,9 +24427,9 @@
       "protocolKey": "openAiChatCompletions|https://api.ofox.ai/v1",
       "modelName": "deepseek/deepseek-v4-pro-0813",
       "providerModelId": "deepseek/deepseek-v4-pro-0813",
-      "inputPricePer1m": 0.45,
-      "outputPricePer1m": 0.88,
-      "cacheReadPricePer1m": 0.0037,
+      "inputPricePer1m": 1.32,
+      "outputPricePer1m": 3.96,
+      "cacheReadPricePer1m": 0.044,
       "enabled": true
     },
     {
@@ -23830,9 +24437,9 @@
       "protocolKey": "openAiChatCompletions|https://api.ofox.ai/v1",
       "modelName": "deepseek/deepseek-v4-pro",
       "providerModelId": "deepseek/deepseek-v4-pro",
-      "inputPricePer1m": 0.45,
-      "outputPricePer1m": 0.88,
-      "cacheReadPricePer1m": 0.0037,
+      "inputPricePer1m": 1.32,
+      "outputPricePer1m": 3.96,
+      "cacheReadPricePer1m": 0.044,
       "enabled": true
     },
     {
@@ -24875,9 +25482,9 @@
       "protocolKey": "openAiChatCompletions|https://opencode.ai/zen/go/v1",
       "modelName": "deepseek/deepseek-v4-flash-0731",
       "providerModelId": "deepseek-v4-flash",
-      "inputPricePer1m": 0.07,
-      "outputPricePer1m": 0.14,
-      "cacheReadPricePer1m": 0.0014,
+      "inputPricePer1m": 0.22,
+      "outputPricePer1m": 0.66,
+      "cacheReadPricePer1m": 0.007,
       "enabled": true
     },
     {
@@ -25197,9 +25804,9 @@
       "protocolKey": "openAiChatCompletions|https://openrouter.ai/api/v1",
       "modelName": "deepseek/deepseek-v4-flash",
       "providerModelId": "deepseek/deepseek-v4-flash",
-      "inputPricePer1m": 0.06426,
-      "outputPricePer1m": 0.12852,
-      "cacheReadPricePer1m": 0.012852,
+      "inputPricePer1m": 0.08386,
+      "outputPricePer1m": 0.16772,
+      "cacheReadPricePer1m": 0.016772,
       "enabled": true
     },
     {
@@ -25207,9 +25814,9 @@
       "protocolKey": "openAiChatCompletions|https://openrouter.ai/api/v1",
       "modelName": "deepseek/deepseek-v4-pro-0813",
       "providerModelId": "deepseek/deepseek-v4-pro-0813",
-      "inputPricePer1m": 0.435,
-      "outputPricePer1m": 0.87,
-      "cacheReadPricePer1m": 0.003625,
+      "inputPricePer1m": 1.32,
+      "outputPricePer1m": 3.96,
+      "cacheReadPricePer1m": 0.044,
       "enabled": true
     },
     {
@@ -25217,9 +25824,9 @@
       "protocolKey": "openAiChatCompletions|https://openrouter.ai/api/v1",
       "modelName": "deepseek/deepseek-v4-pro",
       "providerModelId": "deepseek/deepseek-v4-pro",
-      "inputPricePer1m": 1.168,
-      "outputPricePer1m": 2.336,
-      "cacheReadPricePer1m": 0.09855,
+      "inputPricePer1m": 1.32,
+      "outputPricePer1m": 3.96,
+      "cacheReadPricePer1m": 0.044,
       "enabled": true
     },
     {
@@ -25404,9 +26011,8 @@
       "protocolKey": "openAiChatCompletions|https://openrouter.ai/api/v1",
       "modelName": "google/gemma-4-26b-a4b-it",
       "providerModelId": "google/gemma-4-26b-a4b-it",
-      "inputPricePer1m": 0.12,
-      "outputPricePer1m": 0.4,
-      "cacheReadPricePer1m": 0.05,
+      "inputPricePer1m": 0.07,
+      "outputPricePer1m": 0.34,
       "enabled": true
     },
     {
@@ -25617,9 +26223,9 @@
       "protocolKey": "openAiChatCompletions|https://openrouter.ai/api/v1",
       "modelName": "moonshotai/kimi-k2.6",
       "providerModelId": "moonshotai/kimi-k2.6",
-      "inputPricePer1m": 0.65,
-      "outputPricePer1m": 3.41,
-      "cacheReadPricePer1m": 0.15,
+      "inputPricePer1m": 0.95,
+      "outputPricePer1m": 4,
+      "cacheReadPricePer1m": 0.16,
       "enabled": true
     },
     {
@@ -25649,7 +26255,7 @@
       "providerModelId": "nvidia/nemotron-3-nano-30b-a3b",
       "inputPricePer1m": 0.05,
       "outputPricePer1m": 0.2,
-      "cacheReadPricePer1m": 0.025,
+      "cacheReadPricePer1m": 0.03,
       "enabled": true
     },
     {
@@ -25721,9 +26327,9 @@
       "protocolKey": "openAiChatCompletions|https://openrouter.ai/api/v1",
       "modelName": "nvidia/nemotron-3.5-lightning",
       "providerModelId": "nvidia/nemotron-3.5-lightning",
-      "inputPricePer1m": 0.1,
-      "outputPricePer1m": 0.25,
-      "cacheReadPricePer1m": 0.05,
+      "inputPricePer1m": 0.08,
+      "outputPricePer1m": 0.2,
+      "cacheReadPricePer1m": 0.04,
       "enabled": true
     },
     {
@@ -26225,8 +26831,8 @@
       "protocolKey": "openAiChatCompletions|https://openrouter.ai/api/v1",
       "modelName": "alibaba/qwen3-30b-a3b",
       "providerModelId": "qwen/qwen3-30b-a3b",
-      "inputPricePer1m": 0.12,
-      "outputPricePer1m": 0.5,
+      "inputPricePer1m": 0.13,
+      "outputPricePer1m": 0.52,
       "enabled": true
     },
     {
@@ -26357,9 +26963,8 @@
       "protocolKey": "openAiChatCompletions|https://openrouter.ai/api/v1",
       "modelName": "alibaba/qwen3.6-27b",
       "providerModelId": "qwen/qwen3.6-27b",
-      "inputPricePer1m": 0.3,
-      "outputPricePer1m": 2,
-      "cacheReadPricePer1m": 0.03,
+      "inputPricePer1m": 0.289,
+      "outputPricePer1m": 2.4,
       "enabled": true
     },
     {
@@ -26367,7 +26972,7 @@
       "protocolKey": "openAiChatCompletions|https://openrouter.ai/api/v1",
       "modelName": "alibaba/qwen3.6-35b-a3b",
       "providerModelId": "qwen/qwen3.6-35b-a3b",
-      "inputPricePer1m": 0.15,
+      "inputPricePer1m": 0.14,
       "outputPricePer1m": 1,
       "cacheReadPricePer1m": 0.05,
       "enabled": true
@@ -26427,6 +27032,26 @@
       "inputPricePer1m": 0.32,
       "outputPricePer1m": 1.28,
       "cacheReadPricePer1m": 0.064,
+      "enabled": true
+    },
+    {
+      "providerId": "openrouter",
+      "protocolKey": "openAiChatCompletions|https://openrouter.ai/api/v1",
+      "modelName": "alibaba/qwen3.8-2.4t-a95b",
+      "providerModelId": "qwen/qwen3.8-2.4t-a95b",
+      "inputPricePer1m": 2,
+      "outputPricePer1m": 6,
+      "cacheReadPricePer1m": 0.25,
+      "enabled": true
+    },
+    {
+      "providerId": "openrouter",
+      "protocolKey": "openAiChatCompletions|https://openrouter.ai/api/v1",
+      "modelName": "alibaba/qwen3.8-27b",
+      "providerModelId": "qwen/qwen3.8-27b",
+      "inputPricePer1m": 0.45,
+      "outputPricePer1m": 3.2,
+      "cacheReadPricePer1m": 0.05,
       "enabled": true
     },
     {
@@ -26603,9 +27228,9 @@
       "protocolKey": "openAiChatCompletions|https://openrouter.ai/api/v1",
       "modelName": "zhipuai/glm-4.6",
       "providerModelId": "z-ai/glm-4.6",
-      "inputPricePer1m": 0.55,
-      "outputPricePer1m": 2.2,
-      "cacheReadPricePer1m": 0.11,
+      "inputPricePer1m": 0.5,
+      "outputPricePer1m": 2,
+      "cacheReadPricePer1m": 0.1,
       "enabled": true
     },
     {
@@ -26663,9 +27288,18 @@
       "protocolKey": "openAiChatCompletions|https://openrouter.ai/api/v1",
       "modelName": "zhipuai/glm-5.2",
       "providerModelId": "z-ai/glm-5.2",
-      "inputPricePer1m": 0.462,
-      "outputPricePer1m": 1.452,
-      "cacheReadPricePer1m": 0.0858,
+      "inputPricePer1m": 0.76,
+      "outputPricePer1m": 2.42,
+      "cacheReadPricePer1m": 0.14,
+      "enabled": true
+    },
+    {
+      "providerId": "openrouter",
+      "protocolKey": "openAiChatCompletions|https://openrouter.ai/api/v1",
+      "modelName": "zhipuai/glm-5.2",
+      "providerModelId": "z-ai/glm-5.2:free",
+      "inputPricePer1m": 0,
+      "outputPricePer1m": 0,
       "enabled": true
     },
     {
@@ -29155,6 +29789,45 @@
       "providerModelId": "qwen3.5-9b",
       "inputPricePer1m": 0.16,
       "outputPricePer1m": 0.48,
+      "enabled": true
+    },
+    {
+      "providerId": "runinfra",
+      "protocolKey": "openAiChatCompletions|https://api.runinfra.ai/v1",
+      "modelName": "alibaba/qwen3.8-2.4t-a95b",
+      "providerModelId": "Inferact/Qwen3.8-2.4T-A95B-NVFP4",
+      "inputPricePer1m": 2,
+      "outputPricePer1m": 6,
+      "cacheReadPricePer1m": 0.2,
+      "enabled": true
+    },
+    {
+      "providerId": "runinfra",
+      "protocolKey": "openAiChatCompletions|https://api.runinfra.ai/v1",
+      "modelName": "alibaba/qwen3.8-27b",
+      "providerModelId": "Qwen/Qwen3.8-27B",
+      "inputPricePer1m": 0.1,
+      "outputPricePer1m": 0.4,
+      "cacheReadPricePer1m": 0.01,
+      "enabled": true
+    },
+    {
+      "providerId": "runinfra",
+      "protocolKey": "openAiChatCompletions|https://api.runinfra.ai/v1",
+      "modelName": "deepseek/deepseek-v4-flash-0731",
+      "providerModelId": "deepseek-ai/DeepSeek-V4-Flash-0731",
+      "inputPricePer1m": 0.13,
+      "outputPricePer1m": 0.27,
+      "cacheReadPricePer1m": 0.01,
+      "enabled": true
+    },
+    {
+      "providerId": "runinfra",
+      "protocolKey": "openAiChatCompletions|https://api.runinfra.ai/v1",
+      "modelName": "nvidia/nemotron-3.5-lightning",
+      "providerModelId": "nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16",
+      "inputPricePer1m": 0.05,
+      "outputPricePer1m": 0.15,
       "enabled": true
     },
     {
