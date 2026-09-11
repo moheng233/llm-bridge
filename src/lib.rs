@@ -4,6 +4,7 @@ pub mod config;
 pub mod db;
 #[cfg(feature = "embed-frontend")]
 pub mod embed;
+pub mod http;
 pub mod middleware;
 pub mod observability;
 pub mod quota;

@@ -105,18 +105,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let base_url = args[0].trim_end_matches('/');
     let token = &args[1];
 
-    // reqwest 使用 rustls-no-provider 特性，需先安装 crypto provider
-    rustls::crypto::ring::default_provider()
-        .install_default()
-        .expect("failed to install rustls crypto provider");
-
-    let client = reqwest::Client::builder()
-        .user_agent(concat!(
-            env!("CARGO_PKG_NAME"),
-            "/",
-            env!("CARGO_PKG_VERSION")
-        ))
-        .build()?;
+    // 统一入口：安装 rustls crypto provider 并带上统一 User-Agent
+    let client = llm_bridge::http::client_builder().build()?;
 
     let url = format!("{base_url}/v1/models");
     let resp = client.get(&url).bearer_auth(token).send().await?;

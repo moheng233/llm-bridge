@@ -18,6 +18,7 @@ use crate::actors::provider::{
     ProviderActor, ProviderChatRequest, ProviderMessage, ProviderResponseMetadata,
     ProviderRuntimeConfig, ProviderStartSignal,
 };
+use crate::http::client_builder;
 use crate::middleware::token_auth::TokenAuth;
 use crate::server::AppState;
 use crate::types::{
@@ -1304,13 +1305,9 @@ async fn resolve_image_url(url: &str) -> Result<crate::types::LanguageModelDataP
     }
 
     if url.starts_with("http://") || url.starts_with("https://") {
-        let client = reqwest::Client::builder()
+        // 统一入口：先安装 rustls crypto provider，再构建 client
+        let client = client_builder()
             .timeout(std::time::Duration::from_secs(10))
-            .user_agent(concat!(
-                env!("CARGO_PKG_NAME"),
-                "/",
-                env!("CARGO_PKG_VERSION")
-            ))
             .build()
             .map_err(|e| internal_error(&format!("failed to build http client: {e}")))?;
         let response = client

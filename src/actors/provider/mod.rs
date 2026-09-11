@@ -3,6 +3,7 @@ pub mod adapters;
 use std::pin::Pin;
 
 use crate::config::models::{CompatibilitySettings, ProviderCompatibility};
+use crate::http::client_builder;
 use crate::types::{
     LMResponsePart, LanguageModelChatMessage, LanguageModelReasoningConfig,
     LanguageModelResponseFormat, LanguageModelTool,
@@ -152,12 +153,8 @@ impl Actor for ProviderActor {
         _myself: ActorRef<Self::Msg>,
         args: Self::Arguments,
     ) -> Result<Self::State, ActorProcessingErr> {
-        let client = reqwest::Client::builder()
-            .user_agent(concat!(
-                env!("CARGO_PKG_NAME"),
-                "/",
-                env!("CARGO_PKG_VERSION")
-            ))
+        // 统一入口：先安装 rustls crypto provider，再构建 client
+        let client = client_builder()
             .build()
             .map_err(|error| ActorProcessingErr::from(error.to_string()))?;
 

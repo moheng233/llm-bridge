@@ -57,13 +57,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         api_key,
         base_url: Some(url),
         compat_settings: None,
-        client: reqwest::Client::builder()
-            .user_agent(concat!(
-                env!("CARGO_PKG_NAME"),
-                "/",
-                env!("CARGO_PKG_VERSION")
-            ))
-            .build()?,
+        // 统一入口：安装 rustls crypto provider 并带上统一 User-Agent
+        client: llm_bridge::http::client_builder().build()?,
     };
 
     let (tx, mut rx) = mpsc::channel(64);

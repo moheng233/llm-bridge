@@ -85,18 +85,8 @@ impl TestClient {
         token: String,
         model: String,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        // reqwest 使用 rustls-no-provider 特性，需先安装 crypto provider
-        rustls::crypto::ring::default_provider()
-            .install_default()
-            .expect("failed to install rustls crypto provider");
-
-        let http = reqwest::Client::builder()
-            .user_agent(concat!(
-                env!("CARGO_PKG_NAME"),
-                "/",
-                env!("CARGO_PKG_VERSION")
-            ))
-            .build()?;
+        // 统一入口：安装 rustls crypto provider 并带上统一 User-Agent
+        let http = llm_bridge::http::client_builder().build()?;
 
         Ok(Self {
             http,

@@ -4,13 +4,13 @@ use llm_bridge::actors;
 use llm_bridge::auth::oidc::OidcService;
 use llm_bridge::config;
 use llm_bridge::db;
+use llm_bridge::http::ensure_crypto_provider;
 use llm_bridge::observability;
 use llm_bridge::server;
 use llm_bridge::server::auth::AuthState;
 use llm_bridge::store::Store;
 
 use ractor::Actor;
-use rustls::crypto::ring::default_provider;
 use tracing::{info, warn};
 
 use crate::actors::gateway_manager::{GatewayManagerActor, GatewayManagerArgs};
@@ -22,9 +22,8 @@ type MainResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
 #[tokio::main]
 async fn main() -> MainResult {
-    default_provider()
-        .install_default()
-        .expect("failed to install rustls ring crypto provider");
+    // 统一入口：安装 rustls crypto provider（reqwest 使用 rustls-no-provider 特性）
+    ensure_crypto_provider();
 
     let observability = observability::init("llm-bridge")?;
 

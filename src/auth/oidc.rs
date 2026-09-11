@@ -7,17 +7,18 @@
 //!
 //! OIDC 配置不存数据库，通过环境变量提供（见 [`OidcConfig`]）。
 
+use oauth2_reqwest::ReqwestClient;
 use openidconnect::core::{
     CoreAuthenticationFlow, CoreClient, CoreIdTokenClaims, CoreIdTokenVerifier,
     CoreProviderMetadata,
 };
-use openidconnect::reqwest;
 use openidconnect::{
     AuthorizationCode, ClientId, ClientSecret, CsrfToken, IssuerUrl, Nonce, RedirectUrl, Scope,
     TokenResponse,
 };
 
 use crate::config::models::OidcConfig;
+use crate::http::client_builder;
 
 /// OIDC 服务 — 封装与 IdP 的交互。
 ///
@@ -48,10 +49,12 @@ impl OidcService {
         let issuer_url = IssuerUrl::new(config.issuer_url.clone())
             .map_err(|e| format!("invalid issuer URL: {e}"))?;
 
-        let http_client = reqwest::ClientBuilder::new()
-            .redirect(reqwest::redirect::Policy::none()) // 防 SSRF
-            .build()
-            .map_err(|e| format!("OIDC HTTP client: {e}"))?;
+        let http_client = ReqwestClient::from(
+            client_builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .map_err(|e| format!("OIDC HTTP client: {e}"))?,
+        );
 
         let metadata = CoreProviderMetadata::discover_async(issuer_url, &http_client)
             .await
@@ -119,10 +122,12 @@ impl OidcService {
         )
         .set_redirect_uri(self.redirect_url.clone());
 
-        let http_client = reqwest::ClientBuilder::new()
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .map_err(|e| format!("OIDC HTTP client: {e}"))?;
+        let http_client = ReqwestClient::from(
+            client_builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .map_err(|e| format!("OIDC HTTP client: {e}"))?,
+        );
 
         let token_response = client
             .exchange_code(AuthorizationCode::new(code.to_string()))

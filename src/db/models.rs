@@ -195,7 +195,7 @@ pub struct LLMModel {
 /// 提供者 — 上游 LLM 提供者配置。
 ///
 /// 管理员通过 Admin API 手动创建。
-/// `api_keys` 使用 toasty::Json 原生 JSON 列存储，支持多 Key 轮询（跨协议共享）。
+/// `api_keys` 使用 toasty::Json 在 TEXT 列中存储 JSON，支持多 Key 轮询（跨协议共享）。
 /// 协议和 URL 配置拆分到 [`ProviderProtocol`] 表。
 #[derive(Debug, toasty::Model)]
 #[table = "providers"]
@@ -210,7 +210,8 @@ pub struct Provider {
     /// 显示名称
     pub display_name: String,
 
-    /// API Keys（JSON 列，跨协议共享，加权轮询选择）
+    /// API Keys（TEXT 列中的 JSON，跨协议共享，加权轮询选择）
+    #[column(type = text)]
     pub api_keys: toasty::Json<Vec<ApiKeyEntry>>,
 
     /// 是否启用
@@ -479,8 +480,10 @@ pub struct LlmRequestTrace {
 
     // ── 内容快照（PII 敏感，Opt-In）──
     /// 请求消息快照，仅当 `LLM_BRIDGE_OBS_CAPTURE_CONTENT=true` 时写入。
+    #[column(type = text)]
     pub request_messages: Option<toasty::Json<Vec<crate::types::LanguageModelChatMessage>>>,
     /// 聚合后响应 parts 快照，同上 Opt-In。
+    #[column(type = text)]
     pub response_parts: Option<toasty::Json<Vec<crate::types::LMResponsePart>>>,
 }
 

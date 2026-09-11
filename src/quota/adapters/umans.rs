@@ -45,6 +45,7 @@ use serde_json::Value;
 use tracing::debug;
 
 use crate::config::models::{ProviderQuotaAdapter, QuotaAdapterConfig};
+use crate::http::client_builder;
 
 use super::types::{QuotaInfo, QuotaWindow, RequestQuota};
 use super::{QuotaAdapter, QuotaAdapterError};
@@ -58,7 +59,8 @@ pub struct UmansQuotaAdapter {
 
 impl UmansQuotaAdapter {
     pub fn new() -> Self {
-        let client = reqwest::Client::builder()
+        // 统一入口：先安装 rustls crypto provider，再构建 client
+        let client = client_builder()
             .timeout(Duration::from_secs(15))
             .build()
             .expect("failed to build reqwest client for umans adapter");
