@@ -8,17 +8,12 @@ use axum::{
     },
 };
 use futures_util::stream::Stream;
-use ractor::Actor;
 use serde::{Deserialize, Serialize};
 use tokio_stream::StreamExt;
-use tracing::{Instrument, instrument};
+use tracing::instrument;
 
 use crate::actors::provider::adapters::openai_chat_completions::flatten_thinking_value_for_sse;
-use crate::actors::provider::{
-    ProviderActor, ProviderChatRequest, ProviderMessage, ProviderResponseMetadata,
-    ProviderRuntimeConfig, ProviderStartSignal,
-};
-use crate::http::client_builder;
+use crate::actors::provider::{ProviderChatRequest, ProviderResponseMetadata};
 use crate::middleware::token_auth::TokenAuth;
 use crate::server::AppState;
 use crate::types::{
@@ -70,6 +65,8 @@ struct OpenAiModelEntry {
     object: &'static str,
     created: i64,
     /// 主要提供者（第一个可用提供者）
+    #[serde(rename = "owned_by")]
+    #[ts(rename = "owned_by")]
     owned_by: String,
     /// 模型的标称能力
     capabilities: OpenAiModelCapabilities,
@@ -316,7 +313,7 @@ impl OpenAiTool {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct OpenAiMessage {
     pub role: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_content")]
     pub content: OpenAiContent,
     pub name: Option<String>,
     /// assistant 消息携带的工具调用列表
@@ -340,6 +337,12 @@ pub struct OpenAiMessageToolCallFunction {
     pub name: String,
     /// JSON 字符串形式的参数
     pub arguments: String,
+}
+
+fn deserialize_content<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<OpenAiContent, D::Error> {
+    Ok(Option::<OpenAiContent>::deserialize(deserializer)?.unwrap_or_default())
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -372,493 +375,106 @@ pub struct OpenAiStreamOptions {
     pub include_usage: Option<bool>,
 }
 
-#[instrument(
-    name = "chat_completions",
-    level = "info",
-    skip(state, token),
-    fields(
-        model = %req.model,
-        stream = req.stream,
-        request_id = tracing::field::Empty,
-        // ── GenAI 语义约定属性（PLAN.md §5 O2）──
-        gen_ai.operation.name = "chat",
-        gen_ai.provider.name = tracing::field::Empty,
-        gen_ai.request.model = %req.model,
-        gen_ai.request.stream = req.stream,
-        gen_ai.response.model = tracing::field::Empty,
-        gen_ai.response.finish_reasons = tracing::field::Empty,
-        gen_ai.usage.input_tokens = tracing::field::Empty,
-        gen_ai.usage.output_tokens = tracing::field::Empty,
-        gen_ai.response.time_to_first_chunk = tracing::field::Empty,
-        error.type = tracing::field::Empty,
-    )
-)]
+#[instrument(skip_all, fields(model = %req.model, request_id = %request_id))]
 pub async fn chat_completions(
     State(state): State<AppState>,
     TokenAuth(token): TokenAuth,
     request_id: crate::middleware::request_id::RequestId,
     Json(req): Json<ChatCompletionRequest>,
 ) -> Result<Response, Response> {
-    // 将 request_id 记录到本 handler 的请求 span（中间件记录的是连接级 span）。
-    tracing::Span::current().record("request_id", request_id.as_str());
-    // Check model access
-    let allowed: Vec<String> = serde_json::from_str(&token.allowed_models).unwrap_or_default();
-    if !allowed.is_empty() && !allowed.iter().any(|a| a == &req.model) {
-        return Err((
-            StatusCode::FORBIDDEN,
-            Json(serde_json::json!({
-                "error": {
-                    "message": format!("model '{}' is not allowed for this token", req.model),
-                    "type": "model_access_denied",
-                    "code": "model_access_denied"
-                }
-            })),
-        )
-            .into_response());
-    }
-
-    let routes = state.store.resolve_model(&req.model).await.map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({
-                "error": {
-                    "message": e,
-                    "type": "internal_error",
-                    "code": "internal_error"
-                }
-            })),
-        )
-            .into_response()
-    })?;
-    if routes.is_empty() {
-        return Err((
-            StatusCode::NOT_FOUND,
-            Json(serde_json::json!({
-                "error": {
-                    "message": format!("model '{}' is not available", req.model),
-                    "type": "model_not_found",
-                    "code": "model_not_found"
-                }
-            })),
-        )
-            .into_response());
-    }
-
-    // Take the first (highest priority) route.
-    let route = &routes[0];
-
-    // GenAI span 属性：provider 与上游模型名在路由选定后即可确定。
-    let genai_provider = crate::observability::genai::provider_name(&route.compatibility);
-    let genai_response_model = route.provider_model_name.clone();
-    tracing::Span::current().record("gen_ai.provider.name", genai_provider);
-    tracing::Span::current().record("gen_ai.response.model", genai_response_model.as_str());
-
-    // 请求开始计时（duration / TTFT 基准）。
-    let request_start = std::time::Instant::now();
-
-    // Phase 2: Quota check and deduct (before making upstream call)
-    let estimated_tokens = estimate_token_count(&req.messages, req.tools.as_deref());
-    if let Err(quota_err) =
-        crate::auth::quota::check_and_deduct(&state.db, &token, estimated_tokens).await
-    {
-        let msg = quota_err.to_string();
-        return Err((
-            StatusCode::TOO_MANY_REQUESTS,
-            Json(serde_json::json!({
-                "error": {
-                    "message": msg,
-                    "type": "quota_exceeded",
-                    "code": "quota_exceeded"
-                }
-            })),
-        )
-            .into_response());
-    }
-
-    // Convert OpenAI messages to our internal format.
+    // 先验证并转换输入，非法图片或消息不占用配额。
     let messages = convert_messages(&req.messages).await?;
-
-    // ── 请求追踪：INSERT pending 行（PLAN.md §5 O3）──
-    // 在 messages move 进 provider_request 前按 Opt-In 开关克隆内容快照。
-    let trace_request_messages = if state.capture_content {
-        Some(messages.clone())
-    } else {
-        None
-    };
-    state
-        .trace_writer
-        .send(crate::observability::trace_writer::TraceEvent::Begin(
-            Box::new(crate::observability::trace_writer::BeginTrace {
-                request_id: request_id.as_str().to_string(),
-                trace_id: None, // O1 中间件已记录到 span；此处 trace_id 双写留待 otel 集成
-                interface: crate::db::models::TraceInterface::OpenAiHttp,
-                token_id: token.id,
-                user_id: token.user_id,
-                token_prefix: token.token_prefix.clone(),
-                model: req.model.clone(),
-                provider_id: route.provider_name.clone(),
-                provider_model_id: route.provider_model_name.clone(),
-                protocol: genai_provider.to_string(),
-                estimated_tokens,
-                request_messages: trace_request_messages,
-            }),
-        ));
-
-    let provider_config = ProviderRuntimeConfig {
-        id: route.provider_name.clone(),
-        compatibility: route.compatibility.clone(),
-        api_key: route.api_key.clone(),
-        base_url: route.base_url.clone(),
-        compat_settings: route.compat_settings.clone(),
-    };
-
     let reasoning = merge_reasoning(req.reasoning_effort.as_deref(), req.reasoning.as_ref());
-
-    let provider_request = ProviderChatRequest {
-        model: route.provider_model_name.clone(),
+    let request = ProviderChatRequest {
+        model: req.model.clone(),
         messages,
         tools: req
             .tools
             .map(|tools| tools.into_iter().map(OpenAiTool::into_internal).collect()),
-        tool_choice: req.tool_choice.clone(),
+        tool_choice: req.tool_choice,
         temperature: req.temperature,
         max_tokens: req.max_tokens,
         top_p: req.top_p,
-        stop: req.stop.clone(),
-        response_format: req.response_format.clone().map(Into::into),
+        stop: req.stop,
+        response_format: req.response_format.map(Into::into),
         reasoning,
         seed: req.seed,
         frequency_penalty: req.frequency_penalty,
         presence_penalty: req.presence_penalty,
-        logit_bias: req.logit_bias.clone(),
+        logit_bias: req.logit_bias,
         max_completion_tokens: req.max_completion_tokens,
     };
-
-    // Spawn provider actor and get stream.
-    let (provider_ref, provider_handle) = Actor::spawn(None, ProviderActor, provider_config)
-        .await
-        .map_err(|e| internal_error(&e.to_string()))?;
-
-    let (metadata_tx, metadata_rx) = tokio::sync::oneshot::channel::<ProviderResponseMetadata>();
-    let (started_tx, started_rx) = tokio::sync::oneshot::channel::<ProviderStartSignal>();
-
-    let stream = ractor::call_t!(
-        provider_ref,
-        |reply| { ProviderMessage::ChatRequest(provider_request, reply, metadata_tx, started_tx) },
-        30_000
+    let session = super::chat_common::prepare_chat_request(
+        &state,
+        &token,
+        request,
+        request_id.as_str().into(),
+        crate::db::models::TraceInterface::OpenAiHttp,
     )
-    .map_err(|e| internal_error(&e.to_string()))?
-    .map_err(|e| internal_error(&e))?;
-
-    // Clean up provider actor when stream ends.
-    let cleanup_handle = provider_handle;
-    let cleanup_ref = provider_ref;
-
-    // #13：等待启动阶段信号——上游非 2xx 或请求未发出时，直接返回对应状态码而非 500。
-    match started_rx.await {
-        Ok(Ok(status)) if (200..300).contains(&(status as usize)) => {}
-        Ok(Ok(status)) => {
-            // 上游非 2xx：错误体会以 Err 进入流内；这里先取出再返回透传响应。
-            let mut stream = stream;
-            let mut message = format!("upstream returned status {status}");
-            let mut code: Option<String> = None;
-            while let Some(item) = stream.next().await {
-                match item {
-                    Err(e) => {
-                        message = e;
-                        break;
-                    }
-                    Ok(_) => continue,
-                }
-            }
-            cleanup_ref.stop(None);
-            let _ = cleanup_handle.await;
-            // 请求追踪：error finalize（PLAN.md §5 O3）——避免 pending 行卡住。
-            send_error_finalize(
-                &state,
-                &request_id,
-                "upstream_error",
-                Some(status),
-                Some(&message),
-                token.id,
-                &req.model,
-                request_start,
-            );
-            return Err(upstream_error_response(status, code.take(), &message));
-        }
-        Ok(Err(err)) => {
-            // 请求未成功发出（网络错误等）：502 Bad Gateway
-            cleanup_ref.stop(None);
-            let _ = cleanup_handle.await;
-            send_error_finalize(
-                &state,
-                &request_id,
-                "network_error",
-                Some(502),
-                Some(&err.message),
-                token.id,
-                &req.model,
-                request_start,
-            );
-            return Err(upstream_error_response(502, err.code.clone(), &err.message));
-        }
-        Err(_) => {
-            // started_tx 被 drop（理论上不该发生）：回退按流内错误处理
-        }
-    }
-
+    .await
+    .map_err(|error| {
+        upstream_error_response(error.status, Some(error.code.into()), &error.message)
+    })?;
+    session
+        .ready
+        .await
+        .map_err(|_| internal_error("chat supervisor stopped before startup"))?
+        .map_err(|error| {
+            upstream_error_response(error.status, Some(error.code.into()), &error.message)
+        })?;
     if req.stream {
-        let usage_handle = UsageHandle::default();
-        let ttft_slot: TtftSlot = Default::default();
-        let sse_stream = stream_to_sse(
-            stream,
-            req.model.clone(),
-            usage_handle.clone(),
-            metadata_rx,
-            ttft_slot.clone(),
+        return Ok(
+            Sse::new(stream_to_sse(session.stream, req.model, session.metadata)).into_response(),
         );
-
-        // Spawn cleanup after stream is consumed.
-        // span context 断点修复（PLAN.md §5 O1）：spawn 的流消费任务在响应返回后才被
-        // poll，此时请求 span 已关闭；捕获当前 span 并 .instrument() 挂回，使 SSE 阶段
-        // 的结算日志保留 request_id / model 等上下文字段。
-        let settle_state = state.clone();
-        let settle_ctx = crate::auth::quota::TokenQuotaContext::from_token(&token);
-        let genai_request_model = req.model.clone();
-        let trace_request_id = request_id.as_str().to_string();
-        let genai_response_model_clone = genai_response_model.clone();
-        tokio::spawn(
-            async move {
-                cleanup_ref.stop(None);
-                let _ = cleanup_handle.await;
-                let usage = usage_handle.lock().await.clone();
-                settle_quota_with_actual_usage(
-                    &settle_state,
-                    &settle_ctx,
-                    estimated_tokens,
-                    &usage,
-                )
-                .await;
-
-                // GenAI finalize：TTFT + usage 记录到请求 span 并投影 metrics。
-                let ttft_s = ttft_slot
-                    .lock()
-                    .await
-                    .map(|t| t.duration_since(request_start).as_secs_f64());
-                let span = tracing::Span::current();
-                if let Some(ttft) = ttft_s {
-                    span.record("gen_ai.response.time_to_first_chunk", ttft);
-                }
-                if let Some(reason) = usage.finish_reason.as_deref() {
-                    span.record("gen_ai.response.finish_reasons", reason);
-                }
-                if let Some(input) = usage.input_tokens {
-                    span.record("gen_ai.usage.input_tokens", input);
-                }
-                if let Some(output) = usage.output_tokens {
-                    span.record("gen_ai.usage.output_tokens", output);
-                }
-                crate::observability::genai::record_finalize(
-                    &crate::observability::genai::GenAiFinalize {
-                        provider_name: genai_provider,
-                        request_model: genai_request_model.clone(),
-                        response_model: genai_response_model_clone.clone(),
-                        input_tokens: usage.input_tokens,
-                        output_tokens: usage.output_tokens,
-                        duration_s: request_start.elapsed().as_secs_f64(),
-                        ttft_s,
-                    },
-                );
-
-                // ── 请求追踪：UPDATE 终态 + usage_daily rollup（PLAN.md §5 O3）──
-                // 流式响应 parts 不在热路径逐条聚合（增大内存与延迟），response_parts 留空；
-                // 内容快照在 O5 详情页按需从上游重放或后续增强采集。此处仅落结构化事实。
-                let completed_at = jiff::Timestamp::now();
-                let latency_ms = request_start.elapsed().as_millis() as i64;
-                let ttft_ms = ttft_s.map(|s| (s * 1000.0) as i64);
-                // first_chunk_at 由 ttft_ms 反推（精度足够，避免额外 Instant→Timestamp 转换）。
-                let first_chunk_at = if ttft_ms.is_some() {
-                    Some(completed_at)
-                } else {
-                    None
-                };
-                settle_state.trace_writer.send(
-                    crate::observability::trace_writer::TraceEvent::Finalize(Box::new(
-                        crate::observability::trace_writer::FinalizeTrace {
-                            request_id: trace_request_id,
-                            status: crate::db::models::TraceStatus::Success,
-                            error_type: None,
-                            error_message: None,
-                            upstream_status: None,
-                            finish_reason: usage.finish_reason.clone(),
-                            input_tokens: usage.input_tokens,
-                            output_tokens: usage.output_tokens,
-                            reasoning_tokens: usage.reasoning_tokens,
-                            cached_tokens: usage.cached_tokens,
-                            total_tokens: usage.total_tokens,
-                            cost_usd: None,            // O4 成本计算后回填
-                            upstream_request_id: None, // SSE 路径 metadata 已被 stream_to_sse 消费
-                            first_chunk_at,
-                            completed_at,
-                            ttft_ms,
-                            latency_ms: Some(latency_ms),
-                            response_parts: None,
-                            day: crate::observability::trace_writer::current_day(),
-                            token_id: settle_ctx.token_id,
-                            model: genai_request_model,
-                        },
-                    )),
-                );
-            }
-            .instrument(tracing::Span::current()),
-        );
-
-        Ok(Sse::new(sse_stream).into_response())
-    } else {
-        // Non-streaming: collect all chunks and concatenate.
-        let mut stream = stream;
-        let mut content = String::new();
-        let mut reasoning_content = String::new();
-        let mut tool_calls: Vec<serde_json::Value> = Vec::new();
-        let mut usage_acc = UsageAccumulator::default();
-        while let Some(item) = stream.next().await {
-            match item {
-                Ok(LMResponsePart::Text(t)) => content.push_str(&t.value),
-                Ok(LMResponsePart::Thinking(t)) => {
-                    let text = crate::actors::provider::adapters::openai_chat_completions::flatten_thinking_value_for_sse(&t.value);
-                    reasoning_content.push_str(&text);
-                }
-                Ok(LMResponsePart::ToolCall(tc)) => {
-                    tool_calls.push(serde_json::json!({
-                        "id": tc.call_id,
-                        "type": "function",
-                        "function": {
-                            "name": tc.name,
-                            "arguments": serde_json::to_string(&tc.input).unwrap_or_default(),
-                        }
-                    }));
-                }
-                Ok(LMResponsePart::Usage(u)) => usage_acc.merge(&u),
-                Ok(_) => {}
-                Err(e) => {
-                    cleanup_ref.stop(None);
-                    let _ = cleanup_handle.await;
-                    // GenAI error.type（流内错误）：低基数错误类别标识。
-                    tracing::Span::current().record("error.type", "stream_error");
-                    // 请求追踪：error finalize（PLAN.md §5 O3）。
-                    send_error_finalize(
-                        &state,
-                        &request_id,
-                        "stream_error",
-                        None,
-                        Some(&e),
-                        token.id,
-                        &req.model,
-                        request_start,
-                    );
-                    return Err(internal_error(&e));
-                }
-            }
-        }
-        cleanup_ref.stop(None);
-        let _ = cleanup_handle.await;
-
-        // 按真实 usage 结算配额：多退少补（相对预估）
-        let settle_ctx = crate::auth::quota::TokenQuotaContext::from_token(&token);
-        settle_quota_with_actual_usage(&state, &settle_ctx, estimated_tokens, &usage_acc).await;
-
-        // GenAI finalize（非流式，无 TTFT）：usage/finish_reason 记录到 span 并投影 metrics。
-        let span = tracing::Span::current();
-        if let Some(reason) = usage_acc.finish_reason.as_deref() {
-            span.record("gen_ai.response.finish_reasons", reason);
-        }
-        if let Some(input) = usage_acc.input_tokens {
-            span.record("gen_ai.usage.input_tokens", input);
-        }
-        if let Some(output) = usage_acc.output_tokens {
-            span.record("gen_ai.usage.output_tokens", output);
-        }
-        crate::observability::genai::record_finalize(&crate::observability::genai::GenAiFinalize {
-            provider_name: genai_provider,
-            request_model: req.model.clone(),
-            response_model: genai_response_model.clone(),
-            input_tokens: usage_acc.input_tokens,
-            output_tokens: usage_acc.output_tokens,
-            duration_s: request_start.elapsed().as_secs_f64(),
-            ttft_s: None,
-        });
-
-        let upstream = metadata_rx.await.unwrap_or_default();
-        let id = upstream
-            .id
-            .unwrap_or_else(|| "chatcmpl-llm-bridge".to_string());
-        let created = upstream.created.unwrap_or(0);
-
-        // ── 请求追踪：UPDATE 终态 + usage_daily rollup（PLAN.md §5 O3）──
-        // 非流式 response_parts 不采集（完整响应已作为 JSON 返回客户端，可经 replay 获取）。
-        let completed_at = jiff::Timestamp::now();
-        let latency_ms = request_start.elapsed().as_millis() as i64;
-        state
-            .trace_writer
-            .send(crate::observability::trace_writer::TraceEvent::Finalize(
-                Box::new(crate::observability::trace_writer::FinalizeTrace {
-                    request_id: request_id.as_str().to_string(),
-                    status: crate::db::models::TraceStatus::Success,
-                    error_type: None,
-                    error_message: None,
-                    upstream_status: None,
-                    finish_reason: usage_acc.finish_reason.clone(),
-                    input_tokens: usage_acc.input_tokens,
-                    output_tokens: usage_acc.output_tokens,
-                    reasoning_tokens: usage_acc.reasoning_tokens,
-                    cached_tokens: usage_acc.cached_tokens,
-                    total_tokens: usage_acc.total_tokens,
-                    cost_usd: None,
-                    upstream_request_id: Some(id.clone()),
-                    first_chunk_at: None,
-                    completed_at,
-                    ttft_ms: None,
-                    latency_ms: Some(latency_ms),
-                    response_parts: None,
-                    day: crate::observability::trace_writer::current_day(),
-                    token_id: token.id,
-                    model: req.model.clone(),
-                }),
-            ));
-
-        let has_tool_calls = !tool_calls.is_empty();
-        let mut message = serde_json::json!({
-            "role": "assistant",
-            "content": content,
-        });
-        if !reasoning_content.is_empty() {
-            message["reasoning_content"] = serde_json::Value::String(reasoning_content);
-        }
-        if has_tool_calls {
-            message["tool_calls"] = serde_json::Value::Array(tool_calls);
-        }
-        let finish_reason = usage_acc
-            .finish_reason
-            .as_deref()
-            .unwrap_or(if has_tool_calls { "tool_calls" } else { "stop" });
-
-        let mut response = serde_json::json!({
-            "id": id,
-            "object": "chat.completion",
-            "created": created,
-            "model": req.model,
-            "choices": [{
-                "index": 0,
-                "message": message,
-                "finish_reason": finish_reason
-            }]
-        });
-        if let Some(usage_json) = usage_acc.to_openai_usage() {
-            response["usage"] = usage_json;
-        }
-
-        Ok(Json(response).into_response())
     }
+    let mut stream = session.stream;
+    let mut content = String::new();
+    let mut reasoning_content = String::new();
+    let mut tool_calls = Vec::new();
+    while let Some(item) = stream.next().await {
+        match item {
+            Ok(LMResponsePart::Text(text)) => content.push_str(&text.value),
+            Ok(LMResponsePart::Thinking(thinking)) => reasoning_content.push_str(&flatten_thinking_value_for_sse(&thinking.value)),
+            Ok(LMResponsePart::ToolCall(call)) => tool_calls.push(serde_json::json!({
+                "id": call.call_id, "type": "function",
+                "function": {"name": call.name, "arguments": serde_json::to_string(&call.input).map_err(|e| internal_error(&e.to_string()))?},
+            })),
+            _ => {}
+        }
+    }
+    let outcome = session
+        .done
+        .await
+        .map_err(|_| internal_error("chat supervisor stopped before settlement"))?;
+    if let Some(error) = outcome.error {
+        return Err(upstream_error_response(
+            502,
+            Some("provider_error".into()),
+            &error,
+        ));
+    }
+    let has_tools = !tool_calls.is_empty();
+    let mut message = serde_json::json!({"role": "assistant", "content": content});
+    if !reasoning_content.is_empty() {
+        message["reasoning_content"] = reasoning_content.into();
+    }
+    if has_tools {
+        message["tool_calls"] = tool_calls.into();
+    }
+    let finish_reason = outcome
+        .usage
+        .finish_reason
+        .as_deref()
+        .unwrap_or(if has_tools { "tool_calls" } else { "stop" });
+    let mut response = serde_json::json!({
+        "id": outcome.metadata.id.unwrap_or_else(|| format!("chatcmpl-{}", request_id.as_str())),
+        "object": "chat.completion", "created": outcome.metadata.created.unwrap_or(0), "model": req.model,
+        "choices": [{"index":0,"message":message,"finish_reason":finish_reason}],
+    });
+    if let Some(usage) = outcome.usage.to_openai_usage() {
+        response["usage"] = usage;
+    }
+    Ok(Json(response).into_response())
 }
 
 /// 合并 OpenAI `reasoning_effort` 与 OpenRouter `reasoning` 对象为协议无关配置。
@@ -897,99 +513,8 @@ impl From<OpenAiResponseFormat> for crate::types::LanguageModelResponseFormat {
     }
 }
 
-/// 跨多个 Usage part 聚合用量与 finish_reason。
-#[derive(Default, Clone)]
-struct UsageAccumulator {
-    input_tokens: Option<u64>,
-    output_tokens: Option<u64>,
-    total_tokens: Option<u64>,
-    reasoning_tokens: Option<u64>,
-    cached_tokens: Option<u64>,
-    finish_reason: Option<String>,
-}
-
-impl UsageAccumulator {
-    fn merge(&mut self, u: &crate::types::LanguageModelUsagePart) {
-        if u.input_tokens.is_some() {
-            self.input_tokens = u.input_tokens;
-        }
-        if u.output_tokens.is_some() {
-            self.output_tokens = u.output_tokens;
-        }
-        if u.total_tokens.is_some() {
-            self.total_tokens = u.total_tokens;
-        }
-        if u.reasoning_tokens.is_some() {
-            self.reasoning_tokens = u.reasoning_tokens;
-        }
-        if u.cached_tokens.is_some() {
-            self.cached_tokens = u.cached_tokens;
-        }
-        if u.finish_reason.is_some() {
-            self.finish_reason = u.finish_reason.clone();
-        }
-    }
-
-    fn total(&self) -> Option<i64> {
-        self.total_tokens
-            .or(match (self.input_tokens, self.output_tokens) {
-                (Some(i), Some(o)) => Some(i + o),
-                _ => None,
-            })
-            .map(|t| t as i64)
-    }
-
-    fn to_openai_usage(&self) -> Option<serde_json::Value> {
-        let input = self.input_tokens?;
-        let output = self.output_tokens.unwrap_or(0);
-        let mut usage = serde_json::json!({
-            "prompt_tokens": input,
-            "completion_tokens": output,
-            "total_tokens": self.total_tokens.unwrap_or(input + output),
-        });
-        if let Some(reasoning) = self.reasoning_tokens {
-            usage["completion_tokens_details"] =
-                serde_json::json!({ "reasoning_tokens": reasoning });
-        }
-        if let Some(cached) = self.cached_tokens {
-            usage["prompt_tokens_details"] = serde_json::json!({ "cached_tokens": cached });
-        }
-        Some(usage)
-    }
-}
-
-/// 上游返回真实 usage 后，与预估扣减对账：多退少补。
-async fn settle_quota_with_actual_usage(
-    state: &AppState,
-    ctx: &crate::auth::quota::TokenQuotaContext,
-    estimated_tokens: i64,
-    usage: &UsageAccumulator,
-) {
-    let Some(actual_total) = usage.total() else {
-        return;
-    };
-    let delta = actual_total - estimated_tokens;
-    if delta == 0 {
-        return;
-    }
-    if let Err(e) = crate::auth::quota::adjust_usage(&state.db, ctx, delta).await {
-        tracing::warn!(
-            token_id = ctx.token_id,
-            delta,
-            "failed to settle quota with actual usage: {e}"
-        );
-    }
-}
-
-/// 流式路径共享的 usage 累积句柄。
-type UsageHandle = std::sync::Arc<tokio::sync::Mutex<UsageAccumulator>>;
-
-/// 流式路径共享的首 chunk 时间槽（`None` = 尚未产生首 chunk）。
-type TtftSlot = std::sync::Arc<tokio::sync::Mutex<Option<std::time::Instant>>>;
-
 /// 用于在流式 SSE 中共享上游 metadata（id/created）与角色发送状态。
 struct SseSharedState {
-    usage_acc: UsageHandle,
     metadata_rx: tokio::sync::oneshot::Receiver<ProviderResponseMetadata>,
     upstream: Option<ProviderResponseMetadata>,
     role_sent: bool,
@@ -1017,12 +542,9 @@ impl SseSharedState {
 fn stream_to_sse(
     stream: impl Stream<Item = Result<LMResponsePart, String>> + Send + 'static,
     model: String,
-    usage_handle: UsageHandle,
     metadata_rx: tokio::sync::oneshot::Receiver<ProviderResponseMetadata>,
-    ttft_slot: TtftSlot,
 ) -> impl Stream<Item = Result<Event, axum::Error>> + Send + 'static {
     let shared = std::sync::Arc::new(tokio::sync::Mutex::new(SseSharedState {
-        usage_acc: usage_handle,
         metadata_rx,
         upstream: None,
         role_sent: false,
@@ -1032,16 +554,7 @@ fn stream_to_sse(
     let mapped = stream.then(move |item| {
         let shared = shared.clone();
         let model = model.clone();
-        let ttft_slot = ttft_slot.clone();
-        async move {
-            // TTFT（PLAN.md §5 O2）：上游产生首个 item 即视为首 chunk，一次性写入。
-            if let Ok(mut slot) = ttft_slot.try_lock()
-                && slot.is_none()
-            {
-                *slot = Some(std::time::Instant::now());
-            }
-            map_part_to_sse(item, &model, shared).await
-        }
+        async move { map_part_to_sse(item, &model, shared).await }
     });
 
     use futures_util::stream;
@@ -1096,9 +609,6 @@ async fn map_part_to_sse(
                     None
                 }
                 LMResponsePart::Usage(u) => {
-                    // 聚合供流后结算
-                    let guard = shared.lock().await;
-                    guard.usage_acc.lock().await.merge(u);
                     // OpenAI include_usage 格式：choices 为空数组的 usage-only chunk
                     if u.input_tokens.is_some() {
                         usage_json = Some(serde_json::json!({
@@ -1171,7 +681,6 @@ async fn map_part_to_sse(
 }
 
 /// #11：单张图片抓取上限 10 MiB，每条消息最多 8 个图片 part。
-const MAX_IMAGE_BYTES: usize = 10 * 1024 * 1024;
 const MAX_IMAGE_PARTS_PER_MESSAGE: usize = 8;
 
 async fn convert_messages(
@@ -1278,75 +787,9 @@ async fn convert_single_message(msg: &OpenAiMessage) -> Result<LanguageModelChat
 /// #11：将 OpenAI image_url 解析为内部 LanguageModelDataPart。
 /// 支持 `data:<mime>;base64,<data>` 与 http(s) URL（抓取字节流）。
 async fn resolve_image_url(url: &str) -> Result<crate::types::LanguageModelDataPart, Response> {
-    use base64::Engine;
-    use base64::engine::general_purpose::STANDARD as BASE64;
-
-    if let Some(data_uri) = url.strip_prefix("data:") {
-        // data:<mime>;base64,<payload>
-        let (meta, payload) = data_uri
-            .split_once(',')
-            .ok_or_else(|| bad_request("invalid data URI for image_url"))?;
-        let mime_type = meta.strip_suffix(";base64").unwrap_or(meta).to_string();
-        if !mime_type.starts_with("image/") {
-            return Err(bad_request(&format!(
-                "unsupported data URI mime type for image_url: {mime_type}"
-            )));
-        }
-        let data = BASE64
-            .decode(payload.trim())
-            .map_err(|e| bad_request(&format!("invalid base64 in image_url data URI: {e}")))?;
-        if data.len() > MAX_IMAGE_BYTES {
-            return Err(bad_request(&format!(
-                "image exceeds {} MiB limit",
-                MAX_IMAGE_BYTES / 1024 / 1024
-            )));
-        }
-        return Ok(crate::types::LanguageModelDataPart { mime_type, data });
-    }
-
-    if url.starts_with("http://") || url.starts_with("https://") {
-        // 统一入口：先安装 rustls crypto provider，再构建 client
-        let client = client_builder()
-            .timeout(std::time::Duration::from_secs(10))
-            .build()
-            .map_err(|e| internal_error(&format!("failed to build http client: {e}")))?;
-        let response = client
-            .get(url)
-            .send()
-            .await
-            .map_err(|e| bad_request(&format!("failed to fetch image_url: {e}")))?;
-        if !response.status().is_success() {
-            return Err(bad_request(&format!(
-                "failed to fetch image_url: HTTP {}",
-                response.status()
-            )));
-        }
-        let mime_type = response
-            .headers()
-            .get(reqwest::header::CONTENT_TYPE)
-            .and_then(|v| v.to_str().ok())
-            .map(|s| s.split(';').next().unwrap_or(s).trim().to_string())
-            .filter(|s| s.starts_with("image/"))
-            .unwrap_or_else(|| "image/png".to_string());
-        let data = response
-            .bytes()
-            .await
-            .map_err(|e| bad_request(&format!("failed to read image_url body: {e}")))?;
-        if data.len() > MAX_IMAGE_BYTES {
-            return Err(bad_request(&format!(
-                "image exceeds {} MiB limit",
-                MAX_IMAGE_BYTES / 1024 / 1024
-            )));
-        }
-        return Ok(crate::types::LanguageModelDataPart {
-            mime_type,
-            data: data.to_vec(),
-        });
-    }
-
-    Err(bad_request(
-        "unsupported image_url scheme (expected data: or http(s):)",
-    ))
+    super::images::resolve_image_url(url)
+        .await
+        .map_err(|error| bad_request(&error))
 }
 
 fn bad_request(msg: &str) -> Response {
@@ -1391,52 +834,6 @@ fn internal_error(msg: &str) -> Response {
         .into_response()
 }
 
-/// 请求追踪 error finalize（PLAN.md §5 O3）。
-///
-/// 在上游错误 / 网络错误 / 流内错误路径调用，将 pending 行 UPDATE 为 error 终态，
-/// 避免崩溃或上游失败留下「卡住」的 pending 记录。不含 usage（错误请求通常无 usage）。
-#[allow(clippy::too_many_arguments)]
-fn send_error_finalize(
-    state: &AppState,
-    request_id: &crate::middleware::request_id::RequestId,
-    error_type: &str,
-    upstream_status: Option<u16>,
-    error_message: Option<&str>,
-    token_id: u64,
-    model: &str,
-    request_start: std::time::Instant,
-) {
-    let completed_at = jiff::Timestamp::now();
-    let latency_ms = request_start.elapsed().as_millis() as i64;
-    state
-        .trace_writer
-        .send(crate::observability::trace_writer::TraceEvent::Finalize(
-            Box::new(crate::observability::trace_writer::FinalizeTrace {
-                request_id: request_id.as_str().to_string(),
-                status: crate::db::models::TraceStatus::Error,
-                error_type: Some(error_type.to_string()),
-                error_message: error_message.map(str::to_string),
-                upstream_status,
-                finish_reason: None,
-                input_tokens: None,
-                output_tokens: None,
-                reasoning_tokens: None,
-                cached_tokens: None,
-                total_tokens: None,
-                cost_usd: None,
-                upstream_request_id: None,
-                first_chunk_at: None,
-                completed_at,
-                ttft_ms: None,
-                latency_ms: Some(latency_ms),
-                response_parts: None,
-                day: crate::observability::trace_writer::current_day(),
-                token_id,
-                model: model.to_string(),
-            }),
-        ));
-}
-
 /// #13：构造透传上游语义状态码的错误响应。
 fn upstream_error_response(status: u16, code: Option<String>, message: &str) -> Response {
     let status_code = StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY);
@@ -1458,37 +855,6 @@ fn upstream_error_response(status: u16, code: Option<String>, message: &str) -> 
         })),
     )
         .into_response()
-}
-
-/// Rough token count estimate for quota pre-check.
-/// Uses character count / 4 as a rough heuristic (common for English text).
-/// 工具定义 JSON 长度也计入，避免带 tools 时低估。
-fn estimate_token_count(messages: &[OpenAiMessage], tools: Option<&[OpenAiTool]>) -> i64 {
-    let message_chars: usize = messages
-        .iter()
-        .map(|m| match &m.content {
-            OpenAiContent::String(s) => s.len(),
-            OpenAiContent::Array(parts) => parts
-                .iter()
-                .filter_map(|p| match p {
-                    OpenAiContentPart::Text { text } => Some(text.len()),
-                    _ => None,
-                })
-                .sum(),
-        })
-        .sum();
-    let tool_chars: usize = tools
-        .map(|t| {
-            t.iter()
-                .map(|tool| {
-                    tool.function.name.len()
-                        + tool.function.description.as_deref().unwrap_or("").len()
-                        + tool.function.parameters.to_string().len()
-                })
-                .sum()
-        })
-        .unwrap_or(0);
-    ((message_chars + tool_chars) / 4) as i64
 }
 
 #[cfg(test)]

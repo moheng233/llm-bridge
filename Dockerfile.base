@@ -46,7 +46,7 @@ RUN arch="$(uname -m)" \
     && curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${node_arch}.tar.xz" \
         | tar -xJ -C /usr/local --strip-components=1 --no-same-owner \
     && corepack enable \
-    && corepack prepare pnpm@latest --activate \
+    && corepack prepare pnpm@11.26.0 --activate \
     && node --version && npm --version && pnpm --version
 
 # ── rustup + nightly 工具链 + cargo-chef ────────────────────────────────────

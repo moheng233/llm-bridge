@@ -196,16 +196,20 @@ impl Actor for ProviderActor {
 
                 tokio::spawn(
                     async move {
-                        if let Err(error) = adapters::stream_chat(
-                            &provider_state,
-                            request,
-                            tx.clone(),
-                            metadata_tx,
-                            started_tx,
-                        )
-                        .await
-                        {
-                            let _ = tx.send(Err(error)).await;
+                        tokio::select! {
+                            biased;
+                            _ = tx.closed() => {}
+                            result = adapters::stream_chat(
+                                &provider_state,
+                                request,
+                                tx.clone(),
+                                metadata_tx,
+                                started_tx,
+                            ) => {
+                                if let Err(error) = result {
+                                    let _ = tx.send(Err(error)).await;
+                                }
+                            }
                         }
                     }
                     .instrument(stream_span),

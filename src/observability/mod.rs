@@ -28,93 +28,96 @@ pub struct ObservabilityGuard;
 /// - **Without `otel`**: only stdout/err formatted logging via `tracing-subscriber`.
 /// - **With `otel`**: adds OTLP HTTP exporters for logs and spans (sends to
 ///   the collector configured via standard `OTEL_EXPORTER_OTLP_*` env vars).
-pub fn init(_service_name: &str) -> Result<ObservabilityGuard, Box<dyn std::error::Error>> {
-    #[cfg(feature = "otel")]
-    {
-        use opentelemetry::trace::TracerProvider;
-        use opentelemetry_sdk::Resource;
+pub fn init(service_name: &str) -> Result<ObservabilityGuard, Box<dyn std::error::Error>> {
+    init_impl(service_name)
+}
 
-        let service_name = _service_name.to_owned();
-        let resource = Resource::builder()
-            .with_service_name(service_name.clone())
-            .build();
+/// `otel` 关闭时仅注册 stdout 格式化 subscriber。
+#[cfg(not(feature = "otel"))]
+fn init_impl(_service_name: &str) -> Result<ObservabilityGuard, Box<dyn std::error::Error>> {
+    let subscriber = tracing_subscriber::fmt()
+        .with_env_filter(
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+        )
+        .with_target(true)
+        .with_timer(tracing_subscriber::fmt::time::uptime())
+        .with_level(true)
+        .finish();
 
-        let logger_provider = opentelemetry_sdk::logs::SdkLoggerProvider::builder()
-            .with_resource(resource.clone())
-            .with_batch_exporter(
-                opentelemetry_otlp::LogExporter::builder()
+    tracing::subscriber::set_global_default(subscriber)?;
+
+    Ok(ObservabilityGuard)
+}
+
+/// `otel` 开启时额外注册 OTLP logs/spans/metrics 导出器。
+#[cfg(feature = "otel")]
+fn init_impl(service_name: &str) -> Result<ObservabilityGuard, Box<dyn std::error::Error>> {
+    use opentelemetry::trace::TracerProvider;
+    use opentelemetry_sdk::Resource;
+
+    let service_name = service_name.to_owned();
+    let resource = Resource::builder()
+        .with_service_name(service_name.clone())
+        .build();
+
+    let logger_provider = opentelemetry_sdk::logs::SdkLoggerProvider::builder()
+        .with_resource(resource.clone())
+        .with_batch_exporter(
+            opentelemetry_otlp::LogExporter::builder()
+                .with_http()
+                .build()?,
+        )
+        .build();
+
+    let tracer_provider = opentelemetry_sdk::trace::SdkTracerProvider::builder()
+        .with_resource(resource.clone())
+        .with_batch_exporter(
+            opentelemetry_otlp::SpanExporter::builder()
+                .with_http()
+                .build()?,
+        )
+        .build();
+
+    // Meter（PLAN.md §5 O2）：GenAI metrics 经 OTLP 周期推送。
+    // record 走 `opentelemetry::global::meter`，故须注册为全局 provider。
+    let meter_provider = opentelemetry_sdk::metrics::SdkMeterProvider::builder()
+        .with_resource(resource)
+        .with_reader(
+            opentelemetry_sdk::metrics::PeriodicReader::builder(
+                opentelemetry_otlp::MetricExporter::builder()
                     .with_http()
                     .build()?,
             )
-            .build();
+            .build(),
+        )
+        .build();
+    opentelemetry::global::set_meter_provider(meter_provider.clone());
 
-        let tracer_provider = opentelemetry_sdk::trace::SdkTracerProvider::builder()
-            .with_resource(resource.clone())
-            .with_batch_exporter(
-                opentelemetry_otlp::SpanExporter::builder()
-                    .with_http()
-                    .build()?,
-            )
-            .build();
+    let subscriber = tracing_subscriber::fmt()
+        .with_env_filter(
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+        )
+        .with_target(true)
+        .with_timer(tracing_subscriber::fmt::time::uptime())
+        .with_level(true)
+        .finish()
+        .with(
+            tracing_opentelemetry::layer()
+                .with_tracer(tracer_provider.tracer(service_name.to_owned())),
+        )
+        .with(
+            opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge::new(
+                &logger_provider,
+            ),
+        );
 
-        // Meter（PLAN.md §5 O2）：GenAI metrics 经 OTLP 周期推送。
-        // record 走 `opentelemetry::global::meter`，故须注册为全局 provider。
-        let meter_provider = opentelemetry_sdk::metrics::SdkMeterProvider::builder()
-            .with_resource(resource)
-            .with_reader(
-                opentelemetry_sdk::metrics::periodic_reader_with_async_runtime::PeriodicReader::builder(
-                    opentelemetry_otlp::MetricExporter::builder()
-                        .with_http()
-                        .build()?,
-                    opentelemetry_sdk::runtime::Tokio,
-                )
-                .build(),
-            )
-            .build();
-        opentelemetry::global::set_meter_provider(meter_provider.clone());
+    tracing::subscriber::set_global_default(subscriber)?;
 
-        let subscriber = tracing_subscriber::fmt()
-            .with_env_filter(
-                EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
-            )
-            .with_target(true)
-            .with_timer(tracing_subscriber::fmt::time::uptime())
-            .with_level(true)
-            .finish()
-            .with(
-                tracing_opentelemetry::layer()
-                    .with_tracer(tracer_provider.tracer(service_name.to_owned())),
-            )
-            .with(
-                opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge::new(
-                    &logger_provider,
-                ),
-            );
-
-        tracing::subscriber::set_global_default(subscriber)?;
-
-        return Ok(ObservabilityGuard {
-            logger_provider,
-            tracer_provider,
-            meter_provider,
-        });
-    }
-
-    #[cfg(not(feature = "otel"))]
-    {
-        let subscriber = tracing_subscriber::fmt()
-            .with_env_filter(
-                EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
-            )
-            .with_target(true)
-            .with_timer(tracing_subscriber::fmt::time::uptime())
-            .with_level(true)
-            .finish();
-
-        tracing::subscriber::set_global_default(subscriber)?;
-
-        Ok(ObservabilityGuard)
-    }
+    Ok(ObservabilityGuard {
+        logger_provider,
+        tracer_provider,
+        meter_provider,
+    })
 }
 
 impl ObservabilityGuard {

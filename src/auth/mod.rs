@@ -6,6 +6,7 @@
 //! - `token`: API Token 服务（Phase 2.1 ✅）
 //! - `quota`: 配额服务（Phase 2.2 ✅）
 
+pub mod cli_session;
 pub mod oidc;
 pub mod quota;
 pub mod session;

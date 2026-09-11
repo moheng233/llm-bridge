@@ -79,179 +79,153 @@ pub fn current_period_key(quota_period: &str) -> String {
     }
 }
 
-/// 获取或创建当前周期的用量记录。
-///
-/// 如果该 token_id + period_key 的记录不存在，则创建一条空记录。
-pub async fn get_or_create_usage_record(
-    db: &db::Db,
-    token_id: u64,
-    period_key: &str,
-) -> Result<UsageRecord, String> {
-    let existing = UsageRecord::filter(
-        UsageRecord::fields()
-            .token_id()
-            .eq(token_id)
-            .and(UsageRecord::fields().period_key().eq(period_key)),
-    )
-    .exec(&mut db.clone())
-    .await
-    .map_err(|e| e.to_string())?
-    .into_iter()
-    .next();
-
-    if let Some(record) = existing {
-        return Ok(record);
-    }
-
-    // 不存在，创建新记录
-    let record = toasty::create!(UsageRecord {
-        token_id,
-        period_key: period_key.to_string(),
-        request_count: 0,
-        token_count: 0,
-    })
-    .exec(&mut db.clone())
-    .await
-    .map_err(|e| e.to_string())?;
-
-    Ok(record)
+/// 准入时固定的账本归属；结束结算不得重新计算当前周期。
+#[derive(Debug)]
+pub struct TokenQuotaContext {
+    pub token_id: u64,
+    pub period_key: String,
+    pub record_id: u64,
 }
 
-/// 检查配额是否足够。
-///
-/// 仅检查不扣减。返回 `Ok(())` 或 `Err(QuotaError)`。
-pub fn check_quota(token: &Token, usage: &UsageRecord) -> Result<(), QuotaError> {
-    // Check request quota
-    if token.request_quota > 0 && usage.request_count >= token.request_quota {
+/// 首条语句取得 Token 写锁，使同 Token 的准入和结算跨连接串行。
+/// SQLite 同时取得数据库写锁，避免先读后写的锁升级竞争。
+async fn lock_token(tx: &mut toasty::Transaction<'_>, token_id: u64) -> Result<(), String> {
+    Token::filter(Token::fields().id().eq(token_id))
+        .update()
+        .last_used_at(Some(Zoned::now().timestamp().as_millisecond()))
+        .exec(tx)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// 检查包含本次预留的用量，边界相等可以准入。
+fn check_reservation(
+    token: &Token,
+    request_count: i64,
+    token_count: i64,
+    estimated_tokens: i64,
+) -> Result<(i64, i64), QuotaError> {
+    let next_requests = request_count
+        .checked_add(1)
+        .ok_or_else(|| QuotaError::Database("request counter overflow".into()))?;
+    let next_tokens = token_count
+        .checked_add(estimated_tokens)
+        .ok_or_else(|| QuotaError::Database("token counter overflow".into()))?;
+    if token.request_quota > 0 && next_requests > token.request_quota {
         return Err(QuotaError::RequestQuotaExceeded {
-            current: usage.request_count,
+            current: next_requests,
             limit: token.request_quota,
             period: token.quota_period.clone(),
         });
     }
-
-    // Check token quota
-    if token.token_quota > 0 && usage.token_count >= token.token_quota {
+    if token.token_quota > 0 && next_tokens > token.token_quota {
         return Err(QuotaError::TokenQuotaExceeded {
-            current: usage.token_count,
+            current: next_tokens,
             limit: token.token_quota,
             period: token.quota_period.clone(),
         });
     }
-
-    Ok(())
+    Ok((next_requests, next_tokens))
 }
 
-/// 扣减配额（增加用量计数）。
-///
-/// 在 API 请求完成后调用，更新 UsageRecord 和 Token 的 `last_used_at`。
-pub async fn deduct_usage(
-    db: &db::Db,
-    token_id: u64,
-    record_id: u64,
-    request_delta: i64,
-    token_delta: i64,
-) -> Result<(), String> {
-    // 更新用量记录
-    let record = UsageRecord::get_by_id(&mut db.clone(), &record_id)
-        .await
-        .map_err(|e| e.to_string())?;
-
-    UsageRecord::filter(UsageRecord::fields().id().eq(record_id))
-        .update()
-        .request_count(record.request_count + request_delta)
-        .token_count(record.token_count + token_delta)
-        .exec(&mut db.clone())
-        .await
-        .map_err(|e| e.to_string())?;
-
-    // 更新 Token 的 last_used_at
-    let now_ms = Zoned::now().timestamp().as_millisecond();
-    Token::filter(Token::fields().id().eq(token_id))
-        .update()
-        .last_used_at(Some(now_ms))
-        .exec(&mut db.clone())
-        .await
-        .map_err(|e| e.to_string())?;
-
-    Ok(())
-}
-
-/// 完整的配额检查 + 扣减流程。
-///
-/// 在事务中完成：
-/// 1. 获取或创建当前周期的 UsageRecord
-/// 2. 检查配额
-/// 3. 扣减计数
+/// 在同一事务中锁定 Token、检查最新配额并预留本次用量。
+/// 无限额 Token 只跳过限额检查，仍记录真实用量。
 pub async fn check_and_deduct(
     db: &db::Db,
-    token: &Token,
+    token_id: u64,
     estimated_tokens: i64,
-) -> Result<(), QuotaError> {
-    if token.quota_period == "unlimited" && token.request_quota <= 0 && token.token_quota <= 0 {
-        // 无任何配额限制，跳过
-        return Ok(());
+) -> Result<TokenQuotaContext, QuotaError> {
+    if estimated_tokens < 0 {
+        return Err(QuotaError::Database("negative token reservation".into()));
     }
-
-    let period_key = current_period_key(&token.quota_period);
-
-    let usage = get_or_create_usage_record(db, token.id, &period_key)
+    let mut db = db.clone();
+    let mut tx = db
+        .transaction()
+        .await
+        .map_err(|e| QuotaError::Database(e.to_string()))?;
+    lock_token(&mut tx, token_id)
         .await
         .map_err(QuotaError::Database)?;
-
-    // 检查配额
-    check_quota(token, &usage)?;
-
-    // 扣减
-    deduct_usage(db, token.id, usage.id, 1, estimated_tokens)
+    let current = Token::get_by_id(&mut tx, &token_id)
         .await
-        .map_err(QuotaError::Database)?;
-
-    Ok(())
+        .map_err(|e| QuotaError::Database(e.to_string()))?;
+    let period_key = current_period_key(&current.quota_period);
+    let existing = UsageRecord::filter(
+        UsageRecord::fields()
+            .token_id()
+            .eq(token_id)
+            .and(UsageRecord::fields().period_key().eq(&period_key)),
+    )
+    .exec(&mut tx)
+    .await
+    .map_err(|e| QuotaError::Database(e.to_string()))?
+    .into_iter()
+    .next();
+    let (requests, tokens) = check_reservation(
+        &current,
+        existing.as_ref().map_or(0, |r| r.request_count),
+        existing.as_ref().map_or(0, |r| r.token_count),
+        estimated_tokens,
+    )?;
+    let record_id = if let Some(record) = existing {
+        UsageRecord::filter(UsageRecord::fields().id().eq(record.id))
+            .update()
+            .request_count(requests)
+            .token_count(tokens)
+            .exec(&mut tx)
+            .await
+            .map_err(|e| QuotaError::Database(e.to_string()))?;
+        record.id
+    } else {
+        toasty::create!(UsageRecord {
+            token_id,
+            period_key: period_key.clone(),
+            request_count: requests,
+            token_count: tokens,
+        })
+        .exec(&mut tx)
+        .await
+        .map_err(|e| QuotaError::Database(e.to_string()))?
+        .id
+    };
+    tx.commit()
+        .await
+        .map_err(|e| QuotaError::Database(e.to_string()))?;
+    Ok(TokenQuotaContext {
+        token_id,
+        period_key,
+        record_id,
+    })
 }
 
-/// 配额结算所需的最小上下文。
-///
-/// 从 [`Token`] 提取而来，用于请求结束后的对账（多退少补）。
-/// 刻意只含标量字段：结算逻辑不需要 Token 的名称/哈希/关联实体，
-/// 避免把 ORM 实体跨任务传递（toasty 实体因 Deferred 关联无法干净 Clone）。
-#[derive(Debug, Clone)]
-pub struct TokenQuotaContext {
-    pub token_id: u64,
-    pub quota_period: String,
-    pub request_quota: i64,
-    pub token_quota: i64,
-}
-
-impl TokenQuotaContext {
-    pub fn from_token(token: &Token) -> Self {
-        Self {
-            token_id: token.id,
-            quota_period: token.quota_period.clone(),
-            request_quota: token.request_quota,
-            token_quota: token.token_quota,
-        }
-    }
-
-    fn is_unlimited(&self) -> bool {
-        self.quota_period == "unlimited" && self.request_quota <= 0 && self.token_quota <= 0
-    }
-}
-
-/// 用真实用量对预估扣减做对账（多退少补）。
-///
-/// `delta` 为 真实 total_tokens - 预估 tokens，可正可负。
-/// 无配额限制的 token 直接跳过。
+/// 对原预留记录按真实用量多退少补；请求数始终只在准入时增加一次。
+/// 真实上游用量可能超过估算，结算不能截断事实账本来掩盖超额。
 pub async fn adjust_usage(db: &db::Db, ctx: &TokenQuotaContext, delta: i64) -> Result<(), String> {
-    if delta == 0 || ctx.is_unlimited() {
+    if delta == 0 {
         return Ok(());
     }
-
-    let period_key = current_period_key(&ctx.quota_period);
-    let usage = get_or_create_usage_record(db, ctx.token_id, &period_key).await?;
-
-    // request_delta = 0：请求数在预估阶段已计，这里只调 token 数
-    deduct_usage(db, ctx.token_id, usage.id, 0, delta).await
+    let mut db = db.clone();
+    let mut tx = db.transaction().await.map_err(|e| e.to_string())?;
+    lock_token(&mut tx, ctx.token_id).await?;
+    let record = UsageRecord::get_by_id(&mut tx, &ctx.record_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    if record.token_id != ctx.token_id || record.period_key != ctx.period_key {
+        return Err("quota reservation ownership mismatch".into());
+    }
+    let tokens = record
+        .token_count
+        .checked_add(delta)
+        .filter(|count| *count >= 0)
+        .ok_or_else(|| "invalid quota settlement delta".to_string())?;
+    UsageRecord::filter(UsageRecord::fields().id().eq(ctx.record_id))
+        .update()
+        .token_count(tokens)
+        .exec(&mut tx)
+        .await
+        .map_err(|e| e.to_string())?;
+    tx.commit().await.map_err(|e| e.to_string())
 }
 
 /// 后台配额重置任务：清理过期周期记录。
@@ -288,7 +262,7 @@ pub async fn reset_expired_cycles(db: &db::Db) -> Result<(), String> {
                 period = %record.period_key,
                 "found expired usage record (will be reset on next usage)"
             );
-            // 不主动删除，下次 get_or_create_usage_record 时会因 period_key 不同而创建新记录
+            // 不主动删除，下一次准入会因 period_key 不同而创建新记录。
         }
     }
 

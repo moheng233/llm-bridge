@@ -3,14 +3,8 @@
 /**
  * 协议无关的 token 用量统计，由适配器在上游响应末尾发出。
  */
-export type LanguageModelUsagePart = {
-  inputTokens?: number;
-  outputTokens?: number;
-  totalTokens?: number;
-  reasoningTokens?: number;
-  cachedTokens?: number;
-  /**
-   * 上游真实的 finish_reason（stop / length / tool_calls / content_filter / end_turn / max_tokens …）
-   */
-  finishReason?: string;
-};
+export type LanguageModelUsagePart = { inputTokens?: number, outputTokens?: number, totalTokens?: number, reasoningTokens?: number, cachedTokens?: number, 
+/**
+ * 上游真实的 finish_reason（stop / length / tool_calls / content_filter / end_turn / max_tokens …）
+ */
+finishReason?: string, };

@@ -5,6 +5,7 @@
     "types": ["vite/client"],
     "allowArbitraryExtensions": true,
     "baseUrl": ".",
+    "rootDir": ".",
     "paths": {
       "~/*": ["./src/*"],
       "@bindings/*": ["./src/bindings/*"]

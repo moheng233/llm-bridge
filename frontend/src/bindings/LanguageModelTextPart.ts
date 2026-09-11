@@ -3,4 +3,4 @@
 /**
  * 纯文本消息部分，对应 LanguageModelTextPart
  */
-export type LanguageModelTextPart = { value: string };
+export type LanguageModelTextPart = { value: string, };

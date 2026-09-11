@@ -1,8 +1,8 @@
 // Auth Pinia store — 用户认证状态管理
-import { type UserResponse } from "@bindings/UserResponse";
+import { type MeResponse } from "@bindings/MeResponse";
 
 export const useAuthStore = defineStore("auth", () => {
-  const user = ref<UserResponse | null>(null);
+  const user = ref<MeResponse | null>(null);
   const loading = ref(true);
   const error = ref("");
   const isAdmin = ref(false);
@@ -22,7 +22,7 @@ export const useAuthStore = defineStore("auth", () => {
         }
         throw new Error(`Auth error: ${resp.status}`);
       }
-      const u: UserResponse = await resp.json();
+      const u: MeResponse = await resp.json();
       user.value = u;
       isAdmin.value = u.role === "admin";
     } catch (e: any) {

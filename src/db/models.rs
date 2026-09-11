@@ -119,8 +119,13 @@ pub struct Token {
 // ── 用量记录表 ──
 
 /// 用量记录 — 每个 Token 每个计费周期一条。
+///
+/// 复合唯一约束 `#[unique(token_id, period_key)]`（BUG-005）：同一 Token
+/// 同一周期在数据库层保证仅一行，配额准入/结算依赖该约束做原子 upsert。
+/// 旧版本数据库中的重复行由 [`crate::db`] 的启动迁移合并后建索引。
 #[derive(Debug, toasty::Model)]
 #[table = "usage_records"]
+#[unique(token_id, period_key)]
 pub struct UsageRecord {
     #[key]
     #[auto]
@@ -530,4 +535,55 @@ pub struct UsageDaily {
 
     #[auto]
     pub updated_at: Timestamp,
+}
+
+// ── 设备码登录会话表 ──
+
+/// 设备码登录会话状态。
+///
+/// 状态机：`pending → approved → consumed`；过期会话置 `expired`。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, toasty::Embed)]
+pub enum CliSessionStatus {
+    /// 已创建，等待用户在浏览器确认
+    Pending,
+    /// 用户已确认授权，等待插件领取 Token
+    Approved,
+    /// 插件已领取 Token，会话终结
+    Consumed,
+    /// 已过期或被替换，不可再确认/领取
+    Expired,
+}
+
+/// 设备码登录会话（RFC 8628 风格，vscode 插件获取 Token）。
+#[derive(Debug, toasty::Model)]
+#[table = "cli_sessions"]
+pub struct CliSession {
+    #[key]
+    #[auto]
+    pub id: u64,
+
+    /// 6 位数字用户码（2-9），浏览器确认页凭此定位会话
+    #[unique]
+    pub user_code: String,
+
+    /// 插件端强随机会话凭据（服务端存明文供轮询比对）
+    #[unique]
+    pub session_key: String,
+
+    pub status: CliSessionStatus,
+
+    /// 授权前未知；确认后填入
+    #[index]
+    pub user_id: Option<u64>,
+
+    /// 新签发 Token 明文，仅 approved → consumed 之间暂存
+    pub token_plaintext: Option<String>,
+
+    /// 新 Token 前缀（consumed 后仍可展示）
+    pub token_prefix: Option<String>,
+
+    #[auto]
+    pub created_at: Timestamp,
+
+    pub expires_at: Timestamp,
 }

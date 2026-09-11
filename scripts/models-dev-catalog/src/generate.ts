@@ -111,6 +111,12 @@ interface CatalogLink {
   outputPricePer1m?: number;
   cacheReadPricePer1m?: number;
   enabled: boolean;
+  /** 提供者侧能力覆盖（相对 base_model 标称值，omit 后的字段为 null） */
+  maxInputTokens?: number | null;
+  maxOutputTokens?: number | null;
+  toolCalling?: boolean | null;
+  vision?: boolean | null;
+  thinking?: boolean | null;
 }
 
 interface Catalog {
@@ -190,6 +196,15 @@ function omitPath(table: TomlTable, dotPath: string): void {
     cur = next;
   }
   delete cur[parts[parts.length - 1]!];
+}
+function capabilities(model: SourceModel) {
+  return {
+    maxInputTokens: model.limit?.input ?? model.limit?.context ?? 4096,
+    maxOutputTokens: model.limit?.output ?? 4096,
+    toolCalling: model.tool_call ?? false,
+    vision: (model.modalities?.input ?? []).includes("image"),
+    thinking: model.reasoning ?? false,
+  };
 }
 
 function mapCompat(npm: string | undefined): ProviderCompat {
@@ -292,7 +307,6 @@ function main(): void {
         }
         const base = models.get(baseModelRef);
         if (base === undefined) throw new Error(`${mctx}: base_model 引用了不存在的 model "${baseModelRef}"`);
-
         // 合并：base_model 元数据为底，provider 本地字段覆盖；base_model_omit 删除继承字段
         const merged = {
           ...base,
@@ -306,6 +320,15 @@ function main(): void {
         } as SourceModel & SourceProviderModel;
         for (const omit of parsed.base_model_omit ?? []) omitPath(merged as unknown as TomlTable, omit);
 
+        // nullable 关联列会回退到模型标称值，因此 omit 必须输出最终有效值，而非 null。
+        const nominal = capabilities(base);
+        const effective = capabilities(merged);
+        const overrides = Object.fromEntries(
+          (Object.keys(effective) as Array<keyof typeof effective>)
+            .filter((key) => effective[key] !== nominal[key])
+            .map((key) => [key, effective[key]]),
+        ) as Partial<CatalogLink>;
+
         const cost = parsed.cost as SourceCost | undefined;
         const status = asString(parsed.status, `${mctx}.status`);
 
@@ -318,7 +341,9 @@ function main(): void {
           ...(cost?.output !== undefined ? { outputPricePer1m: cost.output } : {}),
           ...(cost?.cache_read !== undefined ? { cacheReadPricePer1m: cost.cache_read } : {}),
           enabled: status !== "deprecated",
+          ...overrides,
         });
+
       }
     }
 
@@ -326,19 +351,13 @@ function main(): void {
     const referencedModelNames = new Set(links.map((l) => l.modelName));
     const catalogModels: CatalogModel[] = [...referencedModelNames].sort().map((modelName) => {
       const m = models.get(modelName)!;
-      const ctx = `models/${modelName}.toml`;
       return {
         modelName,
         displayName: m.name,
         ...(m.description !== undefined ? { description: m.description } : {}),
-        maxInputTokens: m.limit?.input ?? m.limit?.context ?? 4096,
-        maxOutputTokens: m.limit?.output ?? 4096,
-        toolCalling: m.tool_call ?? false,
-        vision: (m.modalities?.input ?? []).includes("image"),
-        thinking: m.reasoning ?? false,
+        ...capabilities(m),
         adaptiveThinking: false,
       };
-      void ctx;
     });
 
     // ----- 5. 引用完整性校验 -----
@@ -370,6 +389,7 @@ function main(): void {
         links: [
           "providerId", "protocolKey", "modelName", "providerModelId",
           "inputPricePer1m?", "outputPricePer1m?", "cacheReadPricePer1m?", "enabled",
+          "maxInputTokens?", "maxOutputTokens?", "toolCalling?", "vision?", "thinking?",
         ],
       },
       droppedSourceFields: {

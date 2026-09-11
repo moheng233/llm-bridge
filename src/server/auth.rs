@@ -3,8 +3,7 @@
 //! | 端点 | 方法 | 说明 |
 //! |------|------|------|
 //! | `/auth/login` | GET | OIDC 已配置 → 302 重定向到 IdP；未配置 → 直接跳转 `/` |
-//! | `/auth/callback` | GET | OIDC 回调，验证后签发 Session |
-//! | `/auth/me` | GET | 返回当前登录用户信息 |
+//! | `/auth/me` | GET | 返回当前登录用户信息（DB 实时角色/状态） |
 //! | `/auth/logout` | POST | 销毁 Session |
 //!
 //! ## 设计原则
@@ -20,9 +19,10 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Redirect, Response},
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tower_sessions::Session;
 use tracing::{info, instrument, warn};
+use ts_rs::TS;
 
 use crate::auth::session::{OidcContext, SessionUser};
 use crate::db;
@@ -36,29 +36,50 @@ pub struct AuthState {
     pub db: db::Db,
 }
 
-/// 无授权模式下的默认管理员 Session 用户。
-fn no_auth_user() -> SessionUser {
-    SessionUser {
-        user_id: 0,
-        name: "admin".to_string(),
-        role: "admin".to_string(),
-    }
+/// `/auth/me` 响应 — 统一对外角色 DTO（TS 绑定 camelCase：userId/name/role/email/avatarUrl）。
+#[derive(Debug, Serialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub struct MeResponse {
+    pub user_id: u64,
+    pub name: String,
+    /// `"admin"` 或 `"member"`
+    pub role: String,
+    pub email: Option<String>,
+    pub avatar_url: Option<String>,
 }
 
 // ── 无授权模式：自动注入管理员 Session ──
 
-/// Axum 中间件：无 OIDC 配置时，自动为每个请求注入默认管理员 Session。
+/// Axum 中间件：无 OIDC 配置时，自动为每个请求注入保留管理员 Session。
 ///
-/// 仅当 Session 中尚无用户时注入；如果用户主动登出（Session flush），
-/// 下次请求会重新注入。
+/// 管理员为 DB 中持久化的 `__no_auth_admin__` 用户（由 Deploy 在启动时
+/// 调用 [`crate::auth::session::ensure_no_auth_admin_user`] 创建），
+/// 每次 DB 查询构造 SessionUser（角色/存活与其他用户同一契约）。
+/// 仅当 Session 中尚无用户时注入；登出后下次请求重新注入。
 pub async fn no_auth_middleware(
+    State(db): State<db::Db>,
     session: Session,
     request: axum::http::Request<axum::body::Body>,
     next: axum::middleware::Next,
 ) -> Response {
     let has_user: Option<SessionUser> = session.get("user").await.ok().flatten();
     if has_user.is_none() {
-        let _ = session.insert("user", no_auth_user()).await;
+        let user = crate::middleware::session_auth::load_live_user_by_sub(
+            &db,
+            crate::auth::session::NO_AUTH_ADMIN_SUB,
+        )
+        .await;
+        match user {
+            Ok(u) => {
+                let _ = session.insert("user", u).await;
+            }
+            Err(_) => {
+                // 保留用户缺失（启动未调用 ensure）：降级为 401 行为由
+                // SessionAuth 提取器接管（Session 无 user → 401），不伪 admin。
+                warn!("no-auth admin user missing in DB — requests will be unauthenticated");
+            }
+        }
     }
     next.run(request).await
 }
@@ -76,9 +97,12 @@ pub async fn login(
     session: Session,
     Query(query): Query<LoginQuery>,
 ) -> Result<Redirect, Response> {
+    let next = query
+        .next
+        .filter(|path| safe_login_next(path))
+        .unwrap_or_else(|| "/".into());
     let Some(auth) = &state.auth else {
-        // 无授权模式：直接跳转到首页
-        return Ok(Redirect::temporary("/"));
+        return Ok(Redirect::temporary(&next));
     };
 
     let (auth_url, csrf_token, nonce) = auth.oidc.login_url();
@@ -93,12 +117,10 @@ pub async fn login(
         .await
         .map_err(|e| internal_error(&e.to_string()))?;
 
-    if let Some(next) = query.next {
-        session
-            .insert("login_next", next)
-            .await
-            .map_err(|e| internal_error(&e.to_string()))?;
-    }
+    session
+        .insert("login_next", next)
+        .await
+        .map_err(|error| internal_error(&error.to_string()))?;
 
     Ok(Redirect::temporary(&auth_url))
 }
@@ -149,9 +171,6 @@ pub async fn callback(
             (StatusCode::UNAUTHORIZED, e).into_response()
         })?;
 
-    // 清理 OIDC 上下文
-    session.remove::<OidcContext>("oidc_context").await.ok();
-
     // 查找或创建用户
     let user = upsert_user_from_oidc(&auth.db, &oidc_user)
         .await
@@ -160,11 +179,11 @@ pub async fn callback(
             internal_error("failed to create or update user")
         })?;
 
-    // 写入 Session
+    // 写入 Session（role 用统一小写字符串；实际授权仍以 DB 实时查询为准）
     let session_user = SessionUser {
         user_id: user.id,
         name: user.name.clone(),
-        role: format!("{:?}", user.role),
+        role: crate::auth::session::role_to_str(user.role).to_string(),
     };
 
     session
@@ -181,21 +200,60 @@ pub async fn callback(
     let next: Option<String> = session.get("login_next").await.ok().flatten();
     session.remove::<String>("login_next").await.ok();
 
-    let redirect_to = next.unwrap_or_else(|| "/".to_string());
+    let redirect_to = next
+        .filter(|path| safe_login_next(path))
+        .unwrap_or_else(|| "/".into());
     Ok(Redirect::temporary(&redirect_to).into_response())
+}
+
+fn safe_login_next(path: &str) -> bool {
+    path.starts_with('/')
+        && !path.starts_with("//")
+        && !path.contains('\\')
+        && !path.chars().any(char::is_control)
 }
 
 // ── GET /auth/me ──
 
-#[instrument(level = "debug", skip(session))]
-pub async fn me(session: Session) -> Result<Json<SessionUser>, Response> {
-    let user: SessionUser = session
+#[instrument(level = "debug", skip(state, session))]
+pub async fn me(
+    State(state): State<AppState>,
+    session: Session,
+) -> Result<Json<MeResponse>, Response> {
+    let cached: SessionUser = session
         .get("user")
         .await
         .map_err(|e| internal_error(&e.to_string()))?
-        .ok_or_else(|| (StatusCode::UNAUTHORIZED, "not authenticated").into_response())?;
+        .ok_or_else(|| {
+            (
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({"error": "not authenticated"})),
+            )
+                .into_response()
+        })?;
 
-    Ok(Json(user))
+    // 每次查询 DB 实时角色与存活状态（与 SessionAuth 同一契约）。
+    let user = crate::middleware::session_auth::load_live_user(&state.db, cached.user_id)
+        .await
+        .map_err(|message| {
+            (
+                StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({"error": message})),
+            )
+                .into_response()
+        })?;
+    let row = User::get_by_id(&mut state.db.clone(), &user.user_id)
+        .await
+        .map_err(|e| internal_error(&e.to_string()))?;
+    let (email, avatar_url) = (row.email, row.avatar_url);
+
+    Ok(Json(MeResponse {
+        user_id: user.user_id,
+        name: user.name,
+        role: user.role,
+        email,
+        avatar_url,
+    }))
 }
 
 // ── POST /auth/logout ──
@@ -228,6 +286,9 @@ async fn upsert_user_from_oidc(
     db: &db::Db,
     oidc_user: &crate::auth::oidc::OidcUser,
 ) -> Result<User, String> {
+    if oidc_user.sub == crate::auth::session::NO_AUTH_ADMIN_SUB {
+        return Err("OIDC subject conflicts with reserved local identity".into());
+    }
     // 查找是否已存在
     let existing = User::filter(User::fields().oidc_sub().eq(&oidc_user.sub))
         .exec(&mut db.clone())
@@ -263,7 +324,9 @@ async fn upsert_user_from_oidc(
             .exec(&mut db.clone())
             .await
             .map_err(|e| e.to_string())?;
-        let is_first = all_users.is_empty();
+        let is_first = all_users
+            .iter()
+            .all(|user| user.oidc_sub == crate::auth::session::NO_AUTH_ADMIN_SUB);
 
         let role = if is_first {
             info!(

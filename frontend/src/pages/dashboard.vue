@@ -14,6 +14,7 @@ import {
 
 import { useApiCall } from "~/composables/useApiCall";
 import { formatTokens, getApi } from "~/lib/api";
+import { statusBadgeFor } from "~/lib/trace-status";
 
 const api = getApi();
 
@@ -41,6 +42,8 @@ const { execute: fetchRecent } = useApiCall(() =>
     tokenId: null,
     interface: null,
     search: null,
+    dateFrom: null,
+    dateTo: null,
     page: 0,
     pageSize: 5,
   }),
@@ -69,6 +72,30 @@ const kpis = computed(
     },
 );
 
+/** 同长度上一周期汇总（后端 prevSummary；缺数据/无请求时为 null，前端不得伪造百分比）。 */
+type PrevTotals = { totalRequests: number; totalTokens: number; totalCostUsd: number } | null;
+const prev = computed<PrevTotals>(() => {
+  const p = (summary.value as UsageSummaryResponse & { prevSummary?: PrevTotals })
+    ?.prevSummary;
+  if (!p) return null;
+  // 上一周期全为 0 时无法计算有意义百分比，按缺数据处理
+  if (p.totalRequests === 0 && p.totalTokens === 0 && p.totalCostUsd === 0) return null;
+  return p;
+});
+
+/** 真实环比变化：返回 null 表示上周期缺数据（UI 显示"上周期无数据"）。 */
+function delta(cur: number, prevVal: number | undefined | null): number | null {
+  if (prevVal == null) return null;
+  if (prevVal === 0) return cur === 0 ? 0 : null;
+  return ((cur - prevVal) / prevVal) * 100;
+}
+
+const deltas = computed(() => ({
+  requests: delta(kpis.value.totalRequests, prev.value?.totalRequests),
+  tokens: delta(kpis.value.totalTokens, prev.value?.totalTokens),
+  cost: delta(kpis.value.totalCostUsd, prev.value?.totalCostUsd),
+}));
+
 const maxTokens = computed(() =>
   Math.max(...daily.value.map((d) => d.inputTokens + d.outputTokens + d.cachedTokens), 1),
 );
@@ -80,33 +107,21 @@ function formatCost(usd: number): string {
   return `$${usd.toFixed(3)}`;
 }
 
-function statusBadge(status: string): { label: string; cls: string } {
-  switch (status) {
-    case "success":
-      return { label: "成功", cls: "text-cta border-cta/30 bg-cta/10" };
-    case "error":
-      return { label: "失败", cls: "text-destructive border-destructive/30 bg-destructive/10" };
-    case "cancelled":
-      return { label: "已取消", cls: "text-muted-foreground border-border bg-muted" };
-    case "streaming":
-      return { label: "进行中", cls: "text-chart-2 border-chart-2/30 bg-chart-2/10" };
-    default:
-      return { label: "等待中", cls: "text-chart-4 border-chart-4/30 bg-chart-4/10" };
-  }
-}
 
 /** 缓存率 = 缓存 tokens / 输入 tokens（缓存命中是输入前缀的重用） */
 function cacheRate(d: { inputTokens: number; cachedTokens: number }): string {
   if (d.inputTokens <= 0) return "0.0";
   return ((d.cachedTokens / d.inputTokens) * 100).toFixed(1);
 }
+
+
 </script>
 
 <template>
   <PageShell>
     <SectionHeader
       title="用量仪表盘"
-      description="请求量、Token 消耗与成本总览（示例数据）"
+      description="请求量、Token 消耗与成本总览"
       :icon="LayoutDashboard"
     >
       <template #actions>
@@ -141,8 +156,22 @@ function cacheRate(d: { inputTokens: number; cachedTokens: number }): string {
           }}</CardTitle>
         </CardHeader>
         <CardContent class="px-4 pt-0">
-          <span class="flex items-center gap-1 text-xs text-cta">
-            <ArrowUpRight class="h-3 w-3" /> +12.0% 环比
+          <span v-if="deltas.requests == null" class="text-xs text-muted-foreground">
+            上周期无数据
+          </span>
+          <span
+            v-else-if="deltas.requests === 0"
+            class="flex items-center gap-1 text-xs text-muted-foreground"
+          >
+            持平（与上周期相比）
+          </span>
+          <span
+            v-else
+            :class="['flex items-center gap-1 text-xs', deltas.requests > 0 ? 'text-cta' : 'text-chart-2']"
+          >
+            <ArrowUpRight v-if="deltas.requests > 0" class="h-3 w-3" />
+            <ArrowDownRight v-else class="h-3 w-3" />
+            {{ deltas.requests > 0 ? "+" : "" }}{{ deltas.requests.toFixed(1) }}% 环比
           </span>
         </CardContent>
       </Card>
@@ -156,8 +185,22 @@ function cacheRate(d: { inputTokens: number; cachedTokens: number }): string {
           <CardTitle class="font-mono text-2xl">{{ formatTokens(kpis.totalTokens) }}</CardTitle>
         </CardHeader>
         <CardContent class="px-4 pt-0">
-          <span class="flex items-center gap-1 text-xs text-cta">
-            <ArrowUpRight class="h-3 w-3" /> +8.4% 环比
+          <span v-if="deltas.tokens == null" class="text-xs text-muted-foreground">
+            上周期无数据
+          </span>
+          <span
+            v-else-if="deltas.tokens === 0"
+            class="flex items-center gap-1 text-xs text-muted-foreground"
+          >
+            持平（与上周期相比）
+          </span>
+          <span
+            v-else
+            :class="['flex items-center gap-1 text-xs', deltas.tokens > 0 ? 'text-cta' : 'text-chart-2']"
+          >
+            <ArrowUpRight v-if="deltas.tokens > 0" class="h-3 w-3" />
+            <ArrowDownRight v-else class="h-3 w-3" />
+            {{ deltas.tokens > 0 ? "+" : "" }}{{ deltas.tokens.toFixed(1) }}% 环比
           </span>
         </CardContent>
       </Card>
@@ -171,8 +214,22 @@ function cacheRate(d: { inputTokens: number; cachedTokens: number }): string {
           <CardTitle class="font-mono text-2xl">{{ formatCost(kpis.totalCostUsd) }}</CardTitle>
         </CardHeader>
         <CardContent class="px-4 pt-0">
-          <span class="flex items-center gap-1 text-xs text-muted-foreground">
-            <ArrowDownRight class="h-3 w-3 text-cta" /> -3.1% 环比
+          <span v-if="deltas.cost == null" class="text-xs text-muted-foreground">
+            上周期无数据
+          </span>
+          <span
+            v-else-if="deltas.cost === 0"
+            class="flex items-center gap-1 text-xs text-muted-foreground"
+          >
+            持平（与上周期相比）
+          </span>
+          <span
+            v-else
+            :class="['flex items-center gap-1 text-xs', deltas.cost > 0 ? 'text-cta' : 'text-chart-2']"
+          >
+            <ArrowUpRight v-if="deltas.cost > 0" class="h-3 w-3" />
+            <ArrowDownRight v-else class="h-3 w-3" />
+            {{ deltas.cost > 0 ? "+" : "" }}{{ deltas.cost.toFixed(1) }}% 环比
           </span>
         </CardContent>
       </Card>
@@ -313,8 +370,8 @@ function cacheRate(d: { inputTokens: number; cachedTokens: number }): string {
             @click="$router.push(`/traces/${t.requestId}`)"
           >
             <div class="flex min-w-0 items-center gap-2">
-              <Badge variant="outline" :class="['shrink-0 text-[10px]', statusBadge(t.status).cls]">
-                {{ statusBadge(t.status).label }}
+              <Badge variant="outline" :class="['shrink-0 text-[10px]', statusBadgeFor(t.status).cls]">
+                {{ statusBadgeFor(t.status).label }}
               </Badge>
               <span class="truncate font-mono text-xs">{{ t.model }}</span>
             </div>

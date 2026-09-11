@@ -34,6 +34,9 @@ pub struct ResolvedProviderRoute {
     pub api_key: String,
     /// 选中 API Key 的 label
     pub key_label: String,
+    pub input_price_per_1m: Option<f64>,
+    pub output_price_per_1m: Option<f64>,
+    pub cache_read_price_per_1m: Option<f64>,
 }
 
 /// 模型的一个提供者信息（用于 API 返回）。
@@ -222,6 +225,9 @@ pub async fn resolve_model(
             base_url: Some(protocol.base_url.clone()),
             api_key: selected_key.key.clone(),
             key_label: selected_key.label.clone(),
+            input_price_per_1m: mp.input_price_per_1m,
+            output_price_per_1m: mp.output_price_per_1m,
+            cache_read_price_per_1m: mp.cache_read_price_per_1m,
         });
     }
 

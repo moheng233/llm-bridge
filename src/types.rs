@@ -300,3 +300,131 @@ pub struct LMModelInfo {
     #[serde(skip_serializing_if = "EndpointEditToolName::is_empty")]
     pub edit_tools: EndpointEditToolName,
 }
+
+/// WS 聊天参数；消息和工具与上游适配层使用同一套协议无关类型。
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub struct WsChatParams {
+    pub model: String,
+    pub messages: Vec<LanguageModelChatMessage>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub tools: Option<Vec<LanguageModelTool>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub tool_choice: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub temperature: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub max_tokens: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub top_p: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub stop: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub response_format: Option<LanguageModelResponseFormat>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub reasoning: Option<LanguageModelReasoningConfig>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub seed: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub frequency_penalty: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub presence_penalty: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub logit_bias: Option<std::collections::HashMap<String, f64>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub max_completion_tokens: Option<u32>,
+}
+
+#[derive(Debug, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(tag = "method", rename_all = "camelCase")]
+pub enum WsClientMessage {
+    Chat {
+        id: String,
+        params: Box<WsChatParams>,
+    },
+    ListModels {
+        id: String,
+    },
+    Cancel {
+        id: String,
+        #[serde(rename = "targetId")]
+        target_id: String,
+    },
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "snake_case")]
+pub enum WsErrorCode {
+    InvalidRequest,
+    ModelNotFound,
+    ModelNotAllowed,
+    QuotaExceeded,
+    ProviderError,
+    RequestNotFound,
+    InternalError,
+}
+
+#[derive(Debug, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct WsErrorBody {
+    pub code: WsErrorCode,
+    pub message: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub struct WsChatDone {
+    pub finish_reason: Option<String>,
+    pub cancelled: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct WsListModelsResult(pub Vec<LMModelInfo>);
+
+#[derive(Debug, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(untagged)]
+pub enum WsResult {
+    Models(WsListModelsResult),
+    Cancel { cancelled: bool },
+}
+
+#[derive(Debug, Serialize, Deserialize, TS)]
+#[ts(export)]
+#[serde(untagged)]
+pub enum WsServerMessage {
+    Result {
+        id: String,
+        result: WsResult,
+    },
+    Chunk {
+        id: String,
+        chunk: LMResponsePart,
+    },
+    Done {
+        id: String,
+        done: WsChatDone,
+    },
+    Error {
+        id: Option<String>,
+        error: WsErrorBody,
+    },
+}

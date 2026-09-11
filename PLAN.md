@@ -1,6 +1,6 @@
 # LLM-Bridge 开发计划
 
-> 最后更新：2026-07-24
+> 最后更新：2026-09-11；实现与运行验收证据统一见 STATUS.md。
 > 项目定位：homelab / 小型工作室的私有化 OpenRouter
 
 ---
@@ -9,7 +9,7 @@
 
 ### 后端（Rust）
 
-Provider 多协议架构已落地：Provider → ProviderProtocol（协议 + base_url）→ ModelProvider（protocol_id FK）→ LLMModel。models.dev 集成已完全删除。
+Provider 多协议架构已落地：Provider → ProviderProtocol（协议 + base_url）→ ModelProvider（protocol_id FK）→ LLMModel。旧 models.dev 运行时直连已删除；新的三层目录手动导入、HTTP/WS 共享编排、设备码登录与可观测性闭环已实现，验证范围见 STATUS.md。
 
 ### 前端（Vue 3）
 
@@ -36,11 +36,11 @@ Provider 多协议架构已落地：Provider → ProviderProtocol（协议 + bas
 | 页面过渡动画 | `App.vue` + `main.css` — 150ms fade + slide |
 | 首页空白修复 | `index.vue` — 添加空 template 修复 Transition 渲染 |
 
-### 通用组件（已建待用）
+### 通用组件（已接入）
 
-`components/common/` 已有 `PageShell`、`SectionHeader`、`EmptyState`、`ErrorState`、`ConfirmDialog`、`UnauthorizedPage`，但各页面尚未接入使用。
+`components/common/` 的 `PageShell`、`SectionHeader`、`EmptyState`、`ErrorState`、`ConfirmDialog`、`UnauthorizedPage` 已用于主要页面；目录导入复用共享对话框。
 
-### 已有 composable（已建待用）
+### 已有 composable（已接入）
 
 - `useApiCall` — 统一 API 调用 loading/error
 - `useReactiveMap` / `useReactiveSet` — 响应式集合
@@ -49,29 +49,19 @@ Provider 多协议架构已落地：Provider → ProviderProtocol（协议 + bas
 
 ---
 
-## 2. 待优化项
+## 2. 前端交付状态
 
-### P0 — 高优先级（一致性与可维护性）
+以下原优化项已落地；真实浏览器验收与剩余环境边界见 STATUS.md，不再作为缺失功能重复排期。
 
-| # | 问题 | 说明 |
-|---|------|------|
-| 3 | 主内容区大面积留白 | 数据少时页面下 2/3 全空，需限制最大宽度或添加引导内容 |
-
-### P1 — 中优先级（体验提升）
-
-| # | 问题 | 说明 |
-|---|------|------|
-| 4 | 品牌感弱 | Logo 仅为绿色方块 "LB"，无 favicon 定制，登录页无品牌展示 |
-| 5 | 表格行交互反馈不足 | 模型目录表格行可点击但无视觉反馈，缺 hover 过渡动画 |
-| 6 | 表单体验粗糙 | Checkbox 无分组标签，数字输入无单位提示，缺表单验证 |
-
-### P2 — 低优先级（打磨）
-
-| # | 问题 | 说明 |
-|---|------|------|
-| 7 | 缺少快捷键 | 无 `Ctrl+K` 全局搜索等效率快捷键 |
-| 8 | badge 语义不统一 | 启用/禁用有的用 default/secondary，有的用 default/destructive |
-| 9 | 缺少用量统计仪表盘 | 无请求数、Token 消耗、费用等核心差异化功能（需后端配合） |
+| 原编号 | 交付 | 当前状态 |
+|---|---|---|
+| 3 | 主内容区与空状态 | 主要页面复用 PageShell，约束内容宽度并提供空状态 |
+| 4 | 品牌展示 | 已有定制 favicon 与品牌入口 |
+| 5 | 交互反馈 | 可点击表格行和操作按钮已有 hover/过渡反馈 |
+| 6 | 表单体验 | 能力分组、K/M token 单位、数值边界及对话框错误反馈 |
+| 7 | 全局搜索 | Ctrl+K / Cmd+K 打开页面与模型搜索，按权限显示入口 |
+| 8 | badge 语义 | 启用/成功、禁用、失败按语义 variant 统一 |
+| 9 | 用量仪表盘 | 真实用量、上周期比较、趋势、成本及最近请求；trace 支持日期/Token 筛选与分页 |
 
 ---
 
@@ -146,7 +136,7 @@ Provider 多协议架构已落地：Provider → ProviderProtocol（协议 + bas
 
 ### 数据模型
 
-新增 `CliSession` 表（`toasty::models!` 注册 + `push_schema` 自动建表，无迁移负担）：`id`(key) / `user_code`(unique) / `status`(pending|approved|consumed|expired) / `user_id`(nullable，授权前未知) / `token_plaintext`(nullable，仅 approved 后暂存至 consumed) / `created_at` / `expires_at`。服务端惰性过期（查询时判 `expires_at`），无需后台清理任务。
+`CliSession` 已注册为业务表：`id`、唯一 `session_key`/`user_code`、pending/approved/consumed/expired 状态、可空 user_id/token_plaintext/token_prefix、created_at/expires_at。领取或过期清除暂存明文。启动采用事务内可加性 schema 与完整列校验，不依赖删库或忽略 already-exists；不兼容旧结构拒绝启动，需先备份并显式迁移。详情见 docs/architecture.md。
 
 ### 实施步骤
 
@@ -286,13 +276,13 @@ anomalyco/models.dev (dev 分支, TOML 三层)
    扫描源 TOML → 三层合并（provider model 继承 base_model 元数据，本地字段优先）
         ▼
 GitHub Actions（.github/workflows/models-dev-catalog.yml）
-   定时 cron（每日）+ workflow_dispatch + 源仓库 push 触发
+   定时 cron（每日）+ workflow_dispatch（不承诺跨仓库 push 自动触发）
         ▼
 GitHub Pages（本仓库 gh-pages 分支）
    https://moheng233.github.io/llm-bridge/catalog.json  ← 默认数据源 URL
    https://moheng233.github.io/llm-bridge/contract.json ← schema 契约
         ▼
-llm-bridge 运行时：modelsImport.sourceUrl（配置文件 + LLM_BRIDGE_MODELS_IMPORT_URL 覆盖）
+llm-bridge 运行时：modelsImport.sourceUrl（由 LLM_BRIDGE_MODELS_IMPORT_URL 覆盖）
    admin 手动触发预览/导入 → 幂等 upsert LLMModel / Provider / ProviderProtocol / ModelProvider
 ```
 
@@ -349,28 +339,28 @@ llm-bridge 运行时：modelsImport.sourceUrl（配置文件 + LLM_BRIDGE_MODELS
 
 **配置**：`RuntimeSettings` 新增 `modelsImport.sourceUrl`（默认 `https://moheng233.github.io/llm-bridge/catalog.json`），环境变量 `LLM_BRIDGE_MODELS_IMPORT_URL` 覆盖。
 
-**Store 新增**（`src/store/mod.rs`，均为按业务键 upsert，幂等）：
-- `get_model_by_name` / `upsert_model_by_name(ModelInput)`（model_name unique）
-- `upsert_protocol_by_key(provider_id, protocol, base_url)`（ProviderProtocol 无 unique 约束，先查后插；同 protocol+base_url 复用）
-- `upsert_model_provider(model_id, protocol_id, link fields)`（按 `(model_id, protocol_id)` 唯一键查；存在→更新价格/启用/覆盖字段，不存在→create）
-- **不直接复用** `add_provider_model`（无脑 create，重导入必撞 `(model_id, protocol_id)` 唯一约束）与 `ensure_model`（存在即返回、不更新标称字段——导入场景需要覆盖式 upsert）。
+**事务导入**（`src/server/models_dev.rs`）：在数据库固定锁行保护下按业务键查找、创建或更新，不通过非幂等的手动新增接口拼接导入：
+- 模型按 `modelName`，Provider 按目录 `providerId` 复用。
+- Protocol 按 Provider 内 `protocol + baseUrl` 复用。
+- 关联按 `model + protocol + providerModelId` 复用，保留同一协议下不同上游模型别名；更新价格/能力覆盖时不污染模型标称值。
+- 任一层失败整次回滚；完整契约见 `docs/catalog-import.md`。
 
-**端点**（`src/server/models_dev.rs` 新文件，挂 `admin_crud_routes()`，`AdminAuth`）：
-- `GET /api/v1/admin/models-import/preview`：拉 catalog.json（reqwest，参考 `src/quota/adapters/umans.rs:54` 模板；`If-None-Match`/`If-Modified-Since` 条件拉取）→ 与 DB diff → 返回三层预览项（各标 `exists: bool` → 新建/更新）。
+**端点**（`src/server/models_dev.rs`，`AdminAuth`）：
+- `GET /api/v1/admin/models-import/preview`：校验 contract.json 与 catalog.json，使用 `If-None-Match`/`If-Modified-Since` 条件拉取，与 DB diff 后返回三层预览项（`exists: bool` 标记新建/更新）。
 - `POST /api/v1/admin/models-import`：请求体 `{ models: Vec<modelName>, providers: Vec<providerId>, links: Vec<linkKey> }`；单事务逐层 upsert（providers → protocols → models → links），响应 `{ created, updated, skipped, errors }`。
-- **api_keys 保留策略**：`upsert_provider` 会整列覆盖 `api_keys`（已核实 `src/store/mod.rs:91-135`）——导入 provider 时**永不携带 api_keys**（派生 JSON 本无密钥），新建 provider 时置空数组，由管理员在 UI 手工补 key；不得因导入清空已有 key → 实现时 upsert 路径对已有 provider **不传 api_keys 字段**（只更新 display_name/enabled/priority），新建才给空。
+- **手动配置保留**：已有 Provider 的 API Keys、enabled、priority 和 quota adapter 设置不变；已有 Protocol 手动设置及关联 priority 保留。新 Provider 的 Key 数组为空，需管理员自行配置；关联 enabled 可随目录更新。
 
 **前端**：
-- 共享组件 `components/models/CatalogImportDialog.vue`（预览 + 搜索 + 前缀筛选 + 三层分组 checkbox + 全选/清空 + 导入进度 toast）。
+- 共享组件 `components/common/CatalogImportDialog.vue`（预览 + 搜索 + 前缀筛选 + 三层分组 checkbox + 全选/清空 + 导入进度反馈）。
 - 入口 1：`pages/admin/models.vue` `SectionHeader #actions` 加「从 models.dev 目录导入」（模型视角：勾选 models 时联动带出可选 links）。
 - 入口 2：`pages/providers.vue` `SectionHeader #actions` 加同按钮（提供者视角：勾选 providers/links 时联动校验依赖 models）。
-- 绑定：`cargo test export_bindings` + `cargo test generate_ts_client` 重新生成。
+- 绑定：`cargo test --lib export_bindings` 与 `cargo test --test generate_ts_client generate_ts_client -- --ignored --exact` 显式生成，再用 `python3 scripts/check-bindings.py` 检查漂移。
 
 ### 7.6 实施步骤
 
-- [ ] **Phase 1 — 派生管道**：`scripts/models-dev-catalog/`（含单测：合并规则、引用完整性、idempotency 快照）+ workflow + 开启 Pages → 手动触发一次产出首批 catalog.json/contract.json 并 curl 验证。
-- [ ] **Phase 2 — 后端**：`RuntimeSettings.modelsImport`、`src/server/models_dev.rs`（fetch + diff + 两个端点）、store 四个 upsert 方法（含 api_keys 保留逻辑）+ 单测（upsert 幂等、api_keys 不被清空、link 冲突转更新）。
-- [ ] **Phase 3 — 前端**：`CatalogImportDialog.vue` + 两个入口接线 + 绑定重生成 → 端到端手动验证（导入 → 重导入显示全「更新」、DB 无重复行、已有 provider 的 api_keys 保留）。
+- [x] **Phase 1 — 派生管道**：生成器、覆盖/omit/引用与幂等回归、每日/手动 workflow 已实现。已发布 Pages 的旧快照与本分支新代码的发布是不同事件；本分支未擅自触发远端发布。
+- [x] **Phase 2 — 后端**：目录来源配置、条件拉取、契约验证、三层预览和事务 upsert 已实现；幂等/Key 与调度设置保留/失败回滚有回归。
+- [x] **Phase 3 — 前端**：共享 CatalogImportDialog、模型与 Provider 两入口、搜索筛选分页及依赖选择已接线；本地真实 UI 导入/重导入证据见 STATUS.md。
 
 ### 7.7 排除项与遗留
 

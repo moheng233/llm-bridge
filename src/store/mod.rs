@@ -3,6 +3,7 @@
 //! 路由解析、模型查询、提供者管理全部通过 SQLite 的
 //! `models` + `model_providers` + `provider_protocols` + `providers` 四张表完成。
 
+pub mod catalog;
 pub mod compat;
 pub mod error;
 pub mod router;

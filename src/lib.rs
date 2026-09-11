@@ -1,3 +1,6 @@
+#[cfg(not(any(feature = "dev-ui", feature = "embed-frontend")))]
+compile_error!("enable dev-ui for development or embed-frontend for a standalone server");
+
 pub mod actors;
 pub mod auth;
 pub mod config;

@@ -30,7 +30,7 @@ async fn main() -> MainResult {
     info!("llm-bridge process starting");
 
     let server_result = run_server().await;
-    observability.shutdown();
+    tokio::task::spawn_blocking(move || observability.shutdown()).await?;
     server_result
 }
 
@@ -38,13 +38,11 @@ async fn main() -> MainResult {
 async fn run_server() -> MainResult {
     let settings = load_runtime_settings()?;
 
-    // Phase 3: Store 现在由 toasty Db 构建，不再用 JSON 文件
-    let db = db::init(
-        db::all_models(),
-        &format!("sqlite:{}/sqlite.db", settings.store_path),
-    )
-    .await
-    .map_err(|e| std::io::Error::other(e.to_string()))?;
+    let db = match &settings.database_url {
+        Some(url) => db::init(db::all_models(), url).await,
+        None => db::init_sqlite(db::all_models(), std::path::Path::new(&settings.store_path)).await,
+    }
+    .map_err(|error| std::io::Error::other(error.to_string()))?;
 
     let store = Arc::new(Store::new(db.clone()));
     info!(store_path = %settings.store_path, "store initialized");
@@ -67,6 +65,11 @@ async fn run_server() -> MainResult {
     } else {
         None
     };
+    if auth_state.is_none() {
+        llm_bridge::auth::session::ensure_no_auth_admin_user(&db)
+            .await
+            .map_err(std::io::Error::other)?;
+    }
 
     let (gateway_manager, gateway_handle) = Actor::spawn(
         None,
@@ -97,6 +100,10 @@ async fn run_server() -> MainResult {
         db: db.clone(),
         trace_writer,
         capture_content,
+        public_base_url: settings.public_base_url.clone(),
+        catalog: Arc::new(llm_bridge::server::models_dev::CatalogService::new(
+            settings.models_import.source_url.clone(),
+        )),
     };
 
     info!(

@@ -19,6 +19,9 @@ const expandedId = ref<number | null>(null);
 const modelsCache = useReactiveMap<number, ProviderModelResponse[]>();
 const modelsLoading = useReactiveSet<number>();
 
+// Catalog import
+const showCatalogImport = ref(false);
+
 // Edit dialog
 const editingProvider = ref<ProviderResponse | null>(null);
 const editDialogOpen = ref(false);
@@ -169,8 +172,16 @@ async function confirmDelete() {
     <SectionHeader title="提供者管理" description="配置上游 LLM 提供者" :icon="Globe">
       <template #actions>
         <ProviderCreateDialog @created="loadProviders" @error="(e: string) => (error = e)" />
+        <Button
+          variant="outline"
+          class="cursor-pointer gap-2"
+          @click="showCatalogImport = true"
+        >
+          从 models.dev 目录导入
+        </Button>
       </template>
     </SectionHeader>
+    <CatalogImportDialog v-model:open="showCatalogImport" @imported="loadProviders" />
 
     <ErrorState v-if="error" :error="error" inline @retry="loadProviders" />
 

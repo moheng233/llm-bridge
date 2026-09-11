@@ -10,8 +10,18 @@ pub struct RuntimeSettings {
     pub gateway_id: String,
     pub server: ServerConfig,
     pub store_path: String,
+    pub public_base_url: String,
+    /// 数据库连接 URL。未设置时按 `store_path` 构造 SQLite URL（默认行为不变）。
+    ///
+    /// - SQLite: `sqlite:/path/to/llm-bridge.db` 或 `sqlite::memory:`
+    /// - PostgreSQL（需 `--features postgresql` 构建）: `postgresql://user:pass@host/db`
+    ///
+    /// 环境变量 `LLM_BRIDGE_DATABASE_URL`。
+    pub database_url: Option<String>,
     pub oidc: Option<OidcConfig>,
     pub observability: ObservabilityConfig,
+    /// models.dev 目录导入配置（PLAN §7 Phase 2，Catalog 消费）。
+    pub models_import: ModelsImportConfig,
 }
 
 impl RuntimeSettings {
@@ -20,10 +30,26 @@ impl RuntimeSettings {
             gateway_id: env_or_default("LLM_BRIDGE_GATEWAY_ID", "llm-bridge-v1"),
             server: ServerConfig::from_env()?,
             store_path: env_or_default("LLM_BRIDGE_STORE_PATH", "./data/"),
+            public_base_url: env_or_default("LLM_BRIDGE_BASE_URL", "http://localhost:3000"),
+            database_url: env::var("LLM_BRIDGE_DATABASE_URL")
+                .ok()
+                .filter(|url| !url.trim().is_empty()),
+            models_import: ModelsImportConfig {
+                source_url: env_or_default(
+                    "LLM_BRIDGE_MODELS_IMPORT_URL",
+                    "https://moheng233.github.io/llm-bridge/catalog.json",
+                ),
+            },
             oidc: OidcConfig::from_env_optional()?,
             observability: ObservabilityConfig::from_env()?,
         })
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelsImportConfig {
+    pub source_url: String,
 }
 
 // ── 可观察性配置（PLAN.md §5）──

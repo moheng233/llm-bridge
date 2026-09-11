@@ -136,58 +136,128 @@ fn div_mod_62(bytes: &mut Vec<u8>) -> u8 {
     rem as u8
 }
 
-/// 创建新的 API Token。
+/// Token 签发参数（内部 helper 复用）。
+pub(crate) struct TokenIssueSpec {
+    pub name: String,
+    pub allowed_models: Vec<String>,
+    pub request_quota: i64,
+    pub token_quota: i64,
+    pub quota_period: String,
+}
+
+/// 事务外准备的 Token 签发材料（明文 / 前缀 / bcrypt 哈希）。
 ///
-/// # 返回
-/// - `(Token, plaintext)` — Token 数据库行和明文 Token。
-///   明文仅在此时返回，之后不可获取。
-pub async fn create_token(
-    db: &db::Db,
-    user_id: u64,
-    req: CreateTokenRequest,
-) -> Result<CreateTokenResponse, String> {
+/// bcrypt 计算放在事务外（spawn_blocking），避免 SQLite 写锁期间阻塞整个数据库。
+pub(crate) struct PreparedToken {
+    pub plaintext: String,
+    pub token_prefix: String,
+    pub token_hash: String,
+}
+
+/// 事务外准备 Token 材料：生成随机明文 + bcrypt 哈希。
+///
+/// bcrypt 计算通过 `spawn_blocking` 执行，不占用数据库写锁。
+pub(crate) async fn prepare_token() -> Result<PreparedToken, String> {
     let plaintext = generate_token_string();
     let prefix = token_prefix(&plaintext);
+    tokio::task::spawn_blocking(move || {
+        let token_hash = hash(&plaintext, DEFAULT_COST).map_err(|e| e.to_string())?;
+        Ok(PreparedToken {
+            plaintext,
+            token_prefix: prefix,
+            token_hash,
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
 
-    let token_hash = hash(&plaintext, DEFAULT_COST).map_err(|e| e.to_string())?;
-
+/// 事务内持久化已准备的 Token（仅 DB 写，不做昂贵计算）。
+///
+/// 供 [`create_token`] 与设备码登录（`auth/cli_session.rs`）共用，
+/// 保证「吊销旧 Token + 插入新 Token」能与业务状态变更同事务原子提交。
+pub(crate) async fn create_prepared_in_tx<T>(
+    tx: &mut T,
+    user_id: u64,
+    prepared: PreparedToken,
+    spec: TokenIssueSpec,
+) -> Result<CreateTokenResponse, String>
+where
+    T: toasty::Executor,
+{
     let allowed_models_json =
-        serde_json::to_string(&req.allowed_models).map_err(|e| e.to_string())?;
+        serde_json::to_string(&spec.allowed_models).map_err(|e| e.to_string())?;
 
     let token = toasty::create!(Token {
         user_id,
-        name: req.name.clone(),
-        token_hash,
-        token_prefix: prefix.clone(),
+        name: spec.name.clone(),
+        token_hash: prepared.token_hash,
+        token_prefix: prepared.token_prefix.clone(),
         allowed_models: allowed_models_json,
-        request_quota: req.request_quota,
-        token_quota: req.token_quota,
-        quota_period: req.quota_period.clone(),
+        request_quota: spec.request_quota,
+        token_quota: spec.token_quota,
+        quota_period: spec.quota_period.clone(),
         active: true,
         last_used_at: None,
     })
-    .exec(&mut db.clone())
+    .exec(tx)
     .await
     .map_err(|e| e.to_string())?;
 
     info!(
         token_id = token.id,
         user_id,
-        token_name = %req.name,
+        token_name = %spec.name,
         "API token created"
     );
 
     Ok(CreateTokenResponse {
         id: token.id,
         name: token.name,
-        token: plaintext,
+        token: prepared.plaintext,
         token_prefix: token.token_prefix,
-        allowed_models: req.allowed_models,
+        allowed_models: spec.allowed_models,
         request_quota: token.request_quota,
         token_quota: token.token_quota,
         quota_period: token.quota_period,
         created_at: token.created_at.as_millisecond() / 1000,
     })
+}
+
+/// 便捷组合：prepare + 单事务插入（内部自动开事务）。
+pub(crate) async fn issue_token_in_tx<T>(
+    tx: &mut T,
+    user_id: u64,
+    spec: TokenIssueSpec,
+) -> Result<CreateTokenResponse, String>
+where
+    T: toasty::Executor,
+{
+    let prepared = prepare_token().await?;
+    create_prepared_in_tx(tx, user_id, prepared, spec).await
+}
+
+/// 创建新的 API Token。
+///
+/// # 返回
+/// - `CreateTokenResponse` — 包含明文 Token；明文仅在此时返回，之后不可获取。
+pub async fn create_token(
+    db: &db::Db,
+    user_id: u64,
+    req: CreateTokenRequest,
+) -> Result<CreateTokenResponse, String> {
+    issue_token_in_tx(
+        &mut db.clone(),
+        user_id,
+        TokenIssueSpec {
+            name: req.name,
+            allowed_models: req.allowed_models,
+            request_quota: req.request_quota,
+            token_quota: req.token_quota,
+            quota_period: req.quota_period,
+        },
+    )
+    .await
 }
 
 /// 列出用户的所有 Token（不含 token_hash）。

@@ -39,6 +39,16 @@ pub struct TraceWriter {
 pub enum TraceEvent {
     /// 请求受理：INSERT pending 行。
     Begin(Box<BeginTrace>),
+    Route {
+        request_id: String,
+        provider_id: String,
+        provider_model_id: String,
+        protocol: String,
+    },
+    Streaming {
+        request_id: String,
+        first_chunk_at: Timestamp,
+    },
     /// 请求结束：UPDATE 终态 + 事务内 upsert usage_daily。
     Finalize(Box<FinalizeTrace>),
 }
@@ -137,6 +147,33 @@ async fn handle_event(db: &Db, event: TraceEvent) -> Result<(), String> {
     match event {
         TraceEvent::Begin(b) => insert_pending(db, *b).await,
         TraceEvent::Finalize(f) => finalize_trace(db, *f).await,
+        TraceEvent::Route {
+            request_id,
+            provider_id,
+            provider_model_id,
+            protocol,
+        } => {
+            LlmRequestTrace::update_by_request_id(&request_id)
+                .provider_id(provider_id)
+                .provider_model_id(provider_model_id)
+                .protocol(protocol)
+                .exec(&mut db.clone())
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(())
+        }
+        TraceEvent::Streaming {
+            request_id,
+            first_chunk_at,
+        } => {
+            LlmRequestTrace::update_by_request_id(&request_id)
+                .status(TraceStatus::Streaming)
+                .first_chunk_at(Some(first_chunk_at))
+                .exec(&mut db.clone())
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(())
+        }
     }
 }
 

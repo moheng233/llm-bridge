@@ -52,7 +52,15 @@ function availableProviderCount(providers: ModelProviderSummary[]): number {
 
 const models = ref<ModelResponse[]>([]);
 const search = ref("");
-const onlyAvailable = ref(false);
+const onlyAvailable = ref(true);
+
+// 支持从全局搜索跳转定位：/models?model=<name> 预填搜索词
+const route = useRoute();
+watchEffect(() => {
+  const q = route.query.model;
+  if (typeof q === "string" && q) search.value = q;
+});
+
 const sortField = ref<"name" | "maxInputTokens" | "maxOutputTokens" | "inputPrice">("name");
 const sortDir = ref<"asc" | "desc">("asc");
 

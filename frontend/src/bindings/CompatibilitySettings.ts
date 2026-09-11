@@ -3,8 +3,4 @@
 /**
  * Per-compatibility settings: path suffix, custom HTTP headers, custom HTTP params.
  */
-export type CompatibilitySettings = {
-  pathSuffix: string | null;
-  customHeaders: { [key in string]: string };
-  customParams: { [key in string]: string };
-};
+export type CompatibilitySettings = { pathSuffix: string | null, customHeaders: { [key in string]: string }, customParams: { [key in string]: string }, };

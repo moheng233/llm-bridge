@@ -427,6 +427,13 @@ fn map_event(data: &str, state: &mut OpenAiChatStreamState) -> Result<Vec<LMResp
 
     let event: ChatCompletionChunk = serde_json::from_str(data)
         .map_err(|error| format!("invalid openai chat completions event: {error}"))?;
+    if let Some(error) = event.error {
+        return Err(error
+            .get("message")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+            .unwrap_or_else(|| error.to_string()));
+    }
 
     // Capture upstream metadata for response envelope.
     if state.upstream_id.is_none() {
@@ -653,6 +660,7 @@ struct ChatCompletionChunk {
     #[serde(default)]
     choices: Vec<ChatCompletionChunkChoice>,
     usage: Option<ChatCompletionUsage>,
+    error: Option<Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -711,6 +719,22 @@ struct ChatCompletionChunkFunction {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn in_band_error_after_text_is_not_an_empty_success_chunk() {
+        let mut state = OpenAiChatStreamState::default();
+        let first =
+            map_event(r#"{"choices":[{"delta":{"content":"hello"}}]}"#, &mut state).unwrap();
+        assert!(matches!(&first[..], [LMResponsePart::Text(part)] if part.value == "hello"));
+        let failure = map_event(
+            r#"{"error":{"message":"provider stream failed"}}"#,
+            &mut state,
+        );
+        assert!(
+            failure.is_err(),
+            "an error frame must terminate the stream, not disappear as an empty chunk"
+        );
+    }
 
     fn base_request() -> ProviderChatRequest {
         ProviderChatRequest {

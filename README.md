@@ -4,7 +4,7 @@
 > 统一路由多个上游 LLM 提供者的 API 请求，兼容 OpenAI 客户端协议，
 > 支持 OpenAI / Anthropic 等多种上游协议，内置 OIDC 登录、Token 配额、管理 UI。
 >
-> 🚧 **即将推出** VS Code Copilot 插件，可自动同步模型列表与参数，打通 IDE ↔ 网关的最后一公里。
+> 网关侧 WS 与设备码协议面向插件开发者；本仓库不包含可安装的 VS Code 插件。
 
 [![Rust](https://img.shields.io/badge/Rust-nightly-orange.svg)](./rust-toolchain.toml)
 [![Edition 2024](https://img.shields.io/badge/Edition-2024-blue.svg)](https://blog.rust-lang.org/2025/02/20/Rust-2024.html)
@@ -36,29 +36,11 @@
 
 ## 为什么选择 LLM-Bridge
 
-如果你正在运行 Homelab 或管理一个小型工作室的 AI 工具，你很可能会遇到这些痛点：
+适用于希望集中配置上游 API Key、统一模型入口并查看自身用量的 Homelab 或小型工作室。管理员维护模型和 Provider；成员使用个人 Bearer Token 访问模型。
 
-> [!IMPORTANT]
-> 😫 团队成员每人一个 ChatGPT/Claude 订阅，月底账单吓人一跳
-> 😫 想用 GitHub Copilot，但模型列表需要手动编辑 JSON，换个模型就得改一次配置
-> 😫 试过 LiteLLM 或 one-api，但 Python 依赖地狱、内存占用高、NAS 上跑不动
-> 😫 API Key 散落在各个配置文件里，有人离职就得全部轮换一遍
+**治理边界：Token 配额和模型白名单是用户可修改的个人自限，不是管理员强制执行的团队预算。** 用户可以创建无限额、全模型 Token。需要强制预算的部署应另行定义用户级治理策略，不能把当前 Token 配额作为安全边界。
 
-**LLM-Bridge 就是为这些场景而生的。**
-
-| 对比维度 | LLM-Bridge | LiteLLM | one-api | OpenRouter |
-|:---------|:----------:|:-------:|:------:|:----------:|
-| **定位** | 🏠 Homelab / 小型工作室 | 企业级网关 | 多租户中台 | 商业 SaaS |
-| **运行时** | Rust 单二进制 ~15MB | Python + pip 依赖 | Go 二进制 ~30MB | SaaS 无需部署 |
-| **内存占用** | 💚 空闲 ~15-25MB | 🟡 ~150-300MB | 🟢 ~40-80MB | — |
-| **部署难度** | ⭐ 一条命令 | ⭐⭐⭐ Python 环境 | ⭐⭐ Docker Compose | — |
-| **VS Code 集成** | 🚧 插件同步模型列表 | ❌ | ❌ | ❌ |
-| **API Key 管理** | 多 Key 加权轮询 | 单 Key 轮询 | 多 Key 轮询 | 平台托管 |
-| **OIDC 登录** | ✅ 内置 | ✅ 需配置 | ❌ | ❌（自有账号） |
-| **配额管理** | ✅ 原生支持 | ❌ | ✅ 有限 | ✅ 需付费 |
-| **单文件部署** | ✅ embed-frontend | ❌ | ❌ | — |
-
-> 💡 **一句话总结**：LLM-Bridge 不是另一个大而全的企业网关。它是一块专为 Homelab 设计的"乐高积木"——轻得能在树莓派上跑，小得不需要 docker-compose，但功能刚好覆盖你管理全家/全工作室 LLM 访问所需的一切。
+本仓库未提供可安装的 VS Code 插件，也没有经当前版本测量的内存、二进制大小、ARM 性能或第三方网关横向基准。
 
 ---
 
@@ -66,23 +48,21 @@
 
 LLM-Bridge 是一个用 Rust 编写的 **LLM 网关**，它的目标类似于一个自托管的 OpenRouter——但更轻、更小、更专注于 Homelab 场景。
 
-**这个项目是怎么来的？** 在管理家庭和工作室的 AI 工具时，我发现现有方案要么太重（LiteLLM 要配 Python 环境），要么收费（OpenRouter 按 token 抽成），要么缺关键功能（one-api 没有 OIDC 和配额）。于是决定自己写一个——用 Rust 编译成单文件，丢到 NAS 上就能跑，内存占用不到一包薯片的份量。
+项目采用 Rust 后端与 Vue 管理界面，聚焦自托管模型路由、个人凭据、用量查询和协议接入，不提供完整企业治理或模型评测管线。
 
 **适用场景：**
-- 🏠 **Homelab** — 在家里或 NAS 上跑一个轻量网关，统一管理你和家人朋友的 API Key，按配额分配使用
-- 🎨 **小型工作室** — 团队成员通过统一入口访问多个 LLM，管理员集中管控成本与权限，无需每人单独申请各家 API Key
-- 🔧 **VS Code / Copilot 用户** — 搭配即将推出的 VS Code 插件，编辑器内直接选择网关提供的模型，模型列表与参数自动同步
+- **Homelab** — 集中维护提供者与模型，用户通过个人 Token 调用。
+- **小型工作室** — 集中保管上游 Key，成员用量隔离；Token 自限不等于团队强制预算。
+- **插件开发者** — 使用网关接入协议自行实现模型注册、连接管理和凭据保存；插件本体另行交付。
 
 核心能力：
 
-- 对客户端暴露**统一的 OpenAI 兼容接口**（`/v1/models`、`/v1/chat/completions`），现有任何 OpenAI SDK 客户端无需改动即可接入
+- 对客户端暴露 **OpenAI 兼容接口**（`/v1/models`、`/v1/chat/completions`）；支持范围见下文，不宣称完整兼容全部 OpenAI/OpenRouter 字段。
 - 在网关内部，将请求**路由到多个上游 LLM 提供者**（OpenAI、Anthropic、其它兼容服务），并支持按优先级回退
 - 每个提供者可声明**多种协议端点**（如一个 Provider 既能走 `OpenAIChatCompletions` 又能走 `AnthropicMessages`），多组 API Key 跨协议共享并加权轮询
 - 提供 **OIDC 单点登录、API Token、配额管理**与一套**可视化管理界面**，让你像运维一个内部 API 平台一样管理 LLM 访问
 
-> 🌿 **资源占用**：空闲内存 ~15-25MB，满载也仅 ~60MB。单二进制约 15MB（不含前端）或 ~20MB（embed-frontend）。Rust 编译原生代码，无 GC 暂停，无运行时依赖。在树莓派 4（4GB）上也能流畅运行。
-
-项目目前处于 `0.1.0` 版本，核心路径与管理界面已落地，正在持续完善测试与文档。
+资源占用、二进制体积和 ARM 交付尚无当前版本的测量结论。实际验收命令、范围及限制以 [STATUS.md](STATUS.md) 为准，不能由代码存在推导生产可用性。
 
 ---
 
@@ -104,18 +84,18 @@ LLM-Bridge 是一个用 Rust 编写的 **LLM 网关**，它的目标类似于一
 |------|------|
 | **OIDC 单点登录** | 任何兼容 OIDC 的 IdP（Keycloak、Authentik、Google…）均可作为登录后端 |
 | **API Token 体系** | 用户可创建多个 `lb_` 前缀 Token，每 Token 独立配额与模型权限范围 |
-| **配额管理** | daily / monthly / unlimited 三种周期，后台任务自动重置，防止账单失控 |
-| **RBAC 管理 UI** | Svelte 5 单页应用：模型目录、Token 管理、Provider/协议管理、用户角色管理 |
+| **配额管理** | daily / monthly / unlimited 周期的个人 Token 自限；周期账本保留历史，不是管理员强制预算 |
+| **RBAC 管理 UI** | Vue 3 单页应用：模型目录、Token、Provider/协议、用户角色和用量追踪 |
 
 ### 🚀 性能与运维
 
 | 能力 | 说明 |
 |------|------|
-| **极低资源占用** | 空闲 ~15-25MB 内存，单二进制 ~15MB，无 GC 暂停，树莓派 4 也能流畅运行 |
+| **原生后端** | Rust 原生二进制；资源指标需在实际部署环境测量 |
 | **单二进制部署** | `embed-frontend` feature 把前端嵌入二进制，一条命令即可在 NAS、VPS 上运行 |
 | **可观测性** | OpenTelemetry traces + logs → OTLP，每个 Actor 消息 `#[instrument]` 追踪 |
-| **类型安全** | `ts-rs` + `axfetchum` 自动生成前端类型与 API 客户端，前后端零漂移 |
-| **VS Code 插件** 🚧 | 即将推出的扩展，自动从网关同步模型列表与参数到编辑器 Copilot 配置 |
+| **类型契约** | `ts-rs` 导出 DTO，`axfetchum` 生成客户端；类型漂移检查独立于生成操作 |
+| **插件接入** | 网关提供协议基础，不代表可安装 VS Code 扩展已交付 |
 
 ---
 
@@ -182,9 +162,9 @@ flowchart TB
 |------|------|
 | Web 框架 | `axum` 0.8 |
 | 异步运行时 | `tokio`（multi-thread） |
-| Actor 框架 | `ractor` 0.15 |
+| Actor 框架 | `ractor` 0.16 |
 | HTTP 客户端 | `reqwest` 0.13（rustls + stream） |
-| 数据库 ORM | `toasty` 0.7（默认 SQLite，可选 PostgreSQL） |
+| 数据库 ORM | `toasty` 0.10；SQLite 默认，PostgreSQL 需要对应 feature 与数据库 URL |
 | 时间 | `jiff` 0.2 |
 | 认证 | `openidconnect` 4.0、`tower-sessions` 0.15、`bcrypt` 0.19 |
 | 可观测性 | `opentelemetry` 0.32、`tracing`、`tracing-subscriber` |
@@ -196,11 +176,11 @@ flowchart TB
 
 | 类别 | 依赖 |
 |------|------|
-| 框架 | Svelte 5（runes） |
-| 构建 | Vite 8 |
-| 样式 | TailwindCSS 4 + bits-ui + tailwind-variants |
-| 路由 | svelte-spa-router 5 |
-| 状态 | @tanstack/svelte-store |
+| 框架 | Vue 3 + TypeScript |
+| 构建 | Vite 8 + vue-tsc |
+| 样式 | Tailwind CSS 4 + reka-ui |
+| 路由 | Vue Router 5 |
+| 状态 | Pinia 3 |
 | 包管理 | pnpm |
 
 ---
@@ -211,7 +191,7 @@ flowchart TB
 
 - **Rust nightly**（项目附带 `rust-toolchain.toml`，首次进入目录会自动安装）
 - **pnpm**（用于前端开发）
-- 任意一个 **OIDC 兼容的 IdP**（如 Keycloak、Authentik、Google、GitHub Apps 等）—— 可选，但缺失则只能用 API Token 调用 `/v1/*`，无法登录管理界面
+- **OIDC IdP** 可选。未配置 OIDC，或 Discovery 失败时，按既定设计进入免登录管理员模式；必须通过可信网络或反向代理限制管理入口。
 
 ### 1. 克隆并构建后端
 
@@ -222,8 +202,7 @@ cd llm-bridge
 # 调试构建
 cargo build
 
-# 发布构建
-cargo build --release
+# 生产构建见下方「单二进制部署」；默认 dev-ui 用于开发。
 ```
 
 ### 2. 启动前端开发服务器（可选，开发模式）
@@ -238,18 +217,20 @@ pnpm run dev
 ### 3. 启动网关
 
 ```bash
-# 最简启动（无 OIDC，仅 API Token 可用）
-cargo run
+# 最简启动：免登录管理员模式；客户端 /v1/* 仍要求 Bearer Token
+cargo run --bin llm-bridge
 
 # 带 OIDC 与前端嵌入的单二进制启动
-cargo build --release --features embed-frontend
+pnpm --dir frontend install --frozen-lockfile
+pnpm --dir frontend run build
+cargo build --release --no-default-features --features embed-frontend
 LLM_BRIDGE_OIDC_ISSUER_URL=https://idp.example.com \
 LLM_BRIDGE_OIDC_CLIENT_ID=llm-bridge \
 LLM_BRIDGE_OIDC_CLIENT_SECRET=... \
 ./target/release/llm-bridge
 ```
 
-默认监听 `http://127.0.0.1:3000`。生产部署时加上 `--features embed-frontend,otel` 可获得单二进制 + OpenTelemetry 的完整版本。
+默认监听 `http://127.0.0.1:3000`，`cargo run` 默认启动网关。默认 `dev-ui` 启用 Vite 开发接线；生产使用 `--no-default-features --features embed-frontend,otel`，需要 PostgreSQL 时再加 `postgresql`。`embed-frontend` 显式嵌入预先构建的 `frontend/dist/`，不在 Rust 宏内隐式构建前端。
 
 ---
 
@@ -264,12 +245,14 @@ LLM_BRIDGE_OIDC_CLIENT_SECRET=... \
 | `LLM_BRIDGE_GATEWAY_ID` | `llm-bridge-v1` | 网关标识，用于日志追踪 |
 | `LLM_BRIDGE_HOST` | `127.0.0.1` | 监听地址 |
 | `LLM_BRIDGE_PORT` | `3000` | 监听端口 |
-| `LLM_BRIDGE_STORE_PATH` | `./data/llm-bridge` | SQLite 数据库存储目录 |
+| `LLM_BRIDGE_STORE_PATH` | `./data/` | SQLite 目录，自动创建；数据库文件为该目录下的 `sqlite.db` |
+| `LLM_BRIDGE_DATABASE_URL` | 未设置 | 非空时优先于 STORE_PATH；支持 `sqlite:/path/db`、`sqlite::memory:` 与 `postgresql://user:pass@host/db`（需 postgresql feature） |
+| `LLM_BRIDGE_MODELS_IMPORT_URL` | `https://moheng233.github.io/llm-bridge/catalog.json` | 管理员手动预览/导入使用的目录来源 |
 | `RUST_LOG` | `info` | 日志级别（`tracing-subscriber` env-filter） |
 
 ### OIDC 配置
 
-仅当 `LLM_BRIDGE_OIDC_ISSUER_URL` 设置时启用 OIDC 登录；否则管理界面不可用，只能通过 API Token 调用 `/v1/*`。
+配置 `LLM_BRIDGE_OIDC_ISSUER_URL` 时尝试启用 OIDC。未配置或 Discovery 失败会继续进入免登录管理员模式，这是有意设计，不是拒绝启动策略。管理功能对可访问服务的用户开放；`/v1/models`、`/v1/chat/completions` 与 `/v1/ws` 始终需要 Bearer Token。部署者须提供与该信任模型相符的访问边界。
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
@@ -285,15 +268,16 @@ LLM_BRIDGE_OIDC_CLIENT_SECRET=... \
 
 | Feature | 说明 |
 |---------|------|
+| `dev-ui` | 默认启用，使用 Vite 开发接线；生产构建通过 `--no-default-features` 关闭 |
 | `embed-frontend` | 启用 `rust-embed`，把 `frontend/dist` 嵌入后端二进制，适合单文件部署 |
-| `otel` | 启用 OpenTelemetry traces + logs → OTLP HTTP 导出 |
-| `postgresql` | 切换 `toasty` 后端为 PostgreSQL（默认 SQLite） |
+| `otel` | 启用 OpenTelemetry traces、logs 和 GenAI metrics 的 OTLP HTTP 导出 |
+| `postgresql` | 编译 PostgreSQL 驱动；仍需配置 PostgreSQL 连接 URL，feature 本身不会选择数据库 |
 
 ---
 
 ## 数据模型
 
-LLM-Bridge 采用 **OpenRouter 风格** 的数据模型，共 7 张核心表：
+路由核心由 `LLMModel`、`Provider`、`ProviderProtocol`、`ModelProvider` 四表组成。用户、Token、周期账本及可观测性表的完整注册以 `src/db/mod.rs` 为准；升级策略和验收见 [STATUS.md](STATUS.md)。
 
 ```mermaid
 erDiagram
@@ -373,7 +357,7 @@ resolve_model(model_name)
 | `/v1/models` | GET | 返回所有可用模型（含能力、定价、各提供者信息） |
 | `/v1/chat/completions` | POST | 聊天补全，支持 `stream: true`（SSE） |
 
-请求与响应格式完全兼容 OpenAI Chat Completions API，支持 `user` / `assistant` 角色、`reasoning_content` 透传与工具调用。
+支持 `system` / `developer` / `user` / `assistant` / `tool` 消息、文本与图片输入、流式和非流式回复、reasoning 与工具调用。多候选 `n`、logprobs、OpenRouter provider 路由偏好、扩展采样和音视频输出等低频字段不在基础兼容承诺中；完整差距见 [PLAN.md §3](PLAN.md#3-后端v1chatcompletions-openrouter-兼容性差距剩余)。
 
 ### Auth API
 
@@ -382,7 +366,7 @@ resolve_model(model_name)
 | `/auth/login` | GET | 触发 OIDC 跳转 |
 | `/auth/callback` | GET | OIDC 回调，建立 Session |
 | `/auth/me` | GET | 返回当前登录用户信息 |
-| `/auth/logout` | GET | 销毁 Session |
+| `/auth/logout` | POST | 销毁 Session |
 
 ### Token 管理 API
 
@@ -394,7 +378,7 @@ resolve_model(model_name)
 
 ### Admin API
 
-所有 Admin 端点需 Session + `UserRole::Admin`。
+`/api/v1/admin/*` 需要管理员 Session；模型浏览 `/api/v1/models*` 只需要普通 Session。免登录模式按上述可信网络设计注入管理员身份。
 
 | 端点 | 方法 | 说明 |
 |------|------|------|
@@ -414,17 +398,20 @@ resolve_model(model_name)
 
 ## 前端管理界面
 
-Svelte 5 单页应用，位于 `frontend/`，开发模式监听 `http://127.0.0.1:5173`，生产模式可嵌入后端二进制。
+Vue 3 单页应用位于 `frontend/`，使用 Vue Router、Pinia、Tailwind CSS 与 reka-ui。开发服务器与生产嵌入机制见部署说明。
 
 | 页面 | 路由 | 权限 | 功能 |
 |------|------|------|------|
 | 登录 | `/login` | 无 | 触发 OIDC 跳转 |
-| 模型目录 | `/` `/models` | Session | 模型表格，支持搜索、排序、全部/可用筛选 |
+| 用量仪表盘 | `/` `/dashboard` | Session | 当前/上周期用量、真实环比、日趋势与最近请求 |
+| 模型目录 | `/models` | Session | 模型表格，支持搜索、排序、全部/可用筛选 |
 | API Token | `/tokens` | Session | 当前用户 Token 的 CRUD |
+| 请求追踪 | `/traces` `/traces/:id` | Session | 用户隔离的筛选、分页、生命周期与 Opt-In 内容快照 |
+| 模型管理 | `/admin/models` | Admin | 标称能力、提供者连接与目录导入 |
 | 提供者管理 | `/providers` | Admin | 卡片列表，含 Provider、Protocol、ModelProvider 关联管理 |
 | 用户管理 | `/users` | Admin | 用户列表 + 角色修改 |
 
-侧边栏按 RBAC 分组：菜单区（模型目录、API Token）所有用户可见；管理区（提供者、模型、用户）仅 Admin 可见。未认证访问受保护路由会自动跳转到 `/login`。
+侧边栏按 RBAC 分组：菜单区（仪表盘、模型目录、API Token、请求追踪）所有登录用户可见；管理区（提供者、模型、用户）仅 Admin 可见。未认证访问受保护路由会自动跳转到 `/login`。`Ctrl+K` / `Cmd+K` 打开全局页面与模型搜索。
 
 ---
 
@@ -454,16 +441,18 @@ llm-bridge/
 ├── examples/                   # 命令行端到端示例
 │   ├── openai_stream_cli.rs
 │   └── anthropic_stream_cli.rs
-├── frontend/                   # Svelte 5 管理界面
+├── frontend/                   # Vue 3 管理界面
 │   └── src/
-│       ├── lib/                # 页面组件
+│       ├── pages/              # 路由页面
+│       ├── components/         # 共享 UI 与业务组件
+│       ├── lib/                # API 入口与工具函数
 │       └── bindings/           # ts-rs / axfetchum 自动生成的 TS 类型与客户端
 └── src/
     ├── main.rs                 # 入口：可观测性 → 配置 → HTTP 服务
     ├── lib.rs
     ├── types.rs                # 通用 LM 类型（消息、角色、响应、工具调用）
     ├── config/                 # RuntimeSettings、ProviderCompatibility 枚举
-    ├── db/                     # toasty ORM：7 张核心表定义与初始化
+    ├── db/                     # toasty ORM 模型、schema 初始化与升级
     ├── auth/                   # OIDC / Session / Token / Quota 服务
     ├── middleware/             # SessionAuth / AdminAuth / TokenAuth 提取器
     ├── store/                  # Store 层：CRUD、四表路由解析、KeySelector
@@ -483,10 +472,10 @@ llm-bridge/
 cargo check
 
 # Lint（项目要求 clippy 零警告）
-cargo clippy --all-targets
+cargo clippy --all-targets --locked -- -D warnings
 
-# 运行测试
-cargo test
+# 行为测试不改写 TS 绑定
+cargo test --all-targets --locked -- --skip export_bindings
 
 # 运行示例（端到端连通性测试）
 cargo run --example openai_stream_cli -- <url> <api_key> <model>
@@ -499,7 +488,8 @@ cd frontend
 pnpm install
 pnpm run dev       # 开发服务器
 pnpm run build     # 生产构建到 frontend/dist
-pnpm run check     # svelte-check 类型检查
+pnpm run lint      # 检查手写前端代码
+pnpm exec vue-tsc -b # 类型检查；干净环境请先执行完整 build 生成自动声明
 ```
 
 ### 同步 TypeScript 绑定
@@ -508,13 +498,18 @@ pnpm run check     # svelte-check 类型检查
 
 ```bash
 # 生成 ts-rs 类型文件（.ts）
-cargo test export_bindings
+cargo test --lib export_bindings
 
-# 生成 axfetchum API 客户端（client.ts）
-cargo test generate_ts_client
+# 显式生成 axfetchum API 客户端（client.ts）
+cargo test --test generate_ts_client generate_ts_client -- --ignored --exact
+
+# 检查类型和客户端漂移，不改写仓库绑定
+python3 scripts/check-bindings.py
 ```
 
 > `ts-rs` 负责数据类型文件，`axfetchum` 负责根据后端路由声明生成 API 客户端。两者双通道保持前后端类型一致。
+
+`src/bindings/` 是生成产物，不手工改写，也不套用手写代码的 oxlint 风格规则；仍参加 TypeScript 编译与上述漂移检查。CI 分别检查手写前端 lint、类型/客户端一致性及行为合约。
 
 ### 单二进制部署
 
@@ -523,17 +518,40 @@ cargo test generate_ts_client
 cd frontend && pnpm run build && cd ..
 
 # 再构建带嵌入前端的二进制
-cargo build --release --features embed-frontend
+cargo build --release --no-default-features --features embed-frontend,otel
 
 # 部署只需一个可执行文件 + SQLite 数据目录
 ./target/release/llm-bridge
 ```
 
+### Docker 部署
+
+```bash
+docker build -f Dockerfile.base -t localhost/llm-bridge-base:latest .
+docker build -t localhost/llm-bridge:latest .
+docker run --rm -p 127.0.0.1:3000:3000 \
+  -v llm-bridge-data:/data localhost/llm-bridge:latest
+```
+
+镜像包含 `embed-frontend,otel,postgresql`，以非 root 用户运行，默认数据库为 `/data/sqlite.db`。挂载整个 `/data`；bind mount 需预先授予容器用户写权限。未配置 OIDC 的管理接口按可信网络设计开放，不应直接暴露到公网。
+
+### PostgreSQL 部署
+
+数据库需预先创建。原生构建启用 `postgresql`；上述 Docker 镜像已包含驱动：
+
+```bash
+cargo build --release --no-default-features --features embed-frontend,otel,postgresql --locked
+LLM_BRIDGE_DATABASE_URL='postgresql://llm_bridge:PASSWORD@127.0.0.1/llm_bridge' \
+  ./target/release/llm-bridge
+```
+
+非空 URL 优先于 SQLite 目录配置；连接或 schema 升级失败会报错退出，不静默回退到 SQLite。升级会创建缺少的表并合并历史重复周期账本，但不是任意历史 schema 的通用迁移工具；不支持的结构拒绝启动且事务回滚。升级前备份，详见[数据升级边界](docs/architecture.md#数据库与升级)。
+
 ---
 
 ## 示例
 
-项目附带两个命令行示例，用于快速验证上游连通性：
+OpenAI/Anthropic 示例用于直接验证上游；WS 示例用于连接本项目网关：
 
 ```bash
 # OpenAI 兼容服务
@@ -541,6 +559,9 @@ cargo run --example openai_stream_cli -- https://api.openai.com/v1 sk-xxx gpt-4o
 
 # Anthropic
 cargo run --example anthropic_stream_cli -- https://api.anthropic.com sk-xxx claude-3-5-sonnet-latest
+
+# 网关 WS（Token 从环境变量读取）
+LLM_BRIDGE_API_KEY=lb_... cargo run --example ws_chat_client -- ws://127.0.0.1:3000/v1/ws MODEL hello
 ```
 
 示例会先输出 `[THINK]`（若上游返回推理内容），再输出 `[TEXT]` 文本流。
@@ -549,7 +570,7 @@ cargo run --example anthropic_stream_cli -- https://api.anthropic.com sk-xxx cla
 
 ## 可观测性
 
-启用 `otel` feature 后，LLM-Bridge 会向 OTLP HTTP endpoint 导出 traces 与 logs：
+启用 `otel` 后导出 traces、logs 和 GenAI metrics。默认 OTLP blocking HTTP 客户端搭配 SDK 稳定线程式 `PeriodicReader`；shutdown 在 blocking 线程执行，避免 Tokio runtime 销毁冲突。共享请求终态日志包含 request_id、trace_id（启用 OTLP 时）和用量，不包含聊天内容。
 
 ```bash
 cargo build --features otel
@@ -559,6 +580,8 @@ cargo build --features otel
 - 每个 Actor 消息处理均带有 `#[instrument]` span
 - `tracing-subscriber` 集成，支持 `RUST_LOG` env-filter
 - GatewayManager 与 ProviderActor 的请求生命周期完整可追踪
+
+协议及运维说明：[架构与数据升级](docs/architecture.md)、[WebSocket RPC](docs/ws-api.md)、[设备码登录](docs/device-login.md)、[目录导入](docs/catalog-import.md)。内容快照默认关闭，通过 `LLM_BRIDGE_OBS_CAPTURE_CONTENT=true` 开启；trace 默认保留 30 天，daily rollup 不随 trace 删除。
 
 ---
 
@@ -589,18 +612,7 @@ LLM-Bridge 将提供一款 VS Code 扩展，打通 **编辑器 ↔ 网关** 的�
 
 ## 项目状态
 
-LLM-Bridge 当前处于 `0.1.0`，核心路径与管理界面均已落地：
-
-- ✅ OpenAI 兼容 API（流式 + 非流式）
-- ✅ 三种协议适配器（OpenAI Chat / Responses / Anthropic）
-- ✅ 多协议 ProviderProtocol 架构
-- ✅ OIDC 登录 + Session + API Token 三通道认证
-- ✅ 配额管理（daily / monthly / unlimited + 后台重置）
-- ✅ Admin REST API（Provider / 协议 / 模型 / 用户）
-- ✅ Svelte 5 管理界面（5 个页面）
-- ✅ OpenTelemetry 可观测性
-- � VS Code Copilot 插件（规划中）
-- �🔄 测试套件与文档完善中
+LLM-Bridge 当前版本为 `0.1.0`。实现状态、已验证范围和仍需外部环境验收的项目统一维护在 STATUS，不再用静态勾选列表或“只剩测试文档”描述交付状态。
 
 详细进度与已知问题见 [`STATUS.md`](./STATUS.md)，架构演进计划见 [`PLAN.md`](./PLAN.md)。
 

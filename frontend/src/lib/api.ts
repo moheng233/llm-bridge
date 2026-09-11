@@ -40,17 +40,16 @@ export function formatTokens(n: number): string {
  */
 export function parseTokens(input: string | number): number | null {
   if (typeof input === "number")
-    return Number.isFinite(input) && input >= 0 ? Math.floor(input) : null;
+    return Number.isFinite(input) && input >= 0 && Number.isSafeInteger(Math.floor(input)) ? Math.floor(input) : null;
   const s = input.trim();
   if (s === "") return null;
-  const m = s.match(/^([\d.]+)\s*([MmKk])?$/);
+  const m = s.match(/^(\d+(?:\.\d+)?|\.\d+)\s*([MmKk])?$/);
   if (!m) return null;
   const n = parseFloat(m[1]);
   if (!Number.isFinite(n) || n < 0) return null;
   const unit = (m[2] ?? "").toUpperCase();
-  if (unit === "M") return Math.floor(n * 1_000_000);
-  if (unit === "K") return Math.floor(n * 1_000);
-  return Math.floor(n);
+  const count = Math.floor(n * (unit === "M" ? 1_000_000 : unit === "K" ? 1_000 : 1));
+  return Number.isSafeInteger(count) ? count : null;
 }
 
 // Utility: format price per 1M tokens

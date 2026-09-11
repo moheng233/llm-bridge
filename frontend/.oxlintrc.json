@@ -1,6 +1,7 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
   "plugins": ["eslint", "import", "typescript", "unicorn", "oxc", "vue"],
+  "ignorePatterns": ["src/bindings/**"],
   "categories": {
     "correctness": "error"
   },

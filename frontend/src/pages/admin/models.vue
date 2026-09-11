@@ -38,6 +38,7 @@ const linkTestResults = useReactiveMap<
 
 // Model form dialog
 const showModelDialog = ref(false);
+const showCatalogImport = ref(false);
 const editingModel = ref<AdminModelResponse | null>(null);
 const form = ref({
   modelName: "",
@@ -52,6 +53,7 @@ const form = ref({
   status: "stable",
 });
 const formSaving = ref(false);
+const formError = ref("");
 
 // Delete dialog
 const deleteDialogOpen = ref(false);
@@ -97,6 +99,7 @@ async function toggleLinks(modelId: number) {
 }
 
 function openCreateDialog() {
+  formError.value = "";
   editingModel.value = null;
   form.value = {
     modelName: "",
@@ -113,13 +116,14 @@ function openCreateDialog() {
   showModelDialog.value = true;
 }
 function openEditDialog(m: AdminModelResponse) {
+  formError.value = "";
   editingModel.value = m;
   form.value = {
     modelName: m.modelName,
     displayName: m.displayName,
     description: m.description ?? "",
-    maxInput: formatTokens(m.maxInputTokens),
-    maxOutput: formatTokens(m.maxOutputTokens),
+    maxInput: String(m.maxInputTokens),
+    maxOutput: String(m.maxOutputTokens),
     toolCalling: m.toolCalling,
     vision: m.vision,
     thinking: m.thinking,
@@ -130,8 +134,22 @@ function openEditDialog(m: AdminModelResponse) {
 }
 
 async function saveModel() {
+  formError.value = "";
   if (!form.value.modelName.trim()) {
-    error.value = "模型唯一标识必填";
+    formError.value = "模型唯一标识必填";
+    return;
+  }
+  const maxInput = parseTokens(form.value.maxInput);
+  const maxOutput = parseTokens(form.value.maxOutput);
+  if (
+    maxInput == null ||
+    maxOutput == null ||
+    maxInput < 1 ||
+    maxOutput < 1 ||
+    maxInput > 4294967295 ||
+    maxOutput > 4294967295
+  ) {
+    formError.value = "Token 数量须为 1–4294967295 的有效整数，可使用 K/M 单位";
     return;
   }
   formSaving.value = true;
@@ -139,8 +157,8 @@ async function saveModel() {
     modelName: form.value.modelName.trim(),
     displayName: form.value.displayName.trim() || form.value.modelName.trim(),
     description: form.value.description.trim() || null,
-    maxInputTokens: parseTokens(form.value.maxInput) ?? 0,
-    maxOutputTokens: parseTokens(form.value.maxOutput) ?? 0,
+    maxInputTokens: maxInput,
+    maxOutputTokens: maxOutput,
     toolCalling: form.value.toolCalling,
     vision: form.value.vision,
     thinking: form.value.thinking,
@@ -153,7 +171,7 @@ async function saveModel() {
     showModelDialog.value = false;
     loadData();
   } catch (e: any) {
-    error.value = e.message;
+    formError.value = e.message;
   } finally {
     formSaving.value = false;
   }
@@ -275,6 +293,9 @@ async function handleTestLink(modelId: number, link: ModelLinkView) {
   <PageShell>
     <SectionHeader title="模型管理" description="大语言模型标称能力 + 提供者连接" :icon="Cpu">
       <template #actions>
+        <Button variant="outline" class="cursor-pointer gap-2" @click="showCatalogImport = true">
+          从 models.dev 目录导入
+        </Button>
         <Button
           class="cursor-pointer gap-2 bg-cta font-medium text-black hover:bg-cta-hover"
           @click="openCreateDialog"
@@ -282,6 +303,7 @@ async function handleTestLink(modelId: number, link: ModelLinkView) {
         >
       </template>
     </SectionHeader>
+    <CatalogImportDialog v-model:open="showCatalogImport" @imported="loadData" />
 
     <ErrorState v-if="error" :error="error" inline @retry="loadData" />
 
@@ -472,6 +494,7 @@ async function handleTestLink(modelId: number, link: ModelLinkView) {
               >
             </div>
           </div>
+          <p v-if="formError" role="alert" class="text-sm text-destructive">{{ formError }}</p>
           <Button
             class="cursor-pointer bg-cta font-medium text-black hover:bg-cta-hover"
             @click="saveModel"

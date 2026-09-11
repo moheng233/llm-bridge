@@ -13,9 +13,14 @@
 
 pub mod admin;
 pub mod auth;
+pub mod chat_common;
+pub mod cli_auth;
+mod images;
+pub mod models_dev;
 pub mod openai_api;
 pub mod tokens;
 pub mod usage;
+pub mod ws;
 
 use std::sync::Arc;
 
@@ -23,6 +28,7 @@ use axfetchum::ApiRouter;
 use tower_sessions::MemoryStore;
 use tower_sessions::SessionManagerLayer;
 use tracing::{info, instrument};
+#[cfg(not(feature = "embed-frontend"))]
 use vite_rs_axum_0_8::ViteServe;
 
 use crate::actors::gateway_manager::GatewayManagerMessage;
@@ -32,6 +38,7 @@ use crate::store::Store;
 use crate::server::admin::{admin_crud_routes, model_browse_routes};
 use crate::server::auth::AuthState;
 
+#[cfg(not(feature = "embed-frontend"))]
 #[derive(vite_rs::Embed)]
 #[root = "./frontend"]
 struct Frontend;
@@ -44,12 +51,14 @@ pub struct AppState {
     pub auth_token: Option<String>,
     /// OIDC auth sub-state（仅在配置了 OIDC 时 Some）
     pub auth: Option<AuthState>,
-    /// SQLite 数据库句柄（始终可用）
+    /// 运行时选择的数据库句柄（SQLite 或 PostgreSQL）。
     pub db: db::Db,
     /// 请求追踪异步写入器（PLAN.md §5 O3）。
     pub trace_writer: crate::observability::trace_writer::TraceWriter,
     /// 内容快照开关（`LLM_BRIDGE_OBS_CAPTURE_CONTENT`）。
     pub capture_content: bool,
+    pub public_base_url: String,
+    pub catalog: Arc<models_dev::CatalogService>,
 }
 
 // ── Route definitions (all via ApiRouter for TS client generation) ──
@@ -63,6 +72,9 @@ fn openai_routes() -> ApiRouter<AppState> {
         .auth()
         .done()
         .post("/v1/chat/completions", openai_api::chat_completions)
+        .done()
+        .get("/v1/ws", ws::ws_handler)
+        .auth()
         .done()
 }
 
@@ -111,6 +123,8 @@ pub fn all_api_routes() -> ApiRouter<AppState> {
         .merge(token_routes())
         .merge(auth_routes())
         .merge(usage::usage_routes())
+        .merge(cli_auth::routes())
+        .merge(models_dev::routes())
 }
 
 /// Start the HTTP server on the given host:port.
@@ -124,17 +138,22 @@ pub fn all_api_routes() -> ApiRouter<AppState> {
     )
 )]
 pub async fn start_server(state: AppState, host: &str, port: u16) -> Result<(), std::io::Error> {
-    #[cfg(debug_assertions)]
+    #[cfg(all(debug_assertions, not(feature = "embed-frontend")))]
     let _guard = Frontend::start_dev_server(true);
 
     let session_store = MemoryStore::default();
     let session_layer = SessionManagerLayer::new(session_store).with_secure(false);
 
     let oidc_configured = state.auth.is_some();
+    let no_auth_db = state.db.clone();
 
     let (router, _routes) = all_api_routes().build();
-    let app = router
-        .with_state(state)
+    let app = router.with_state(state);
+    #[cfg(feature = "embed-frontend")]
+    let app =
+        app.fallback(|uri: axum::http::Uri| async move { crate::embed::serve(uri.path()).await });
+    #[cfg(not(feature = "embed-frontend"))]
+    let app = app
         .route_service("/", ViteServe::new(Frontend::boxed()))
         .route_service("/{*path}", ViteServe::new(Frontend::boxed()));
     let mut app: axum::Router = app;
@@ -145,7 +164,10 @@ pub async fn start_server(state: AppState, host: &str, port: u16) -> Result<(), 
         info!("OIDC not configured — entering no-auth mode (auto-inject default admin)");
         // session_layer 必须是最外层，确保 no_auth_middleware 访问 Session 时已加载
         app = app
-            .layer(axum::middleware::from_fn(auth::no_auth_middleware))
+            .layer(axum::middleware::from_fn_with_state(
+                no_auth_db,
+                auth::no_auth_middleware,
+            ))
             .layer(session_layer);
     }
 
@@ -155,9 +177,28 @@ pub async fn start_server(state: AppState, host: &str, port: u16) -> Result<(), 
         crate::middleware::request_id::request_id_middleware,
     ));
 
+    #[cfg(unix)]
+    let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+    #[cfg(unix)]
+    let mut interrupt = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())?;
+    let shutdown = async move {
+        #[cfg(unix)]
+        tokio::select! {
+            _ = terminate.recv() => {},
+            _ = interrupt.recv() => {},
+        }
+        #[cfg(not(unix))]
+        tokio::signal::ctrl_c()
+            .await
+            .expect("failed to receive Ctrl+C");
+        info!("shutdown requested; draining HTTP connections");
+    };
+
     let addr = format!("{}:{}", host, port);
     info!("Starting server on {}", addr);
 
     let listener = tokio::net::TcpListener::bind(&addr).await?;
-    axum::serve(listener, app).await
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown)
+        .await
 }

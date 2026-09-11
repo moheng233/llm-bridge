@@ -20,9 +20,20 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::db::models::{LlmRequestTrace, TraceInterface, TraceStatus, UsageDaily};
-use crate::middleware::session_auth::SessionAuth;
+use crate::middleware::session_auth::{SessionAuth, is_admin_role};
 use crate::server::AppState;
 use crate::types::{LMResponsePart, LanguageModelChatMessage};
+
+/// 汇总响应的上一周期部分（同构但不含 errorRate/avgTtftMs/modelRanking）。
+#[derive(Serialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub struct PrevSummary {
+    pub total_requests: i64,
+    pub total_tokens: i64,
+    pub total_cost_usd: f64,
+    pub daily: Vec<DailyPoint>,
+}
 
 pub fn usage_routes() -> ApiRouter<AppState> {
     ApiRouter::<AppState>::new()
@@ -75,6 +86,8 @@ pub struct UsageSummaryResponse {
     pub daily: Vec<DailyPoint>,
     /// 模型用量排行（按 total_tokens 降序）
     pub model_ranking: Vec<ModelRanking>,
+    /// 上一周期（同长度）真实汇总，用于真环比；无数据时为 null。
+    pub prev_summary: Option<PrevSummary>,
 }
 
 #[derive(Serialize, TS)]
@@ -102,49 +115,39 @@ pub struct ModelRanking {
 
 async fn get_usage_summary(
     State(state): State<AppState>,
-    SessionAuth(_user): SessionAuth,
+    SessionAuth(user): SessionAuth,
     Query(q): Query<SummaryQuery>,
 ) -> Result<Json<UsageSummaryResponse>, Response> {
     let days = q.days.unwrap_or(14).clamp(1, 90);
     let mut db = state.db.clone();
+    let is_admin = is_admin_role(&user.role);
+    let user_id = user.user_id;
 
-    // 起始日（UTC，YYYY-MM-DD 字典序即时间序）
-    let start_zoned = jiff::Zoned::now()
-        .checked_sub(jiff::SignedDuration::from_hours(24 * (days as i64 - 1)))
-        .map_err(db_err)?;
-    let start_day = start_zoned.strftime("%Y-%m-%d").to_string();
+    // member 仅统计本人 token 的 rollup（usage_daily 无 user_id 列，需先取本人 token id 集）。
+    let own_token_ids: Option<Vec<u64>> = if is_admin {
+        None
+    } else {
+        Some(
+            crate::auth::token::list_user_tokens(&state.db, user.user_id)
+                .await
+                .map_err(db_err)?
+                .into_iter()
+                .map(|token| token.id)
+                .collect(),
+        )
+    };
 
-    // usage_daily 按 day 索引范围查询（day 有 #[index]，字典序 >= 即日期 >=）
-    let rows: Vec<UsageDaily> = UsageDaily::filter(UsageDaily::fields().day().ge(start_day))
-        .exec(&mut db)
-        .await
-        .map_err(db_err)?;
+    // ── 当前窗口 rollup 查询 ──
+    let now = jiff::Timestamp::now().to_zoned(jiff::tz::TimeZone::UTC);
+    let (rows, prev_rows) =
+        query_rollup_windows(&mut db, &now, days, own_token_ids.as_deref()).await?;
 
     // ── 汇总（内存求和）──
     let total_requests: i64 = rows.iter().map(|r| r.request_count).sum();
     let total_tokens: i64 = rows.iter().map(|r| r.total_tokens).sum();
     let total_cost_usd: f64 = rows.iter().map(|r| r.cost_usd).sum();
 
-    // 按日聚合
-    let mut by_day: std::collections::BTreeMap<String, DailyPoint> = Default::default();
-    for r in &rows {
-        let e = by_day.entry(r.day.clone()).or_insert_with(|| DailyPoint {
-            day: r.day.clone(),
-            requests: 0,
-            input_tokens: 0,
-            output_tokens: 0,
-            cached_tokens: 0,
-            total_tokens: 0,
-            cost_usd: 0.0,
-        });
-        e.requests += r.request_count;
-        e.input_tokens += r.input_tokens;
-        e.output_tokens += r.output_tokens + r.reasoning_tokens;
-        e.cached_tokens += r.cached_tokens;
-        e.total_tokens += r.total_tokens;
-        e.cost_usd += r.cost_usd;
-    }
-    let daily: Vec<DailyPoint> = by_day.into_values().collect();
+    let daily = aggregate_daily(&rows);
 
     // 模型排行
     let mut by_model: std::collections::HashMap<String, ModelRanking> = Default::default();
@@ -164,16 +167,35 @@ async fn get_usage_summary(
     let mut model_ranking: Vec<ModelRanking> = by_model.into_values().collect();
     model_ranking.sort_by_key(|m| std::cmp::Reverse(m.total_tokens));
 
+    // ── 上一周期真实汇总（复用 rollup；无数据 → null，前端不再伪造环比）──
+    let prev_summary = if prev_rows.is_empty() {
+        None
+    } else {
+        Some(PrevSummary {
+            total_requests: prev_rows.iter().map(|r| r.request_count).sum(),
+            total_tokens: prev_rows.iter().map(|r| r.total_tokens).sum(),
+            total_cost_usd: prev_rows.iter().map(|r| r.cost_usd).sum(),
+            daily: aggregate_daily(&prev_rows),
+        })
+    };
+
     // 错误率与平均 TTFT 需查 trace 表（窗口内终态行）。
     // 这两列不在 usage_daily 中（rollup 无状态维度），但数据量有限（retention 默认 30 天）。
-    let window_start = jiff::Timestamp::now()
-        .checked_sub(jiff::SignedDuration::from_hours(24 * days as i64))
+    let first_day = now
+        .checked_sub(jiff::SignedDuration::from_hours(24 * (days as i64 - 1)))
         .map_err(db_err)?;
-    let traces: Vec<LlmRequestTrace> =
-        LlmRequestTrace::filter(LlmRequestTrace::fields().created_at().ge(window_start))
-            .exec(&mut db)
-            .await
-            .map_err(db_err)?;
+    let window_start: jiff::Timestamp = format!("{}T00:00:00Z", first_day.strftime("%Y-%m-%d"))
+        .parse()
+        .map_err(db_err)?;
+    let mut trace_query =
+        LlmRequestTrace::filter(LlmRequestTrace::fields().created_at().ge(window_start));
+    if !is_admin {
+        trace_query = trace_query.filter(LlmRequestTrace::fields().user_id().eq(user_id));
+    }
+    let mut traces: Vec<LlmRequestTrace> = trace_query.exec(&mut db).await.map_err(db_err)?;
+    if let Some(ids) = &own_token_ids {
+        traces.retain(|t| ids.contains(&t.token_id));
+    }
 
     let finals: Vec<&LlmRequestTrace> = traces.iter().filter(|t| t.status.is_final()).collect();
     let errors = finals
@@ -201,7 +223,76 @@ async fn get_usage_summary(
         avg_ttft_ms,
         daily,
         model_ranking,
+        prev_summary,
     }))
+}
+
+/// 查询当前窗口与上一窗口的 rollup 行（member 限定本人 token id 集）。
+async fn query_rollup_windows(
+    db: &mut crate::db::Db,
+    now: &jiff::Zoned,
+    days: u32,
+    own_token_ids: Option<&[u64]>,
+) -> Result<(Vec<UsageDaily>, Vec<UsageDaily>), Response> {
+    let cur_start = now
+        .checked_sub(jiff::SignedDuration::from_hours(24 * (days as i64 - 1)))
+        .map_err(db_err)?;
+    let cur_start_day = cur_start.strftime("%Y-%m-%d").to_string();
+    let prev_start = now
+        .checked_sub(jiff::SignedDuration::from_hours(24 * (2 * days as i64 - 1)))
+        .map_err(db_err)?;
+    let prev_start_day = prev_start.strftime("%Y-%m-%d").to_string();
+
+    // 当前窗口：day >= cur_start_day
+    let cur: Vec<UsageDaily> = UsageDaily::filter(UsageDaily::fields().day().ge(&cur_start_day))
+        .exec(&mut db.clone())
+        .await
+        .map_err(db_err)?;
+    // 上一窗口：day ∈ [prev_start_day, cur_start_day)
+    let prev_all: Vec<UsageDaily> =
+        UsageDaily::filter(UsageDaily::fields().day().ge(prev_start_day))
+            .exec(&mut db.clone())
+            .await
+            .map_err(db_err)?;
+    let prev: Vec<UsageDaily> = prev_all
+        .into_iter()
+        .filter(|r| r.day.as_str() < cur_start_day.as_str())
+        .collect();
+
+    let scoped = |rows: Vec<UsageDaily>| -> Vec<UsageDaily> {
+        match own_token_ids {
+            Some(ids) => rows
+                .into_iter()
+                .filter(|r| ids.contains(&r.token_id))
+                .collect(),
+            None => rows,
+        }
+    };
+
+    Ok((scoped(cur), scoped(prev)))
+}
+
+/// rollup 行按日聚合（升序）。
+fn aggregate_daily(rows: &[UsageDaily]) -> Vec<DailyPoint> {
+    let mut by_day: std::collections::BTreeMap<String, DailyPoint> = Default::default();
+    for r in rows {
+        let e = by_day.entry(r.day.clone()).or_insert_with(|| DailyPoint {
+            day: r.day.clone(),
+            requests: 0,
+            input_tokens: 0,
+            output_tokens: 0,
+            cached_tokens: 0,
+            total_tokens: 0,
+            cost_usd: 0.0,
+        });
+        e.requests += r.request_count;
+        e.input_tokens += r.input_tokens;
+        e.output_tokens += r.output_tokens + r.reasoning_tokens;
+        e.cached_tokens += r.cached_tokens;
+        e.total_tokens += r.total_tokens;
+        e.cost_usd += r.cost_usd;
+    }
+    by_day.into_values().collect()
 }
 
 // ── Trace list ──
@@ -216,6 +307,9 @@ pub struct TracesQuery {
     pub interface: Option<String>,
     /// 模糊匹配 request_id 前缀 / error_message
     pub search: Option<String>,
+    /// 创建时间范围（unix 秒，含边界），可选
+    pub date_from: Option<i64>,
+    pub date_to: Option<i64>,
     /// 页码（0 起），默认 0
     pub page: Option<u32>,
     /// 每页条数，默认 50，上限 200
@@ -299,12 +393,13 @@ fn trace_to_summary(t: &LlmRequestTrace) -> TraceSummary {
 
 async fn list_traces(
     State(state): State<AppState>,
-    SessionAuth(_user): SessionAuth,
+    SessionAuth(user): SessionAuth,
     Query(q): Query<TracesQuery>,
 ) -> Result<Json<TraceListResponse>, Response> {
     let page = q.page.unwrap_or(0);
     let page_size = q.page_size.unwrap_or(50).clamp(1, 200);
     let mut db = state.db.clone();
+    let is_admin = is_admin_role(&user.role);
 
     // 动态条件叠加（toasty Query builder，多次 filter 以 AND 合并）
     let mut query = toasty::stmt::Query::<toasty::stmt::List<LlmRequestTrace>>::all();
@@ -316,16 +411,13 @@ async fn list_traces(
     if let Some(model) = &q.model {
         query = query.filter(LlmRequestTrace::fields().model().eq(model));
     }
-    if let Some(token_id) = q.token_id {
-        query = query.filter(LlmRequestTrace::fields().token_id().eq(token_id));
-    }
     if let Some(interface) = &q.interface
         && let Some(i) = parse_interface(interface)
     {
         query = query.filter(LlmRequestTrace::fields().interface().eq(i));
     }
 
-    // 全量查出后内存筛选 search（request_id 前缀 / error_message 模糊）+ 分页。
+    // 全量查出后内存筛选（token/user 权限、时间范围、search）+ 分页。
     // trace 表有 retention（默认 30 天），窗口内行数有限；待数据量增长后再下沉为 SQL LIKE。
     let mut rows: Vec<LlmRequestTrace> = query
         .order_by(LlmRequestTrace::fields().id().desc())
@@ -333,20 +425,15 @@ async fn list_traces(
         .await
         .map_err(db_err)?;
 
-    if let Some(search) = &q.search {
-        let needle = search.trim().to_lowercase();
-        if !needle.is_empty() {
-            rows.retain(|t| {
-                t.request_id.to_lowercase().contains(&needle)
-                    || t.model.to_lowercase().contains(&needle)
-                    || t.error_message
-                        .as_deref()
-                        .unwrap_or("")
-                        .to_lowercase()
-                        .contains(&needle)
-            });
-        }
-    }
+    apply_trace_filters(
+        &mut rows,
+        is_admin,
+        user.user_id,
+        q.token_id,
+        q.date_from,
+        q.date_to,
+        q.search.as_deref(),
+    );
 
     let total = rows.len() as u64;
     let items: Vec<TraceSummary> = rows
@@ -362,6 +449,46 @@ async fn list_traces(
         page,
         page_size,
     }))
+}
+
+/// 列表页内存过滤：权限（member 仅本人）、token_id、时间范围、search。
+/// member 传他人 token_id → 空集（不 403，不泄漏他人数据存在性）。
+#[cfg_attr(not(test), allow(dead_code))]
+fn apply_trace_filters(
+    rows: &mut Vec<LlmRequestTrace>,
+    is_admin: bool,
+    viewer_user_id: u64,
+    token_id: Option<u64>,
+    date_from: Option<i64>,
+    date_to: Option<i64>,
+    search: Option<&str>,
+) {
+    if !is_admin {
+        rows.retain(|t| t.user_id == viewer_user_id);
+    }
+    if let Some(token_id) = token_id {
+        rows.retain(|t| t.token_id == token_id);
+    }
+    if let Some(from) = date_from {
+        rows.retain(|t| t.created_at.as_second() >= from);
+    }
+    if let Some(to) = date_to {
+        rows.retain(|t| t.created_at.as_second() <= to);
+    }
+    if let Some(search) = search {
+        let needle = search.trim().to_lowercase();
+        if !needle.is_empty() {
+            rows.retain(|t| {
+                t.request_id.to_lowercase().contains(&needle)
+                    || t.model.to_lowercase().contains(&needle)
+                    || t.error_message
+                        .as_deref()
+                        .unwrap_or("")
+                        .to_lowercase()
+                        .contains(&needle)
+            });
+        }
+    }
 }
 
 fn parse_status(s: &str) -> Option<TraceStatus> {
@@ -410,7 +537,7 @@ pub struct TraceDetail {
 
 async fn get_trace(
     State(state): State<AppState>,
-    SessionAuth(_user): SessionAuth,
+    SessionAuth(user): SessionAuth,
     Path(request_id): Path<String>,
 ) -> Result<Json<TraceDetail>, Response> {
     let mut db = state.db.clone();
@@ -429,6 +556,15 @@ async fn get_trace(
             return Err(db_err(e));
         }
     };
+
+    // 越权防护（BUG010）：member 访问他人 trace → 403，不泄漏快照内容。
+    if !is_admin_role(&user.role) && t.user_id != user.user_id {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({"error": "forbidden"})),
+        )
+            .into_response());
+    }
 
     let summary = trace_to_summary(&t);
     Ok(Json(TraceDetail {

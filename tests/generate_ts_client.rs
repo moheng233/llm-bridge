@@ -14,14 +14,15 @@ fn config() -> GeneratorConfig {
 }
 
 #[test]
+#[ignore = "显式生成：cargo test --test generate_ts_client generate_ts_client -- --ignored --exact"]
 fn generate_ts_client() {
     let (_router, routes) = all_api_routes().build();
     axfetchum::generate_to_file(&routes, &config()).unwrap();
 }
 
-// #[test]
-// fn check_ts_client_up_to_date() {
-//     let (_router, routes) = all_api_routes().build();
-//     axfetchum::check(&routes, &config())
-//         .expect("Generated TypeScript client is out of date! Run: cargo test generate_ts_client");
-// }
+#[test]
+fn check_ts_client_up_to_date() {
+    let (_router, routes) = all_api_routes().build();
+    axfetchum::check(&routes, &config())
+        .expect("TypeScript client drift: run cargo test --test generate_ts_client generate_ts_client -- --ignored --exact");
+}

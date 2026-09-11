@@ -11,9 +11,10 @@ import {
   Moon,
   Boxes,
   LayoutDashboard,
-  ScrollText,
   PanelLeftClose,
   PanelLeftOpen,
+  Search,
+  ScrollText,
 } from "@lucide/vue";
 
 import { useAuthStore } from "~/stores/auth";
@@ -32,6 +33,16 @@ function toggleSidebar() {
   localStorage.setItem("llm-bridge:sidebar-collapsed", String(sidebarCollapsed.value));
 }
 
+// 全局搜索（Ctrl+K）
+const searchOpen = ref(false);
+function onGlobalKeydown(e: KeyboardEvent) {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+    e.preventDefault();
+    searchOpen.value = !searchOpen.value;
+  }
+}
+onMounted(() => window.addEventListener("keydown", onGlobalKeydown));
+onBeforeUnmount(() => window.removeEventListener("keydown", onGlobalKeydown));
 // 当前路由（供 header 标题用）
 const routePath = computed(() => route.path);
 
@@ -54,12 +65,6 @@ const adminNavItems = [
   { path: "/users", label: "用户管理", icon: Users },
 ];
 
-const currentLabel = computed(() => {
-  const p = routePath.value;
-  const match = (path: string) =>
-    path === "/dashboard" ? p === "/" || p.startsWith("/dashboard") : p.startsWith(path);
-  return [...memberNavItems, ...adminNavItems].find((n) => match(n.path))?.label || "";
-});
 
 function handleLogout() {
   authStore.logout();
@@ -204,7 +209,15 @@ function handleLogout() {
           <PanelLeftOpen v-if="sidebarCollapsed" class="h-4 w-4" />
           <PanelLeftClose v-else class="h-4 w-4" />
         </button>
-        <span class="font-mono text-sm font-medium text-muted-foreground">{{ currentLabel }}</span>
+        <button
+          @click="searchOpen = true"
+          class="ml-2 flex items-center gap-2 rounded-md border border-border bg-muted/40 px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
+          aria-label="全局搜索"
+        >
+          <Search class="h-3.5 w-3.5" />
+          <span>搜索</span>
+          <kbd class="rounded border border-border bg-background px-1 font-mono text-[10px]">Ctrl K</kbd>
+        </button>
       </header>
       <main class="flex min-h-0 flex-1 flex-col overflow-hidden p-6">
         <!-- Admin route guard -->
@@ -220,6 +233,6 @@ function handleLogout() {
     </div>
   </div>
 
+  <GlobalSearch v-model:open="searchOpen" />
   <Toaster />
-  <ConfirmDialog />
 </template>

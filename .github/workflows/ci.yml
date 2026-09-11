@@ -1,0 +1,53 @@
+name: build-and-contracts
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install repository toolchain
+        run: rustup toolchain install nightly --profile minimal --component rustfmt --component clippy --component rustc-codegen-cranelift
+      - name: Install pnpm
+        run: npm install --global pnpm@11.26.0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.13"
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+      - name: Check Rust formatting
+        run: cargo fmt --all -- --check
+      - name: Check bindings without overwriting committed files
+        run: python3 scripts/check-bindings.py
+      - name: Check backend behavior contracts
+        run: cargo test --all-targets --locked -- --skip export_bindings
+      - name: Check default features
+        run: cargo clippy --all-targets --locked -- -D warnings
+      - name: Build frontend from clean declarations
+        working-directory: frontend
+        run: pnpm run build
+      - name: Check frontend lint
+        working-directory: frontend
+        run: pnpm run lint
+      - name: Check production features
+        run: cargo clippy --all-targets --no-default-features --features embed-frontend,otel,postgresql --locked -- -D warnings
+      - name: Check telemetry runtime export and shutdown
+        run: cargo test --no-default-features --features embed-frontend,otel,postgresql --test otel_contract --locked
+      - name: Install catalog dependencies
+        working-directory: scripts/models-dev-catalog
+        run: bun install --frozen-lockfile
+      - name: Check catalog derivation contracts
+        working-directory: scripts/models-dev-catalog
+        run: bun test

@@ -123,6 +123,31 @@ async function saveLink() {
     emit("error", "提供者侧的模型 ID 必填（如 gpt-4o）");
     return;
   }
+  if (!protocolsForSelectedProvider.value.some((protocol) => protocol.id === linkProtocolId.value)) {
+    emit("error", "请选择当前提供者下的协议");
+    return;
+  }
+  for (const raw of [linkMaxInputStr.value, linkMaxOutputStr.value]) {
+    if (!String(raw).trim()) continue;
+    const count = parseTokens(raw);
+    if (count == null || count < 1 || count > 4294967295) {
+      emit("error", "Token 覆盖须为 1–4294967295 的有效数量，留空才表示继承");
+      return;
+    }
+  }
+  for (const raw of [linkInputPriceStr.value, linkOutputPriceStr.value, linkCachePriceStr.value]) {
+    if (!String(raw).trim()) continue;
+    const price = parseNumOrNull(raw);
+    if (price == null || price < 0) {
+      emit("error", "价格须为有限非负数，留空表示未知价格");
+      return;
+    }
+  }
+  const priority = parseNumOrNull(linkPriorityStr.value);
+  if (priority == null || !Number.isSafeInteger(priority) || priority < 0 || priority > 4294967295) {
+    emit("error", "优先级须为 0–4294967295 的整数");
+    return;
+  }
   const body = {
     providerId: linkProviderId.value,
     providerModelId: linkProviderModelId.value.trim(),
@@ -138,7 +163,7 @@ async function saveLink() {
     outputPricePer1m: parseNumOrNull(linkOutputPriceStr.value),
     cacheReadPricePer1m: parseNumOrNull(linkCachePriceStr.value),
     enabled: linkEnabled.value,
-    priority: parseNumOrNull(linkPriorityStr.value) ?? 100,
+    priority,
   };
   saving.value = true;
   try {
