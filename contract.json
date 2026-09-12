@@ -4,6 +4,11 @@
     "repo": "anomalyco/models.dev",
     "ref": "dev"
   },
+  "scope": {
+    "output": "text",
+    "undeclaredOutput": "legacy-compatible",
+    "nonTextOutput": "excluded with generation warnings"
+  },
   "fields": {
     "models": [
       "modelName",
@@ -30,7 +35,12 @@
       "inputPricePer1m?",
       "outputPricePer1m?",
       "cacheReadPricePer1m?",
-      "enabled"
+      "enabled",
+      "maxInputTokens?",
+      "maxOutputTokens?",
+      "toolCalling?",
+      "vision?",
+      "thinking?"
     ]
   },
   "droppedSourceFields": {
