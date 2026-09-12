@@ -76,6 +76,7 @@ onMounted(() => Promise.all([preview.execute(), local.execute()]));
       :preview="preview.data.value"
       :loading="preview.loading.value"
       :error="preview.error.value"
+      :error-detail="preview.errorDetail.value"
       kind="models"
       :selected-keys="selected ? [selected] : []"
       @select="pick"

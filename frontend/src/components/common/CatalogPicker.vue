@@ -6,6 +6,7 @@ const props = defineProps<{
   preview: CatalogPreview | null;
   loading: boolean;
   error: string;
+  errorDetail?: string;
   kind: "providers" | "models" | "providerModels";
   providerKey?: string;
   modelKey?: string;
@@ -103,7 +104,8 @@ function selectFiltered() {
       <Skeleton v-for="index in 4" :key="index" class="h-16 w-full" />
     </div>
     <div v-else-if="error" role="alert" class="space-y-3 rounded border border-destructive p-4">
-      <p class="text-destructive">目录加载失败：{{ error }}</p>
+      <p class="text-destructive">目录读取或校验失败</p>
+      <p class="text-sm break-all whitespace-pre-wrap">{{ errorDetail || error }}</p>
       <Button variant="outline" @click="emit('retry')">重试</Button>
       <p>本地模型使用和手动配置不依赖目录。</p>
     </div>

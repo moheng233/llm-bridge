@@ -10,6 +10,10 @@
 
 生成器保留模型标称能力，Provider limit/modalities/能力覆盖只进入关联层；base_model_omit 按源规则处理。未映射的源字段不伪装为支持。工作流支持每日和手动触发；外部 schemaVersion 保持 1。
 
+目录限定为文本输出聊天模型；明确非文本输出会在生成时告警排除，不把图像/音频模型的零 Token 限额改成伪造的正值。图像输入、文本输出仍保留视觉能力；未声明输出模态按旧源兼容处理。需要 `${…}` 部署变量的提供者端点不能直接使用，会告警排除其连接，仍可手动配置真实端点。
+
+生成器在写盘前校验与消费端一致的 Token 范围、价格、URL、键及引用约束；工作流先跑回归，校验失败不发布。预览失败返回 HTTP 502，并在接入页和模型创建页显示具体原因，例如 `openai/gpt-image-2.maxOutputTokens: expected integer 1..4294967295, got 0`；重试和手动配置仍可用。修改本地生成器后还需发布新的 Pages 产物，刷新才能替换旧目录。
+
 ## 只读预览
 
 `GET /api/v1/admin/models-import/preview` 要求 Admin Session，返回 sourceRev、generatedAt 及 models/providers/links 三层。每项带 `exists`；连接的 `key` 是不透明选择标识，不应拆解或重造。目录中的本地匹配标记不代表另一个独立提供者实例也已有相同连接；工作页按目标实例的模型、协议与上游 ID 判定已添加状态。

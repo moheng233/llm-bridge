@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -88,7 +88,10 @@ function gitCommitFixture(dir: string): void {
   };
   execFileSync("git", ["init", "-q"], { cwd: dir, env });
   execFileSync("git", ["add", "-A"], { cwd: dir, env });
-  execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-qm", "fixture"], { cwd: dir, env });
+  execFileSync("git", ["-c", "commit.gpgsign=false", "commit", "-qm", "fixture"], {
+    cwd: dir,
+    env,
+  });
 }
 
 beforeAll(() => {
@@ -186,17 +189,22 @@ describe("generate overrides (BUG-020)", () => {
   let outOverride: string;
   function generateOverride() {
     execFileSync("bun", ["src/generate.ts", "--out", outOverride], {
-      cwd: join(import.meta.dir, ".."), env: { ...process.env, SOURCE_DIR: fxDir }, stdio: "pipe",
+      cwd: join(import.meta.dir, ".."),
+      env: { ...process.env, SOURCE_DIR: fxDir },
+      stdio: "pipe",
     });
     return JSON.parse(readFileSync(join(outOverride, "catalog.json"), "utf8")) as {
-      models: Array<Record<string, unknown>>; providers: Array<Record<string, unknown>>;
+      models: Array<Record<string, unknown>>;
+      providers: Array<Record<string, unknown>>;
       links: Array<Record<string, unknown>>;
     };
   }
   beforeAll(() => {
     fxDir = mkdtempSync(join(tmpdir(), "models-dev-ov-"));
     outOverride = mkdtempSync(join(tmpdir(), "models-dev-ov-out-"));
-    write("models/acme/alpha.toml", `
+    write(
+      "models/acme/alpha.toml",
+      `
 name = "Alpha"
 tool_call = true
 reasoning = true
@@ -207,30 +215,48 @@ output = 40_000
 [modalities]
 input = ["text"]
 output = ["text"]
-`, fxDir);
+`,
+      fxDir,
+    );
     write("providers/ov/provider.toml", PROVIDER_OPENAI, fxDir);
-    write("providers/ov/models/alpha.toml", `
+    write(
+      "providers/ov/models/alpha.toml",
+      `
 base_model = "acme/alpha"
 tool_call = false
 [limit]
 output = 8_000
 [modalities]
 input = ["text", "image"]
-`, fxDir);
-    write("providers/ov/models/beta.toml", `
+`,
+      fxDir,
+    );
+    write(
+      "providers/ov/models/beta.toml",
+      `
 base_model = "acme/alpha"
 base_model_omit = ["limit.input", "reasoning", "tool_call"]
-`, fxDir);
-    write("providers/ov/models/gamma.toml", `
+`,
+      fxDir,
+    );
+    write(
+      "providers/ov/models/gamma.toml",
+      `
 base_model = "acme/alpha"
 base_model_omit = ["limit.input"]
 [limit]
 context = 32_000
-`, fxDir);
-    write("providers/ov/models/delta.toml", `
+`,
+      fxDir,
+    );
+    write(
+      "providers/ov/models/delta.toml",
+      `
 base_model = "acme/alpha"
 base_model_omit = ["limit", "tool_call", "reasoning"]
-`, fxDir);
+`,
+      fxDir,
+    );
     gitCommitFixture(fxDir);
   });
   afterAll(() => {
@@ -240,15 +266,40 @@ base_model_omit = ["limit", "tool_call", "reasoning"]
   test("覆盖和 omit 改变关联有效能力但不污染标称能力", () => {
     const c = generateOverride();
     const model = c.models.find((m) => m.modelName === "acme/alpha")!;
-    expect(model).toMatchObject({ maxInputTokens: 80000, maxOutputTokens: 40000, vision: false, thinking: true, toolCalling: true });
+    expect(model).toMatchObject({
+      maxInputTokens: 80000,
+      maxOutputTokens: 40000,
+      vision: false,
+      thinking: true,
+      toolCalling: true,
+    });
     const effective = (id: string) => {
       const link = c.links.find((l) => l.providerModelId === id)!;
-      return Object.fromEntries(["maxInputTokens", "maxOutputTokens", "vision", "thinking", "toolCalling"].map((key) => [key, link[key] ?? model[key]]));
+      return Object.fromEntries(
+        ["maxInputTokens", "maxOutputTokens", "vision", "thinking", "toolCalling"].map((key) => [
+          key,
+          link[key] ?? model[key],
+        ]),
+      );
     };
-    expect(effective("alpha")).toMatchObject({ maxInputTokens: 80000, maxOutputTokens: 8000, vision: true, toolCalling: false });
-    expect(effective("beta")).toMatchObject({ maxInputTokens: 100000, thinking: false, toolCalling: false });
+    expect(effective("alpha")).toMatchObject({
+      maxInputTokens: 80000,
+      maxOutputTokens: 8000,
+      vision: true,
+      toolCalling: false,
+    });
+    expect(effective("beta")).toMatchObject({
+      maxInputTokens: 100000,
+      thinking: false,
+      toolCalling: false,
+    });
     expect(effective("gamma")).toMatchObject({ maxInputTokens: 32000 });
-    expect(effective("delta")).toMatchObject({ maxInputTokens: 4096, maxOutputTokens: 4096, thinking: false, toolCalling: false });
+    expect(effective("delta")).toMatchObject({
+      maxInputTokens: 4096,
+      maxOutputTokens: 4096,
+      thinking: false,
+      toolCalling: false,
+    });
   });
   test("重复生成保留全部上游别名且业务内容不变", () => {
     const first = generateOverride();
@@ -256,7 +307,12 @@ base_model_omit = ["limit", "tool_call", "reasoning"]
     expect(second.models).toEqual(first.models);
     expect(second.providers).toEqual(first.providers);
     expect(second.links).toEqual(first.links);
-    expect(second.links.map((link) => link.providerModelId).sort()).toEqual(["alpha", "beta", "delta", "gamma"]);
+    expect(second.links.map((link) => link.providerModelId).sort()).toEqual([
+      "alpha",
+      "beta",
+      "delta",
+      "gamma",
+    ]);
   });
 
   test("base_model 引用不存在的 model → 报错（坏引用断言）", () => {
@@ -279,4 +335,105 @@ base_model_omit = ["limit", "tool_call", "reasoning"]
       rmSync(badOut, { recursive: true, force: true });
     }
   });
+});
+
+describe("catalog publication contract", () => {
+  function fixture(run: (dir: string, out: string, generate: () => string) => void) {
+    const dir = mkdtempSync(join(tmpdir(), "models-dev-contract-"));
+    const out = join(dir, "out");
+    try {
+      write("models/openai/gpt-5.4.toml", MODEL_GPT, dir);
+      write("providers/openai/provider.toml", PROVIDER_OPENAI, dir);
+      write("providers/openai/models/text.toml", PROVIDER_MODEL_GPT, dir);
+      gitCommitFixture(dir);
+      run(dir, out, () =>
+        execFileSync("bun", ["src/generate.ts", "--out", out], {
+          cwd: join(import.meta.dir, ".."),
+          env: { ...process.env, SOURCE_DIR: dir },
+          encoding: "utf8",
+          stdio: "pipe",
+        }),
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  test("排除非文本输出及其连接，保留图像输入的文本模型", () =>
+    fixture((dir, out, generate) => {
+      write(
+        "models/acme/image.toml",
+        `name = "Image generator"
+[limit]
+context = 0
+output = 0
+[modalities]
+input = ["text", "image"]
+output = ["image"]
+`,
+        dir,
+      );
+      write("providers/openai/models/image.toml", 'base_model = "acme/image"\n', dir);
+      write(
+        "providers/openai/models/audio.toml",
+        `base_model = "openai/gpt-5.4"
+[modalities]
+output = ["audio"]
+[limit]
+output = 0
+`,
+        dir,
+      );
+      generate();
+      const c: { models: Record<string, unknown>[]; links: Record<string, unknown>[] } = JSON.parse(
+        readFileSync(join(out, "catalog.json"), "utf8"),
+      );
+      expect(c.models.map((m) => m.modelName)).toEqual(["openai/gpt-5.4"]);
+      expect(c.models[0]).toMatchObject({
+        vision: true,
+        maxInputTokens: 272000,
+        maxOutputTokens: 128000,
+      });
+      expect(c.links.map((l) => l.providerModelId)).toEqual(["text"]);
+      expect(c.links[0]!.maxOutputTokens).toBe(32000);
+    }));
+
+  test("非法文本标称、连接覆盖和价格阻止发布", () => {
+    const badInputs = [
+      {
+        path: "models/openai/gpt-5.4.toml",
+        body: MODEL_GPT.replace("output = 128_000", "output = 0"),
+      },
+      {
+        path: "providers/openai/models/text.toml",
+        body: PROVIDER_MODEL_GPT.replace("output = 32_000", "output = 0"),
+      },
+      {
+        path: "providers/openai/models/text.toml",
+        body: PROVIDER_MODEL_GPT.replace("input = 1.25", "input = -1"),
+      },
+    ];
+    for (const bad of badInputs)
+      fixture((dir, out, generate) => {
+        write(bad.path, bad.body, dir);
+        expect(generate).toThrow();
+        expect(existsSync(join(out, "catalog.json"))).toBe(false);
+        expect(existsSync(join(out, "contract.json"))).toBe(false);
+      });
+  });
+
+  test("未展开的提供者端点不能进入可用目录", () =>
+    fixture((dir, out, generate) => {
+      write(
+        "providers/templated/provider.toml",
+        PROVIDER_OPENAI.replace("https://api.openai.com/v1", "${EXAMPLE_GATEWAY_URL}/v1"),
+        dir,
+      );
+      write("providers/templated/models/text.toml", PROVIDER_MODEL_GPT, dir);
+      generate();
+      const c: { providers: Record<string, unknown>[]; links: Record<string, unknown>[] } =
+        JSON.parse(readFileSync(join(out, "catalog.json"), "utf8"));
+      expect(c.providers.map((p) => p.providerId)).toEqual(["openai"]);
+      expect(c.links.map((l) => l.providerId)).toEqual(["openai"]);
+    }));
 });

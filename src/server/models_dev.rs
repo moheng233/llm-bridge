@@ -101,9 +101,15 @@ impl Catalog {
             if model.model_name.is_empty() || !models.insert(model.model_name.as_str()) {
                 return Err("empty or duplicate modelName".into());
             }
-            for count in [model.max_input_tokens, model.max_output_tokens] {
+            for (field, count) in [
+                ("maxInputTokens", model.max_input_tokens),
+                ("maxOutputTokens", model.max_output_tokens),
+            ] {
                 if !(1..=u32::MAX as i64).contains(&count) {
-                    return Err(format!("invalid token limit for {}", model.model_name));
+                    return Err(format!(
+                        "{}.{field}: expected integer 1..4294967295, got {count}",
+                        model.model_name
+                    ));
                 }
             }
         }
@@ -147,12 +153,17 @@ impl Catalog {
                     return Err("catalog prices must be finite and nonnegative".into());
                 }
             }
-            for count in [link.max_input_tokens, link.max_output_tokens]
-                .into_iter()
-                .flatten()
-            {
-                if !(1..=u32::MAX as i64).contains(&count) {
-                    return Err("invalid provider token limit".into());
+            for (field, count) in [
+                ("maxInputTokens", link.max_input_tokens),
+                ("maxOutputTokens", link.max_output_tokens),
+            ] {
+                if let Some(count) = count
+                    && !(1..=u32::MAX as i64).contains(&count)
+                {
+                    return Err(format!(
+                        "{} / {} ({}).{field}: expected integer 1..4294967295, got {count}",
+                        link.provider_id, link.provider_model_id, link.model_name
+                    ));
                 }
             }
         }
@@ -238,7 +249,9 @@ impl CatalogService {
         let catalog: Catalog =
             serde_json::from_slice(&bounded_body(response, 16 * 1024 * 1024).await?)
                 .map_err(|error| error.to_string())?;
-        catalog.validate()?;
+        catalog
+            .validate()
+            .map_err(|error| format!("目录数据校验失败：{error}"))?;
         let catalog = Arc::new(catalog);
         *cache = Some(CachedCatalog {
             catalog: catalog.clone(),

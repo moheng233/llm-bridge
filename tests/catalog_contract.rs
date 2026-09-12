@@ -66,3 +66,21 @@ async fn conditional_fetch_reuses_validated_body() {
     assert_eq!(conditional.load(Ordering::SeqCst), 1);
     server.abort();
 }
+
+#[test]
+fn invalid_nominal_and_override_limits_report_the_affected_field() {
+    let mut input = catalog();
+    input.models[0].max_output_tokens = 0;
+    let error = input.validate().unwrap_err();
+    assert!(error.contains("acme/base.maxOutputTokens"), "{error}");
+    assert!(error.contains("0"), "{error}");
+    input.models[0].max_output_tokens = u32::MAX as i64;
+    input.links[0].max_output_tokens = Some(u32::MAX as i64 + 1);
+    let error = input.validate().unwrap_err();
+    assert!(
+        error.contains("alpha") && error.contains("maxOutputTokens"),
+        "{error}"
+    );
+    input.links[0].max_output_tokens = None;
+    input.validate().unwrap();
+}

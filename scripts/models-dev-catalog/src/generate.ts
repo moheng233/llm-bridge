@@ -12,7 +12,15 @@
 //!   <out>/contract.json  — schema 契约（版本 + 字段清单）
 
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, rmSync } from "node:fs";
+import {
+  mkdtempSync,
+  readFileSync,
+  writeFileSync,
+  mkdirSync,
+  readdirSync,
+  statSync,
+  rmSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { parse as parseToml } from "smol-toml";
@@ -184,7 +192,9 @@ function cloneLimit(l: SourceModelLimit | undefined): SourceModelLimit {
 }
 
 function cloneModalities(m: SourceModelModalities | undefined): SourceModelModalities {
-  return m ? { input: m.input ? [...m.input] : undefined, output: m.output ? [...m.output] : undefined } : {};
+  return m
+    ? { input: m.input ? [...m.input] : undefined, output: m.output ? [...m.output] : undefined }
+    : {};
 }
 
 function omitPath(table: TomlTable, dotPath: string): void {
@@ -192,7 +202,8 @@ function omitPath(table: TomlTable, dotPath: string): void {
   let cur: TomlTable = table;
   for (let i = 0; i < parts.length - 1; i++) {
     const next: TomlValue | undefined = cur[parts[i]!];
-    if (typeof next !== "object" || next === null || next instanceof Date || Array.isArray(next)) return;
+    if (typeof next !== "object" || next === null || next instanceof Date || Array.isArray(next))
+      return;
     cur = next;
   }
   delete cur[parts[parts.length - 1]!];
@@ -210,6 +221,81 @@ function capabilities(model: SourceModel) {
 function mapCompat(npm: string | undefined): ProviderCompat {
   if (npm !== undefined && npm.includes("anthropic")) return "anthropicMessages";
   return "openAiChatCompletions";
+}
+
+/** 未声明输出模态保持旧目录兼容；明确非文本输出不属于聊天目录。 */
+function supportsTextOutput(model: SourceModel, context: string): boolean {
+  const output = asStringArray(model.modalities?.output, `${context}.modalities.output`);
+  if (output === undefined || output.includes("text")) return true;
+  console.warn(`warn: ${context}: output=${JSON.stringify(output)} 不含 text，排除该模型及其连接`);
+  return false;
+}
+
+function validateTokenLimit(value: unknown, context: string): void {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > 4294967295) {
+    throw new Error(`${context}: expected integer 1..4294967295, got ${String(value)}`);
+  }
+}
+
+/** 与消费端一致：写入任何发布文件前检查完整目录，不发布部分有效数据。 */
+function validateCatalog(catalog: Catalog): void {
+  if (
+    catalog.schemaVersion !== SCHEMA_VERSION ||
+    !catalog.sourceRev ||
+    !Number.isFinite(Date.parse(catalog.generatedAt))
+  ) {
+    throw new Error("invalid catalog schemaVersion/sourceRev/generatedAt");
+  }
+  const modelNames = new Set<string>();
+  for (const model of catalog.models) {
+    if (!model.modelName || modelNames.has(model.modelName))
+      throw new Error(`empty or duplicate modelName: ${model.modelName}`);
+    modelNames.add(model.modelName);
+    for (const field of ["maxInputTokens", "maxOutputTokens"] as const)
+      validateTokenLimit(model[field], `${model.modelName}.${field}`);
+    for (const field of ["toolCalling", "vision", "thinking", "adaptiveThinking"] as const) {
+      if (typeof model[field] !== "boolean")
+        throw new Error(`${model.modelName}.${field}: expected boolean`);
+    }
+  }
+  const protocols = new Map<string, string>();
+  for (const provider of catalog.providers) {
+    if (!provider.providerId || protocols.has(provider.providerId))
+      throw new Error(`empty or duplicate providerId: ${provider.providerId}`);
+    const url = new URL(provider.baseUrl);
+    if (!["http:", "https:"].includes(url.protocol) || !url.hostname)
+      throw new Error(`${provider.providerId}: baseUrl must use HTTP(S)`);
+    protocols.set(provider.providerId, `${provider.compat}|${provider.baseUrl}`);
+  }
+  const keys = new Set<string>();
+  for (const link of catalog.links) {
+    const context = `${link.providerId}/${link.providerModelId} (${link.modelName})`;
+    if (!modelNames.has(link.modelName) || protocols.get(link.providerId) !== link.protocolKey)
+      throw new Error(`${context}: dangling model/provider/protocol reference`);
+    const key = JSON.stringify([
+      link.providerId,
+      link.protocolKey,
+      link.modelName,
+      link.providerModelId,
+    ]);
+    if (!link.providerModelId || keys.has(key))
+      throw new Error(`${context}: empty or duplicate link identity`);
+    keys.add(key);
+    for (const field of ["maxInputTokens", "maxOutputTokens"] as const) {
+      if (link[field] != null) validateTokenLimit(link[field], `${context}.${field}`);
+    }
+    for (const field of ["inputPricePer1m", "outputPricePer1m", "cacheReadPricePer1m"] as const) {
+      const value = link[field];
+      if (value != null && (!Number.isFinite(value) || value < 0))
+        throw new Error(
+          `${context}.${field}: expected finite nonnegative price, got ${String(value)}`,
+        );
+    }
+    for (const field of ["toolCalling", "vision", "thinking"] as const) {
+      if (link[field] != null && typeof link[field] !== "boolean")
+        throw new Error(`${context}.${field}: expected boolean or null`);
+    }
+  }
 }
 
 // ---------- 主流程 ----------
@@ -234,19 +320,36 @@ function main(): void {
     cleanupDir = mkdtempSync(join(tmpdir(), "models-dev-src-"));
     execFileSync(
       "git",
-      ["clone", "--depth", "1", "--filter=blob:none", "--sparse", "--branch", sourceRef, sourceUrl, cleanupDir],
+      [
+        "clone",
+        "--depth",
+        "1",
+        "--filter=blob:none",
+        "--sparse",
+        "--branch",
+        sourceRef,
+        sourceUrl,
+        cleanupDir,
+      ],
       { stdio: "inherit" },
     );
-    execFileSync("git", ["sparse-checkout", "set", "models", "providers"], { cwd: cleanupDir, stdio: "inherit" });
+    execFileSync("git", ["sparse-checkout", "set", "models", "providers"], {
+      cwd: cleanupDir,
+      stdio: "inherit",
+    });
     sourceDir = cleanupDir;
   }
 
   try {
-    const sourceRev = execFileSync("git", ["rev-parse", "HEAD"], { cwd: sourceDir, encoding: "utf8" }).trim();
+    const sourceRev = execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: sourceDir,
+      encoding: "utf8",
+    }).trim();
 
     // ----- 1. 读取 models/（family 级目录：models/{family}/{model}.toml） -----
     const modelsRoot = join(sourceDir, "models");
     const models = new Map<string, SourceModel>();
+    const excludedModels = new Set<string>();
     for (const rel of listTomlFiles(modelsRoot)) {
       const parsed = parseToml(readFileSync(join(modelsRoot, rel), "utf8"));
       const modelName = rel.replace(/\.toml$/, "");
@@ -257,8 +360,11 @@ function main(): void {
         ...parsed,
         name,
         limit: asTable(parsed.limit, `${ctx}.limit`) as SourceModelLimit | undefined,
-        modalities: asTable(parsed.modalities, `${ctx}.modalities`) as SourceModelModalities | undefined,
+        modalities: asTable(parsed.modalities, `${ctx}.modalities`) as
+          | SourceModelModalities
+          | undefined,
       } as SourceModel);
+      if (!supportsTextOutput(models.get(modelName)!, ctx)) excludedModels.add(modelName);
     }
 
     // ----- 2. 读取 providers/ -----
@@ -272,7 +378,9 @@ function main(): void {
 
       const providerTomlPath = join(providerDir, "provider.toml");
       const pctx = `providers/${providerId}/provider.toml`;
-      const providerParsed = parseToml(readFileSync(providerTomlPath, "utf8")) as unknown as SourceProvider;
+      const providerParsed = parseToml(
+        readFileSync(providerTomlPath, "utf8"),
+      ) as unknown as SourceProvider;
       const displayName = asString(providerParsed.name, `${pctx}.name`);
       if (displayName === undefined) throw new Error(`${pctx}: 缺少必填字段 name`);
       const npm = asString(providerParsed.npm, `${pctx}.npm`);
@@ -281,6 +389,12 @@ function main(): void {
         // 无 api 的 provider 不是 openai-compatible 端点，无法映射到 ProviderProtocol.base_url —— 整体跳过
         // （这些 provider 多为云厂商托管平台，端点由 SDK 内部决定，llm-bridge 无法直连）
         console.warn(`warn: provider ${providerId} 无 api 字段，跳过（含其全部 models）`);
+        continue;
+      }
+      if (/\$\{[^}]+\}/.test(baseUrl)) {
+        console.warn(
+          `warn: ${pctx}.api=${baseUrl} 含未展开的部署变量，无法作为直接端点，跳过提供者及其连接`,
+        );
         continue;
       }
       const compat = mapCompat(npm);
@@ -299,14 +413,18 @@ function main(): void {
       for (const rel of providerModelFiles) {
         const providerModelId = rel.replace(/\.toml$/, "");
         const mctx = `providers/${providerId}/models/${rel}`;
-        const parsed = parseToml(readFileSync(join(providerModelsRoot, rel), "utf8")) as unknown as SourceProviderModel;
+        const parsed = parseToml(
+          readFileSync(join(providerModelsRoot, rel), "utf8"),
+        ) as unknown as SourceProviderModel;
         const baseModelRef = asString(parsed.base_model, `${mctx}.base_model`);
         if (baseModelRef === undefined) {
           console.warn(`warn: ${mctx} 无 base_model，跳过`);
           continue;
         }
         const base = models.get(baseModelRef);
-        if (base === undefined) throw new Error(`${mctx}: base_model 引用了不存在的 model "${baseModelRef}"`);
+        if (base === undefined)
+          throw new Error(`${mctx}: base_model 引用了不存在的 model "${baseModelRef}"`);
+        if (excludedModels.has(baseModelRef)) continue;
         // 合并：base_model 元数据为底，provider 本地字段覆盖；base_model_omit 删除继承字段
         const merged = {
           ...base,
@@ -318,7 +436,9 @@ function main(): void {
             return { input: p?.input ?? b.input, output: p?.output ?? b.output };
           })(),
         } as SourceModel & SourceProviderModel;
-        for (const omit of parsed.base_model_omit ?? []) omitPath(merged as unknown as TomlTable, omit);
+        for (const omit of parsed.base_model_omit ?? [])
+          omitPath(merged as unknown as TomlTable, omit);
+        if (!supportsTextOutput(merged, mctx)) continue;
 
         // nullable 关联列会回退到模型标称值，因此 omit 必须输出最终有效值，而非 null。
         const nominal = capabilities(base);
@@ -343,7 +463,6 @@ function main(): void {
           enabled: status !== "deprecated",
           ...overrides,
         });
-
       }
     }
 
@@ -360,13 +479,7 @@ function main(): void {
       };
     });
 
-    // ----- 5. 引用完整性校验 -----
-    const providerIds = new Set(providers.map((p) => p.providerId));
-    for (const link of links) {
-      if (!providerIds.has(link.providerId)) {
-        throw new Error(`link 引用了不存在的 provider "${link.providerId}"`);
-      }
-    }
+    // ----- 5. 完整契约校验通过后才允许发布 -----
 
     const catalog: Catalog = {
       generatedAt: new Date().toISOString(),
@@ -376,25 +489,61 @@ function main(): void {
       providers,
       links,
     };
+    validateCatalog(catalog);
 
     const contract = {
       schemaVersion: SCHEMA_VERSION,
       source: { repo: "anomalyco/models.dev", ref: sourceRef },
+      scope: {
+        output: "text",
+        undeclaredOutput: "legacy-compatible",
+        nonTextOutput: "excluded with generation warnings",
+      },
       fields: {
         models: [
-          "modelName", "displayName", "description?", "maxInputTokens", "maxOutputTokens",
-          "toolCalling", "vision", "thinking", "adaptiveThinking",
+          "modelName",
+          "displayName",
+          "description?",
+          "maxInputTokens",
+          "maxOutputTokens",
+          "toolCalling",
+          "vision",
+          "thinking",
+          "adaptiveThinking",
         ],
         providers: ["providerId", "displayName", "baseUrl", "compat"],
         links: [
-          "providerId", "protocolKey", "modelName", "providerModelId",
-          "inputPricePer1m?", "outputPricePer1m?", "cacheReadPricePer1m?", "enabled",
-          "maxInputTokens?", "maxOutputTokens?", "toolCalling?", "vision?", "thinking?",
+          "providerId",
+          "protocolKey",
+          "modelName",
+          "providerModelId",
+          "inputPricePer1m?",
+          "outputPricePer1m?",
+          "cacheReadPricePer1m?",
+          "enabled",
+          "maxInputTokens?",
+          "maxOutputTokens?",
+          "toolCalling?",
+          "vision?",
+          "thinking?",
         ],
       },
       droppedSourceFields: {
         reason: "llm-bridge 目标表无对应列，显式丢弃（不静默简化：此处记录缺口）",
-        model: ["family", "release_date", "last_updated", "knowledge", "attachment", "structured_output", "temperature", "open_weights", "license", "links", "weights", "benchmarks"],
+        model: [
+          "family",
+          "release_date",
+          "last_updated",
+          "knowledge",
+          "attachment",
+          "structured_output",
+          "temperature",
+          "open_weights",
+          "license",
+          "links",
+          "weights",
+          "benchmarks",
+        ],
         cost: ["reasoning", "cache_write", "input_audio", "output_audio"],
         providerModel: ["status（映射为 enabled = status != 'deprecated'）"],
       },
