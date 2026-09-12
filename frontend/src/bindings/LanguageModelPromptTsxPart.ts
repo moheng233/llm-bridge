@@ -4,4 +4,4 @@ import type { JsonValue } from "./serde_json/JsonValue";
 /**
  * Prompt TSX 消息部分，对应 LanguageModelPromptTsxPart
  */
-export type LanguageModelPromptTsxPart = { value: JsonValue, };
+export type LanguageModelPromptTsxPart = { value: JsonValue };

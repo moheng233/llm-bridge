@@ -4,10 +4,11 @@ import { type Component } from "vue";
 import { type ModelResponse } from "@bindings/ModelResponse";
 // 全局搜索（Ctrl+K）— 复用项目导航与模型数据，不引入外部搜索服务。
 // 结果：导航页 + 已登录用户可见模型（listAvailableModels），键盘上下选择 + Enter 跳转。
-import { Cpu, Globe, Key, LayoutDashboard, ScrollText, Search, Users } from "@lucide/vue";
+import { Cpu, Search } from "@lucide/vue";
 
 import { useApiCall } from "~/composables/useApiCall";
 import { getApi } from "~/lib/api";
+import { NAV_ITEMS } from "~/lib/navigation";
 import { useAuthStore } from "~/stores/auth";
 
 const open = defineModel<boolean>("open", { default: false });
@@ -23,22 +24,6 @@ interface SearchItem {
   icon: Component;
   to: string;
 }
-
-const NAV_ITEMS: SearchItem[] = [
-  {
-    key: "nav-dashboard",
-    label: "用量仪表盘",
-    hint: "导航",
-    icon: LayoutDashboard,
-    to: "/dashboard",
-  },
-  { key: "nav-models", label: "模型目录", hint: "导航", icon: Cpu, to: "/models" },
-  { key: "nav-tokens", label: "API Token", hint: "导航", icon: Key, to: "/tokens" },
-  { key: "nav-traces", label: "请求追踪", hint: "导航", icon: ScrollText, to: "/traces" },
-  { key: "nav-admin-models", label: "模型管理", hint: "管理", icon: Cpu, to: "/admin/models" },
-  { key: "nav-providers", label: "提供者管理", hint: "管理", icon: Globe, to: "/providers" },
-  { key: "nav-users", label: "用户管理", hint: "管理", icon: Users, to: "/users" },
-];
 
 const models = ref<ModelResponse[]>([]);
 const { execute: fetchModels } = useApiCall(() =>
@@ -56,9 +41,9 @@ const searchInput = ref<HTMLInputElement | null>(null);
 
 const items = computed<SearchItem[]>(() => {
   const q = query.value.trim().toLowerCase();
-  const nav = NAV_ITEMS.filter(
-    (n) => isAdmin.value || !["/admin/models", "/providers", "/users"].includes(n.to),
-  ).filter((n) => !q || n.label.toLowerCase().includes(q) || n.hint.toLowerCase().includes(q));
+  const nav = NAV_ITEMS.filter((n) => isAdmin.value || n.group === "use")
+    .map((n) => ({ ...n, to: n.path, hint: n.group === "admin" ? "管理" : "导航" }))
+    .filter((n) => !q || n.label.toLowerCase().includes(q) || n.hint.includes(q));
   const modelItems: SearchItem[] = models.value
     .filter(
       (m) => !q || m.modelName.toLowerCase().includes(q) || m.displayName.toLowerCase().includes(q),
@@ -126,7 +111,7 @@ function onKeydown(e: KeyboardEvent) {
           placeholder="搜索页面与模型…"
         />
         <kbd
-          class="rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground"
+          class="rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-xs text-muted-foreground"
         >
           Esc
         </kbd>
@@ -151,13 +136,11 @@ function onKeydown(e: KeyboardEvent) {
           <span class="truncate">{{ item.label }}</span>
           <span
             v-if="item.hint !== '导航' && item.hint !== '管理'"
-            class="ml-auto truncate font-mono text-[11px] text-muted-foreground"
+            class="ml-auto truncate font-mono text-xs text-muted-foreground"
           >
             {{ item.hint }}
           </span>
-          <Badge v-else variant="secondary" class="ml-auto shrink-0 text-[10px]">{{
-            item.hint
-          }}</Badge>
+          <Badge v-else variant="secondary" class="ml-auto shrink-0 text-xs">{{ item.hint }}</Badge>
         </button>
       </div>
     </DialogContent>

@@ -16,7 +16,6 @@ import {
 
 import { useApiCall } from "~/composables/useApiCall";
 import { formatTokens, getApi } from "~/lib/api";
-import { statusBadgeFor } from "~/lib/trace-status";
 import {
   ROLE_ASSISTANT,
   ROLE_DEVELOPER,
@@ -29,6 +28,7 @@ import {
   isUsagePart,
   type LanguageModelToolResultPart,
 } from "~/lib/trace-parts";
+import { statusBadgeFor } from "~/lib/trace-status";
 
 const api = getApi();
 const route = useRoute();
@@ -42,7 +42,7 @@ async function load() {
   // 路由为 /traces/[id]，params.id 必为 string（typed-router 在非精确匹配时可能宽化为 never）
   const id = (route.params as { id?: string }).id ?? "";
   const t = await fetchTrace(id);
-  if (t) trace.value = t;
+  trace.value = t ?? null;
 }
 watchEffect(load);
 
@@ -52,10 +52,16 @@ const requestMessages = computed<any[] | null>(() => trace.value?.requestMessage
 const responseParts = computed<any[] | null>(() => trace.value?.responseParts ?? null);
 
 const copiedField = ref<string | null>(null);
+const copyFailure = ref<string | null>(null);
 async function copyText(key: string, text: string) {
-  await navigator.clipboard.writeText(text);
-  copiedField.value = key;
-  setTimeout(() => (copiedField.value = null), 1500);
+  try {
+    if (!navigator.clipboard) throw Error();
+    await navigator.clipboard.writeText(text);
+    copiedField.value = key;
+    copyFailure.value = null;
+  } catch {
+    copyFailure.value = text;
+  }
 }
 
 // ── 状态与角色映射 ──
@@ -75,7 +81,7 @@ function roleMeta(role: unknown): { label: string; icon: any; cls: string } {
         cls: "text-chart-4",
       };
     case ROLE_ASSISTANT:
-      return { label: "Assistant", icon: Bot, cls: "text-cta" };
+      return { label: "Assistant", icon: Bot, cls: "text-primary" };
     default:
       return { label: "User", icon: User, cls: "text-chart-2" };
   }
@@ -89,9 +95,13 @@ const timeline = computed(() => {
   const items: Array<{ label: string; value: string }> = [
     { label: "创建", value: fmtTime(t.createdAt) },
   ];
-  if (t.firstChunkAt != null) items.push({ label: "首 chunk", value: `+${t.ttftMs}ms` });
+  if (t.firstChunkAt != null)
+    items.push({ label: "首块", value: t.ttftMs === null ? "—" : `+${t.ttftMs} ms` });
   if (t.completedAt != null)
-    items.push({ label: "完成", value: `+${((t.latencyMs ?? 0) / 1000).toFixed(1)}s` });
+    items.push({
+      label: "完成",
+      value: t.latencyMs === null ? "—" : `+${(t.latencyMs / 1000).toFixed(1)} s`,
+    });
   return items;
 });
 
@@ -142,59 +152,68 @@ function toggleThinking(i: number) {
   </PageShell>
 
   <PageShell v-else-if="trace">
-    <!-- 头部：返回 + 标题 + 状态（固定不滚动） -->
-    <div class="flex shrink-0 items-center gap-3">
+    <div class="flex shrink-0 flex-wrap items-center gap-3">
       <Button
         variant="ghost"
         size="icon"
-        class="h-8 w-8 cursor-pointer"
+        class="cursor-pointer"
+        aria-label="返回请求记录"
+        title="返回请求记录"
         @click="router.push('/traces')"
       >
         <ArrowLeft class="h-4 w-4" />
       </Button>
-      <div class="flex min-w-0 flex-1 items-center gap-2">
-        <h2 class="truncate font-mono text-lg font-bold">{{ trace.model }}</h2>
-        <Badge variant="outline" :class="['shrink-0 text-[10px]', statusBadge(trace.status).cls]">
+      <div class="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+        <h1 class="break-all">{{ trace.model }}</h1>
+        <Badge variant="outline" :class="['shrink-0 text-xs', statusBadge(trace.status).cls]">
           {{ statusBadge(trace.status).label }}
         </Badge>
-        <Badge v-if="trace.interface === 'ws_rpc'" variant="secondary" class="shrink-0 text-[10px]">
+        <Badge v-if="trace.interface === 'ws_rpc'" variant="secondary" class="shrink-0 text-xs">
           WS RPC
         </Badge>
       </div>
-      <div class="flex shrink-0 items-center gap-1 font-mono text-xs text-muted-foreground">
-        <span>{{ trace.requestId.slice(0, 8) }}…</span>
+      <div class="flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
+        <code class="break-all">{{ trace.requestId }}</code>
         <Button
           variant="ghost"
           size="icon"
-          class="h-6 w-6 cursor-pointer"
+          class="cursor-pointer"
+          aria-label="复制 Request ID"
+          title="复制 Request ID"
           @click="copyText('rid', trace.requestId)"
         >
-          <Check v-if="copiedField === 'rid'" class="h-3 w-3 text-cta" />
+          <Check v-if="copiedField === 'rid'" class="h-3 w-3 text-primary" />
           <Copy v-else class="h-3 w-3" />
         </Button>
       </div>
     </div>
 
-    <!-- 可滚动内容区 -->
-    <div class="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto pr-1">
+    <p class="text-sm text-muted-foreground">
+      {{ fmtTime(trace.createdAt) }} · 估算成本不是上游账单；缺价格或 usage 不代表免费。
+    </p>
+    <div v-if="copyFailure !== null" class="space-y-2 rounded border p-3">
+      <p role="alert" class="text-destructive">复制失败，请手动选择以下文本。</p>
+      <pre class="break-all whitespace-pre-wrap select-all">{{ copyFailure }}</pre>
+    </div>
+    <div class="flex min-w-0 flex-col gap-4">
       <!-- 元数据网格 -->
       <div class="grid shrink-0 grid-cols-2 gap-3 md:grid-cols-4">
         <Card class="gap-1 py-3">
           <CardContent class="px-4">
-            <div class="text-[11px] text-muted-foreground">Token / 用户</div>
+            <div class="text-xs text-muted-foreground">访问令牌</div>
             <div class="font-mono text-sm">{{ trace.tokenPrefix }}</div>
           </CardContent>
         </Card>
         <Card class="gap-1 py-3">
           <CardContent class="px-4">
-            <div class="text-[11px] text-muted-foreground">路由（提供者 / 协议）</div>
-            <div class="truncate font-mono text-sm">{{ trace.providerId }}</div>
-            <div class="font-mono text-[11px] text-muted-foreground">{{ trace.protocol }}</div>
+            <div class="text-xs text-muted-foreground">实际路由（提供者 / 协议）</div>
+            <div class="font-mono text-sm break-all">{{ trace.providerId ?? "—" }}</div>
+            <div class="font-mono text-xs text-muted-foreground">{{ trace.protocol ?? "—" }}</div>
           </CardContent>
         </Card>
         <Card class="gap-1 py-3">
           <CardContent class="px-4">
-            <div class="text-[11px] text-muted-foreground">时间线</div>
+            <div class="text-xs text-muted-foreground">时间线</div>
             <div class="flex flex-wrap items-center gap-x-2 gap-y-0.5">
               <template v-for="(item, i) in timeline" :key="item.label">
                 <span v-if="i > 0" class="text-muted-foreground">→</span>
@@ -207,9 +226,9 @@ function toggleThinking(i: number) {
         </Card>
         <Card class="gap-1 py-3">
           <CardContent class="px-4">
-            <div class="text-[11px] text-muted-foreground">成本 / finish</div>
+            <div class="text-xs text-muted-foreground">估算成本 / 结束原因</div>
             <div class="font-mono text-sm">{{ fmtCost(trace.costUsd) }}</div>
-            <div class="font-mono text-[11px] text-muted-foreground">
+            <div class="font-mono text-xs text-muted-foreground">
               {{ trace.finishReason ?? "—" }}
             </div>
           </CardContent>
@@ -220,7 +239,7 @@ function toggleThinking(i: number) {
       <Alert v-if="trace.errorMessage" class="shrink-0 border-destructive/30 bg-destructive/5">
         <AlertDescription class="flex flex-col gap-1 text-sm">
           <div class="flex items-center gap-2">
-            <Badge variant="destructive" class="text-[10px]">{{ trace.errorType }}</Badge>
+            <Badge variant="destructive" class="text-xs">{{ trace.errorType }}</Badge>
             <span v-if="trace.upstreamStatus" class="font-mono text-xs text-muted-foreground">
               上游 HTTP {{ trace.upstreamStatus }}
             </span>
@@ -232,13 +251,13 @@ function toggleThinking(i: number) {
       <!-- Token 用量 -->
       <Card class="shrink-0 gap-3 py-4">
         <CardHeader class="px-4 pb-0">
-          <CardTitle class="text-sm font-medium">Token 用量</CardTitle>
+          <CardTitle class="text-lg font-semibold">Token 用量</CardTitle>
           <CardDescription class="text-xs">
             预扣 {{ formatTokens(trace.estimatedTokens) }} · 实际结算以五元组为准
           </CardDescription>
         </CardHeader>
         <CardContent class="px-4 pt-1">
-          <div class="grid grid-cols-5 gap-3">
+          <div class="grid grid-cols-2 gap-3 sm:grid-cols-5">
             <div
               v-for="u in [
                 { label: '输入', value: trace.inputTokens },
@@ -250,7 +269,7 @@ function toggleThinking(i: number) {
               :key="u.label"
               class="flex flex-col gap-0.5 rounded-lg border border-border/60 bg-muted/30 px-3 py-2"
             >
-              <span class="text-[11px] text-muted-foreground">{{ u.label }}</span>
+              <span class="text-xs text-muted-foreground">{{ u.label }}</span>
               <span class="font-mono text-sm font-semibold">
                 {{ u.value != null ? formatTokens(u.value) : "—" }}
               </span>
@@ -262,7 +281,7 @@ function toggleThinking(i: number) {
       <!-- 请求消息 -->
       <Card v-if="requestMessages" class="shrink-0 gap-3 py-4">
         <CardHeader class="px-4 pb-0">
-          <CardTitle class="text-sm font-medium">请求消息</CardTitle>
+          <CardTitle class="text-lg font-semibold">请求消息</CardTitle>
           <CardDescription class="text-xs">
             {{ requestMessages?.length ?? 0 }} 条消息（内容快照，Opt-In 采集）
           </CardDescription>
@@ -281,7 +300,7 @@ function toggleThinking(i: number) {
               <span :class="['font-mono text-xs font-semibold', roleMeta(msg.role).cls]">
                 {{ roleMeta(msg.role).label }}
               </span>
-              <span v-if="msg.name" class="font-mono text-[11px] text-muted-foreground">
+              <span v-if="msg.name" class="font-mono text-xs text-muted-foreground">
                 ({{ msg.name }})
               </span>
             </div>
@@ -306,7 +325,7 @@ function toggleThinking(i: number) {
                   <div class="mb-1 flex items-center gap-1.5 text-xs">
                     <Wrench class="h-3 w-3 text-muted-foreground" />
                     <span class="font-mono font-semibold">{{ part.name }}</span>
-                    <code class="text-[10px] text-muted-foreground">{{ part.callId }}</code>
+                    <code class="text-xs break-all text-muted-foreground">{{ part.callId }}</code>
                   </div>
                   <pre class="overflow-x-auto font-mono text-xs text-muted-foreground">{{
                     JSON.stringify(part.input, null, 2)
@@ -318,7 +337,7 @@ function toggleThinking(i: number) {
                 >
                   <div class="mb-1 flex items-center gap-1.5 text-xs text-muted-foreground">
                     <FileJson class="h-3 w-3" /> 工具结果
-                    <code class="text-[10px]">{{ part.callId }}</code>
+                    <code class="text-xs break-all">{{ part.callId }}</code>
                   </div>
                   <pre class="text-xs whitespace-pre-wrap">{{ toolResultText(part) }}</pre>
                 </div>
@@ -334,7 +353,7 @@ function toggleThinking(i: number) {
       <!-- 响应 parts -->
       <Card v-if="responseParts" class="shrink-0 gap-3 py-4">
         <CardHeader class="px-4 pb-0">
-          <CardTitle class="text-sm font-medium">响应内容</CardTitle>
+          <CardTitle class="text-lg font-semibold">响应内容</CardTitle>
           <CardDescription class="text-xs">
             聚合后的 LMResponsePart 序列（{{ responseParts?.length ?? 0 }} 个 part）
           </CardDescription>
@@ -354,7 +373,8 @@ function toggleThinking(i: number) {
               class="rounded-lg border border-chart-4/30 bg-chart-4/5 px-4 py-3"
             >
               <button
-                class="flex cursor-pointer items-center gap-1.5 text-xs font-medium text-chart-4"
+                class="flex min-h-9 cursor-pointer items-center gap-1.5 text-xs font-medium text-chart-4"
+                :aria-expanded="expandedThinking.has(i)"
                 @click="toggleThinking(i)"
               >
                 <Brain class="h-3.5 w-3.5" /> Thinking
@@ -375,14 +395,16 @@ function toggleThinking(i: number) {
               <div class="mb-2 flex items-center gap-2">
                 <Wrench class="h-3.5 w-3.5 text-chart-2" />
                 <span class="font-mono text-xs font-semibold">{{ part.name }}</span>
-                <code class="text-[10px] text-muted-foreground">{{ part.callId }}</code>
+                <code class="text-xs break-all text-muted-foreground">{{ part.callId }}</code>
                 <Button
                   variant="ghost"
                   size="icon"
-                  class="ml-auto h-6 w-6 cursor-pointer"
+                  class="ml-auto cursor-pointer"
+                  aria-label="复制工具调用参数"
+                  title="复制工具调用参数"
                   @click="copyText(`tc-${i}`, JSON.stringify(part.input, null, 2))"
                 >
-                  <Check v-if="copiedField === `tc-${i}`" class="h-3 w-3 text-cta" />
+                  <Check v-if="copiedField === `tc-${i}`" class="h-3 w-3 text-primary" />
                   <Copy v-else class="h-3 w-3" />
                 </Button>
               </div>
@@ -397,16 +419,16 @@ function toggleThinking(i: number) {
             >
               <div class="mb-1 flex items-center gap-1.5 text-xs text-muted-foreground">
                 <FileJson class="h-3.5 w-3.5" /> 工具结果
-                <code class="text-[10px]">{{ part.callId }}</code>
+                <code class="text-xs break-all">{{ part.callId }}</code>
               </div>
               <pre class="text-xs whitespace-pre-wrap">{{ toolResultText(part) }}</pre>
             </div>
             <!-- Usage -->
             <div
               v-else-if="isUsagePart(part)"
-              class="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg border border-cta/30 bg-cta/5 px-4 py-2.5"
+              class="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg border border-primary/30 bg-primary/5 px-4 py-2.5"
             >
-              <span class="flex items-center gap-1.5 text-xs font-medium text-cta">
+              <span class="flex items-center gap-1.5 text-xs font-medium text-primary">
                 <Info class="h-3.5 w-3.5" /> Usage
               </span>
               <span v-if="part.inputTokens != null" class="font-mono text-xs">
@@ -434,11 +456,16 @@ function toggleThinking(i: number) {
       </Card>
 
       <!-- 无快照提示 -->
-      <Alert v-if="!requestMessages && !responseParts" class="shrink-0 border-border bg-muted/20">
-        <AlertDescription class="text-xs text-muted-foreground">
-          此请求未采集内容快照。设置
+      <Alert
+        v-if="requestMessages === null || responseParts === null"
+        class="shrink-0 border-border bg-muted/20"
+      >
+        <AlertDescription class="text-sm text-muted-foreground">
+          {{ requestMessages === null ? "请求内容" : ""
+          }}{{ requestMessages === null && responseParts === null ? "与" : ""
+          }}{{ responseParts === null ? "响应内容" : "" }}未采集或已不保留。 启用
           <code class="font-mono">LLM_BRIDGE_OBS_CAPTURE_CONTENT=true</code>
-          后新请求将记录消息与响应内容（PII 敏感，Opt-In）。
+          只会影响之后的新请求，不恢复历史内容；采集包含敏感信息，需明确选择。
         </AlertDescription>
       </Alert>
     </div>

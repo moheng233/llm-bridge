@@ -3,8 +3,13 @@
 /**
  * `/auth/me` 响应 — 统一对外角色 DTO（TS 绑定 camelCase：userId/name/role/email/avatarUrl）。
  */
-export type MeResponse = { userId: number, name: string, 
-/**
- * `"admin"` 或 `"member"`
- */
-role: string, email: string | null, avatarUrl: string | null, };
+export type MeResponse = {
+  userId: number;
+  name: string;
+  /**
+   * `"admin"` 或 `"member"`
+   */
+  role: string;
+  email: string | null;
+  avatarUrl: string | null;
+};

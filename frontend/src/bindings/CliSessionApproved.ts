@@ -3,12 +3,14 @@
 /**
  * 轮询响应：approved（带一次性明文 Token）。
  */
-export type CliSessionApproved = { status: string, 
-/**
- * 明文 Token（仅此一次，响应后即转 consumed）。
- */
-token: string, 
-/**
- * Token 前缀（UI / 审计识别）。
- */
-tokenPrefix: string, };
+export type CliSessionApproved = {
+  status: string;
+  /**
+   * 明文 Token（仅此一次，响应后即转 consumed）。
+   */
+  token: string;
+  /**
+   * Token 前缀（UI / 审计识别）。
+   */
+  tokenPrefix: string;
+};

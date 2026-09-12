@@ -4,4 +4,6 @@ import type { JsonValue } from "./serde_json/JsonValue";
 /**
  * 协议无关的结构化输出配置。
  */
-export type LanguageModelResponseFormat = { "type": "json_object" } | { "type": "json_schema", json_schema: JsonValue, };
+export type LanguageModelResponseFormat =
+  | { type: "json_object" }
+  | { type: "json_schema"; json_schema: JsonValue };

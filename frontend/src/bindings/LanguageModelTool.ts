@@ -5,8 +5,11 @@ import type { JsonValue } from "./serde_json/JsonValue";
  * 协议无关的工具（函数）定义，对应 OpenAI `tools[].function` 的核心字段。
  * 各上游适配器负责将其序列化为各自的协议格式。
  */
-export type LanguageModelTool = { name: string, description?: string, 
-/**
- * JSON Schema 参数定义，对应 OpenAI 的 `parameters` / Anthropic 的 `input_schema`
- */
-inputSchema: JsonValue, };
+export type LanguageModelTool = {
+  name: string;
+  description?: string;
+  /**
+   * JSON Schema 参数定义，对应 OpenAI 的 `parameters` / Anthropic 的 `input_schema`
+   */
+  inputSchema: JsonValue;
+};

@@ -3,13 +3,13 @@
 import type { AddModelProviderRequest } from "./AddModelProviderRequest";
 import type { AddModelRequest } from "./AddModelRequest";
 import type { AdminModelResponse } from "./AdminModelResponse";
-import type { CatalogImportReport } from "./CatalogImportReport";
 import type { CatalogPreview } from "./CatalogPreview";
-import type { CatalogSelection } from "./CatalogSelection";
 import type { CliPollResponse } from "./CliPollResponse";
 import type { CliSessionPoll } from "./CliSessionPoll";
 import type { ConfirmCliSessionRequest } from "./ConfirmCliSessionRequest";
 import type { CreateCliSessionResponse } from "./CreateCliSessionResponse";
+import type { CreateModelConnectionsRequest } from "./CreateModelConnectionsRequest";
+import type { CreateModelConnectionsResponse } from "./CreateModelConnectionsResponse";
 import type { CreateProviderRequest } from "./CreateProviderRequest";
 import type { CreateTokenRequest } from "./CreateTokenRequest";
 import type { CreateTokenResponse } from "./CreateTokenResponse";
@@ -38,7 +38,11 @@ import type { UsageSummaryResponse } from "./UsageSummaryResponse";
 import type { UserResponse } from "./UserResponse";
 
 export class ApiError extends Error {
-  constructor(message: string, public status: number, public body?: unknown) {
+  constructor(
+    message: string,
+    public status: number,
+    public body?: unknown,
+  ) {
     super(message);
     this.name = "ApiError";
   }
@@ -61,10 +65,7 @@ type RequestOptions = {
 
 function createRequest(options: ApiClientOptions) {
   const { baseUrl, credentials = "include" } = options;
-  async function request<T>(
-    path: string,
-    opts: RequestOptions = {},
-  ): Promise<T> {
+  async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
     const { method = "GET", body, query, auth } = opts;
     // Resolve fetch at call time (not at client creation) so OTel
     // instrumentation patches are picked up even when the client
@@ -125,51 +126,99 @@ export function createApiClient(options: ApiClientOptions) {
 
   return {
     admin: {
+      createModelConnections: (body: CreateModelConnectionsRequest) =>
+        request<CreateModelConnectionsResponse>("/api/v1/admin/model-connections", {
+          method: "POST",
+          auth: true,
+          body,
+        }),
       listProviders: () => request<ProviderResponse[]>("/api/v1/admin/providers", { auth: true }),
       createProvider: (body: CreateProviderRequest) =>
         request<ProviderResponse>("/api/v1/admin/providers", { method: "POST", auth: true, body }),
       getProvider: (id: string) =>
         request<ProviderResponse>(`/api/v1/admin/providers/${id}`, { auth: true }),
       updateProvider: (id: string, body: UpdateProviderRequest) =>
-        request<ProviderResponse>(`/api/v1/admin/providers/${id}`, { method: "PUT", auth: true, body }),
+        request<ProviderResponse>(`/api/v1/admin/providers/${id}`, {
+          method: "PUT",
+          auth: true,
+          body,
+        }),
       deleteProvider: (id: string) =>
         request<void>(`/api/v1/admin/providers/${id}`, { method: "DELETE", auth: true }),
       listProviderProtocols: (id: string) =>
         request<ProtocolView[]>(`/api/v1/admin/providers/${id}/protocols`, { auth: true }),
       replaceProviderProtocols: (id: string, body: ProtocolInput[]) =>
-        request<ProtocolView[]>(`/api/v1/admin/providers/${id}/protocols`, { method: "PUT", auth: true, body }),
+        request<ProtocolView[]>(`/api/v1/admin/providers/${id}/protocols`, {
+          method: "PUT",
+          auth: true,
+          body,
+        }),
       getProviderQuota: (id: string) =>
         request<ProviderQuotaResponse>(`/api/v1/admin/providers/${id}/quota`, { auth: true }),
       listProviderModels: (id: string) =>
         request<ProviderModelResponse[]>(`/api/v1/admin/providers/${id}/models`, { auth: true }),
       addProviderModel: (id: string, body: AddModelRequest) =>
-        request<ProviderModelResponse>(`/api/v1/admin/providers/${id}/models`, { method: "POST", auth: true, body }),
+        request<ProviderModelResponse>(`/api/v1/admin/providers/${id}/models`, {
+          method: "POST",
+          auth: true,
+          body,
+        }),
       updateProviderModel: (id: string, model_id: string, body: UpdateModelRequest) =>
-        request<ProviderModelResponse>(`/api/v1/admin/providers/${id}/models/${model_id}`, { method: "PUT", auth: true, body }),
+        request<ProviderModelResponse>(`/api/v1/admin/providers/${id}/models/${model_id}`, {
+          method: "PUT",
+          auth: true,
+          body,
+        }),
       deleteProviderModel: (id: string, model_id: string) =>
-        request<void>(`/api/v1/admin/providers/${id}/models/${model_id}`, { method: "DELETE", auth: true }),
+        request<void>(`/api/v1/admin/providers/${id}/models/${model_id}`, {
+          method: "DELETE",
+          auth: true,
+        }),
       listAdminModels: () => request<AdminModelResponse[]>("/api/v1/admin/models", { auth: true }),
       createAdminModel: (body: ModelInput) =>
         request<AdminModelResponse>("/api/v1/admin/models", { method: "POST", auth: true, body }),
       getAdminModel: (id: string) =>
         request<AdminModelResponse>(`/api/v1/admin/models/${id}`, { auth: true }),
       updateAdminModel: (id: string, body: ModelInput) =>
-        request<AdminModelResponse>(`/api/v1/admin/models/${id}`, { method: "PUT", auth: true, body }),
+        request<AdminModelResponse>(`/api/v1/admin/models/${id}`, {
+          method: "PUT",
+          auth: true,
+          body,
+        }),
       deleteAdminModel: (id: string) =>
         request<void>(`/api/v1/admin/models/${id}`, { method: "DELETE", auth: true }),
       listModelProviders: (id: string) =>
         request<ModelLinkView[]>(`/api/v1/admin/models/${id}/providers`, { auth: true }),
       addModelProvider: (id: string, body: AddModelProviderRequest) =>
-        request<ModelLinkView>(`/api/v1/admin/models/${id}/providers`, { method: "POST", auth: true, body }),
+        request<ModelLinkView>(`/api/v1/admin/models/${id}/providers`, {
+          method: "POST",
+          auth: true,
+          body,
+        }),
       updateModelProvider: (id: string, link_id: string, body: UpdateModelProviderRequest) =>
-        request<ModelLinkView>(`/api/v1/admin/models/${id}/providers/${link_id}`, { method: "PUT", auth: true, body }),
+        request<ModelLinkView>(`/api/v1/admin/models/${id}/providers/${link_id}`, {
+          method: "PUT",
+          auth: true,
+          body,
+        }),
       testModelProviderReply: (id: string, link_id: string, body: TestModelProviderRequest) =>
-        request<TestModelProviderResponse>(`/api/v1/admin/models/${id}/providers/${link_id}/test`, { method: "POST", auth: true, body }),
+        request<TestModelProviderResponse>(`/api/v1/admin/models/${id}/providers/${link_id}/test`, {
+          method: "POST",
+          auth: true,
+          body,
+        }),
       deleteModelProvider: (id: string, link_id: string) =>
-        request<void>(`/api/v1/admin/models/${id}/providers/${link_id}`, { method: "DELETE", auth: true }),
+        request<void>(`/api/v1/admin/models/${id}/providers/${link_id}`, {
+          method: "DELETE",
+          auth: true,
+        }),
       listUsers: () => request<UserResponse[]>("/api/v1/admin/users", { auth: true }),
       updateUserRole: (id: string, body: UpdateRoleRequest) =>
-        request<UserResponse>(`/api/v1/admin/users/${id}/role`, { method: "PATCH", auth: true, body }),
+        request<UserResponse>(`/api/v1/admin/users/${id}/role`, {
+          method: "PATCH",
+          auth: true,
+          body,
+        }),
     },
 
     auth: {
@@ -180,23 +229,27 @@ export function createApiClient(options: ApiClientOptions) {
     },
 
     cliAuth: {
-      createSession: () => request<CreateCliSessionResponse>("/api/v1/auth/cli-sessions", { method: "POST" }),
+      createSession: () =>
+        request<CreateCliSessionResponse>("/api/v1/auth/cli-sessions", { method: "POST" }),
       pollSession: (sessionId: string) =>
         request<CliPollResponse>(`/api/v1/auth/cli-sessions/${sessionId}`),
       confirmSession: (body: ConfirmCliSessionRequest) =>
-        request<CliSessionPoll>("/api/v1/auth/cli-sessions/confirm", { method: "POST", auth: true, body }),
+        request<CliSessionPoll>("/api/v1/auth/cli-sessions/confirm", {
+          method: "POST",
+          auth: true,
+          body,
+        }),
       verifyPage: () => `${options.baseUrl}/auth/cli-verify`,
     },
 
     models: {
       listAllModels: () => request<ModelResponse[]>("/api/v1/models", { auth: true }),
-      listAvailableModels: () => request<ModelResponse[]>("/api/v1/models/available", { auth: true }),
+      listAvailableModels: () =>
+        request<ModelResponse[]>("/api/v1/models/available", { auth: true }),
     },
 
     modelsImport: {
       preview: () => request<CatalogPreview>("/api/v1/admin/models-import/preview", { auth: true }),
-      import: (body: CatalogSelection) =>
-        request<CatalogImportReport>("/api/v1/admin/models-import", { method: "POST", auth: true, body }),
     },
 
     openai: {

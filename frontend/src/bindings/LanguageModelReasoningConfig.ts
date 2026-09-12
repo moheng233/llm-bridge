@@ -3,4 +3,4 @@
 /**
  * 协议无关的推理配置：effort（OpenAI）与 max_tokens（Anthropic budget_tokens）至少其一非空。
  */
-export type LanguageModelReasoningConfig = { effort?: string, maxTokens?: number, };
+export type LanguageModelReasoningConfig = { effort?: string; maxTokens?: number };

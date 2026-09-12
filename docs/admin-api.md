@@ -82,7 +82,7 @@ Token 准入预留计入当期额度，真实上游 usage 到达后对原预留�
 
 协议枚举是 `openAiChatCompletions`、`openAiResponses`、`anthropicMessages`。`compatSettings` 是序列化 JSON 字符串，其字段见 `CompatibilitySettings`：`pathSuffix`、`customHeaders`、`customParams`。
 
-**更新语义：** `PUT providers/{id}` 是全量更新，不是 PATCH；缺省/空 `apiKeys`、`protocols` 可能清空对应配置。读取响应使用 Key 展示信息，不应把展示用掩码当作新 Key 回写。自动目录导入使用独立的保留 Key 更新路径，不复用这个全量更新接口。
+**保存语义：** 创建和更新均将提供者字段与全部协议放在同一事务。重复创建同一 `providerId` 返回 409 `provider_id_exists`，不覆盖原配置。`PUT providers/{id}` 是全量更新，不是 PATCH；缺省/空 `apiKeys`、`protocols` 可能清空对应配置。更新协议需保留已有 id；已有同 label 的 Key 留空表示保留原值，不应把展示掩码当作新 Key 回写。目录只提供预填，不另行更新本地配置。
 
 ## 规范模型与关联
 
@@ -95,6 +95,8 @@ Token 准入预留计入当期额度，真实上游 usage 到达后对原预留�
 | POST | `/api/v1/admin/models/{id}/providers/{link_id}/test` | `TestModelProviderRequest` / `TestModelProviderResponse` |
 
 规范 `modelName` 是全局唯一名称，例如 `openai/gpt-4o`；`providerModelId` 是上游接受的原始模型 ID，例如 `gpt-4o`。关联层的可空能力字段覆盖模型标称能力，`null` 表示使用标称值。定价单位为 USD / 1M tokens；缺价与零价不同。
+
+创建已有同名模型返回 409 `model_name_exists`；修改已创建模型的 `modelName` 返回 400 `model_name_is_immutable`，其他标称字段仍可显式更新。
 
 ## 用户管理
 
@@ -115,13 +117,15 @@ Token 准入预留计入当期额度，真实上游 usage 到达后对原预留�
 
 成员只能查看自己的统计、列表和详情；管理员可查看全局。快照仅在 `LLM_BRIDGE_OBS_CAPTURE_CONTENT=true` 时采集，可能包含请求中的敏感内容。trace 按保留策略删除，日聚合不保存消息内容并长期保留。
 
-## 手动目录导入
+## 只读目录与批量连接
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| GET | `/api/v1/admin/models-import/preview` | 条件拉取源目录、校验三层引用、与本地数据库比较 |
-| POST | `/api/v1/admin/models-import` | 提交模型、提供者、关联选择，事务内导入 |
+| GET | `/api/v1/admin/models-import/preview` | 条件读取源目录、校验三层引用、返回修订和本地匹配信息；不写入 |
+| POST | `/api/v1/admin/model-connections` | `CreateModelConnectionsRequest` → `CreateModelConnectionsResponse`；本批新模型与连接原子保存 |
 
-请求形态为 `{"models":["规范模型名"],"providers":["提供者业务ID"],"links":["预览返回的关联Key"]}`。关联 Key 必须使用预览返回值，不自行拼接。
+批量请求为 `{items:[{model:{kind:"existing",id},link:AddModelProviderRequest}]}`；新模型引用使用 `{kind:"new",model:ModelInput}`。响应 items 与输入顺序一致，每项包含 `modelId`、`link`、`modelCreated`、`linkCreated`。同批同名新模型必须一致；数据库已存在同名模型时返回 409，要求显式复用。已存在的连接按 `(modelId, protocolId, providerModelId)` 原样复用，不覆盖已有字段。
 
-导入按业务键更新，不创建重复行；已有 API Key 保留，新 Provider 的 Key 为空，管理员需手动补全。提供者能力覆盖只写关联层，不污染模型标称能力。源 URL 可配置，导入只由管理员手动触发；正常聊天只查询本地数据库，不依赖远端目录在线。
+空批返回 400 `empty_selection`；字段校验错误携带 `itemIndex` 和 `field`。协议必须属于目标提供者，existing 模型必须存在。任何数据库异常整批回滚，不残留新模型或部分连接；此前单独保存的提供者保留。网络中断不证明回滚，应重载本地记录后显式确认重试。
+
+目录仅首次预填，保存后独立维护。旧目录写入接口已移除；客户端选择目录项后通过本地 CRUD / 批量接口保存，不能通过重新读取目录覆盖本地数据。详见 [目录与接入](catalog-import.md)。

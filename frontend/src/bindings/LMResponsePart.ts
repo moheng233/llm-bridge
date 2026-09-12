@@ -10,4 +10,10 @@ import type { LanguageModelUsagePart } from "./LanguageModelUsagePart";
  * 语言模型响应部分的联合类型，对应 LMResponsePart:
  * LanguageModelTextPart | LanguageModelToolCallPart | LanguageModelDataPart | LanguageModelThinkingPart | LanguageModelToolResultPart | LanguageModelUsagePart
  */
-export type LMResponsePart = LanguageModelTextPart | LanguageModelToolCallPart | LanguageModelDataPart | LanguageModelThinkingPart | LanguageModelToolResultPart | LanguageModelUsagePart;
+export type LMResponsePart =
+  | LanguageModelTextPart
+  | LanguageModelToolCallPart
+  | LanguageModelDataPart
+  | LanguageModelThinkingPart
+  | LanguageModelToolResultPart
+  | LanguageModelUsagePart;

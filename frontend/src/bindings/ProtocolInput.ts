@@ -7,16 +7,20 @@ import type { ProviderCompatibility } from "./ProviderCompatibility";
  * `id` 为 `None` 时表示新建；为 `Some(id)` 时表示更新该 row id 的协议。
  * `protocol` / `base_url` 必填；其余字段有合理默认。
  */
-export type ProtocolInput = { 
-/**
- * 仅在更新时使用；新建时传 null/省略。
- */
-id?: number | null, protocol: ProviderCompatibility, 
-/**
- * 协议端点 URL（必填）
- */
-baseUrl: string, 
-/**
- * 自定义 HTTP 兼容设置（JSON 字符串，对应 CompatibilitySettings）
- */
-compatSettings?: string | null, enabled: boolean, priority: number, };
+export type ProtocolInput = {
+  /**
+   * 仅在更新时使用；新建时传 null/省略。
+   */
+  id?: number | null;
+  protocol: ProviderCompatibility;
+  /**
+   * 协议端点 URL（必填）
+   */
+  baseUrl: string;
+  /**
+   * 自定义 HTTP 兼容设置（JSON 字符串，对应 CompatibilitySettings）
+   */
+  compatSettings?: string | null;
+  enabled: boolean;
+  priority: number;
+};

@@ -1,0 +1,238 @@
+<script setup lang="ts">
+import { type ModelLinkView } from "@bindings/ModelLinkView";
+import { type ProviderResponse } from "@bindings/ProviderResponse";
+
+import ModelLinkEditForm from "./ModelLinkEditForm.vue";
+import { getApi, formatPrice } from "~/lib/api";
+import { connectionToDraft, connectionDraftToInput } from "~/lib/connection-draft";
+import { protocolLabel } from "~/lib/constants";
+import { useAuthStore } from "~/stores/auth";
+import { useConnectionTestsStore } from "~/stores/connection-tests";
+const props = defineProps<{
+  entries: { modelId: number; modelName: string; link: ModelLinkView; linkCreated?: boolean }[];
+  providers: ProviderResponse[];
+  readOnly?: boolean;
+}>();
+const emit = defineEmits<{ changed: [] }>();
+const tests = useConnectionTestsStore();
+const auth = useAuthStore();
+const confirm = useConfirm();
+const query = ref("");
+const editing = ref<(typeof props.entries)[number] | null>(null);
+const editOpen = ref(false);
+const busy = ref<number | null>(null);
+useUnsavedChanges(
+  computed(() => false),
+  computed(() => busy.value !== null),
+);
+const error = ref("");
+const page = ref(1);
+const filtered = computed(() =>
+  props.entries.filter((entry) =>
+    `${entry.modelName} ${entry.link.providerModelId} ${entry.link.providerDisplayName}`
+      .toLowerCase()
+      .includes(query.value.toLowerCase()),
+  ),
+);
+const visible = computed(() => filtered.value.slice((page.value - 1) * 50, page.value * 50));
+watch(query, () => {
+  page.value = 1;
+});
+const mutation = useApiCall(async (entry: (typeof props.entries)[number], remove: boolean) =>
+  remove
+    ? getApi().admin.deleteModelProvider(String(entry.modelId), String(entry.link.id))
+    : getApi().admin.updateModelProvider(String(entry.modelId), String(entry.link.id), {
+        ...connectionDraftToInput(connectionToDraft(entry.link)),
+        enabled: !entry.link.enabled,
+      }),
+);
+async function mutate(entry: (typeof props.entries)[number], remove: boolean) {
+  if (busy.value !== null) return;
+  if (
+    remove &&
+    !(await confirm({
+      title: "移除此连接？",
+      description: `${entry.modelName} → ${entry.link.providerModelId} 将解除关联；共享模型定义和其他连接不会删除。`,
+      destructive: true,
+    }))
+  )
+    return;
+  busy.value = entry.link.id;
+  error.value = "";
+  await mutation.execute(entry, remove);
+  if (!mutation.error.value) {
+    tests.invalidateLink(entry.link.id);
+    emit("changed");
+  } else error.value = mutation.error.value;
+  busy.value = null;
+}
+async function test(entry: (typeof props.entries)[number]) {
+  if (
+    busy.value !== null ||
+    !(await confirm({
+      title: "测试上游？",
+      description:
+        "将发送一次真实请求，可能产生上游费用。这只验证当前连接，不验证个人 Token、配额或客户端配置。",
+      confirmText: "发送测试请求",
+    }))
+  )
+    return;
+  busy.value = entry.link.id;
+  const userId = auth.user?.userId;
+  const call = useApiCall(() =>
+    getApi().admin.testModelProviderReply(String(entry.modelId), String(entry.link.id), {}),
+  );
+  const response = await call.execute();
+  if (userId === auth.user?.userId)
+    tests.set({
+      modelId: entry.modelId,
+      providerId: entry.link.providerId,
+      linkId: entry.link.id,
+      testedAt: Date.now(),
+      status: response?.success ? "success" : "failure",
+      latencyMs: response?.latencyMs ?? null,
+      message: response?.error ?? (response ? null : call.errorDetail.value || call.error.value),
+    });
+  busy.value = null;
+}
+function saved() {
+  editing.value = null;
+  emit("changed");
+}
+</script>
+<template>
+  <section class="min-w-0 space-y-4">
+    <Input v-model="query" placeholder="搜索网关 / 上游模型 ID" aria-label="搜索模型连接" />
+    <p class="text-xs text-muted-foreground">
+      最近手动检测是本浏览会话的结果，非实时健康状态；刷新后回到未检测。价格单位：USD / 百万 Token。
+    </p>
+    <p v-if="error" role="alert" class="text-destructive">{{ error }}</p>
+    <div v-if="!filtered.length" class="rounded border p-6">
+      <p>{{ query ? "筛选无结果" : "尚未关联模型连接" }}</p>
+      <Button v-if="query" variant="outline" @click="query = ''">清除筛选</Button>
+    </div>
+    <article
+      v-for="entry in visible"
+      :key="entry.link.id"
+      class="min-w-0 space-y-3 rounded-lg border bg-card p-4"
+    >
+      <div class="flex flex-wrap items-start justify-between gap-3">
+        <div class="min-w-0 space-y-1">
+          <RouterLink
+            :to="`/admin/models/${entry.modelId}`"
+            class="font-mono break-all text-primary underline"
+            >{{ entry.modelName }}</RouterLink
+          >
+          <p class="break-all">
+            →
+            <RouterLink
+              :to="`/providers/${entry.link.providerId}`"
+              class="text-primary underline"
+              >{{ entry.link.providerDisplayName }}</RouterLink
+            >
+            / <code>{{ entry.link.providerModelId }}</code>
+          </p>
+          <p class="text-xs break-all text-muted-foreground">
+            {{ protocolLabel(entry.link.protocol) }} · {{ entry.link.baseUrl }}
+          </p>
+        </div>
+        <span class="text-sm"
+          >{{ entry.linkCreated === undefined ? "" : entry.linkCreated ? "已创建 · " : "已存在 · "
+          }}{{ entry.link.enabled ? "✓ 连接已启用" : "− 连接已停用" }}</span
+        >
+      </div>
+      <p
+        v-if="providers.find((p) => p.id === entry.link.providerId)?.enabled === false"
+        class="text-warning"
+      >
+        提供者已停用，此连接不会参与路由。
+      </p>
+      <p
+        v-if="
+          providers
+            .find((p) => p.id === entry.link.providerId)
+            ?.protocols.find((p) => p.id === entry.link.protocolId)?.enabled === false
+        "
+        class="text-warning"
+      >
+        协议已停用，此连接不会参与路由。
+      </p>
+      <div class="grid gap-2 text-sm sm:grid-cols-3">
+        <p>
+          输入 / 输出价格：{{ formatPrice(entry.link.inputPricePer1m) }} /
+          {{ formatPrice(entry.link.outputPricePer1m) }}
+        </p>
+        <p>
+          输入 / 输出 Token 覆盖：{{ entry.link.maxInputTokens ?? "继承" }} /
+          {{ entry.link.maxOutputTokens ?? "继承" }}
+        </p>
+        <p>连接优先级：{{ entry.link.priority }}（越小越优先）</p>
+      </div>
+      <p class="text-xs text-muted-foreground">
+        工具
+        {{ entry.link.toolCalling === null ? "继承" : entry.link.toolCalling ? "支持" : "不支持" }}
+        · 视觉 {{ entry.link.vision === null ? "继承" : entry.link.vision ? "支持" : "不支持" }} ·
+        推理 {{ entry.link.thinking === null ? "继承" : entry.link.thinking ? "支持" : "不支持" }} ·
+        自适应推理
+        {{
+          entry.link.adaptiveThinking === null
+            ? "继承"
+            : entry.link.adaptiveThinking
+              ? "支持"
+              : "不支持"
+        }}
+      </p>
+      <p
+        v-if="tests.get(entry.link.id)"
+        :class="tests.get(entry.link.id)?.status === 'success' ? 'text-success' : 'text-failure'"
+      >
+        {{
+          tests.get(entry.link.id)?.status === "success"
+            ? "✓ 最近手动检测成功"
+            : "× 最近手动检测失败"
+        }}
+        · {{ new Date(tests.get(entry.link.id)!.testedAt).toLocaleString() }} ·
+        {{ tests.get(entry.link.id)?.latencyMs ?? "—" }} ms
+        <span class="break-all">{{ tests.get(entry.link.id)?.message }}</span>
+      </p>
+      <p v-else class="text-muted-foreground">最近手动检测：未检测</p>
+      <div class="flex flex-wrap gap-2">
+        <Button variant="outline" :disabled="busy !== null" @click="test(entry)">{{
+          busy === entry.link.id ? "处理中…" : "测试上游"
+        }}</Button
+        ><template v-if="!readOnly"
+          ><Button
+            variant="outline"
+            :disabled="busy !== null"
+            @click="
+              editing = entry;
+              editOpen = true;
+            "
+            >编辑连接</Button
+          ><Button variant="outline" :disabled="busy !== null" @click="mutate(entry, false)">{{
+            entry.link.enabled ? "停用" : "启用"
+          }}</Button
+          ><Button variant="ghost" :disabled="busy !== null" @click="mutate(entry, true)"
+            >移除连接</Button
+          ></template
+        >
+      </div>
+    </article>
+    <div v-if="filtered.length > 50" class="flex justify-between">
+      <Button variant="outline" :disabled="page === 1" @click="page--">上一页</Button
+      ><span>{{ page }} / {{ Math.ceil(filtered.length / 50) }}</span
+      ><Button variant="outline" :disabled="page * 50 >= filtered.length" @click="page++"
+        >下一页</Button
+      >
+    </div>
+    <ModelLinkEditForm
+      v-if="editing"
+      v-model:open="editOpen"
+      :model-id="editing.modelId"
+      :model-name="editing.modelName"
+      :editing-link="editing.link"
+      :providers="providers"
+      @saved="saved"
+    />
+  </section>
+</template>

@@ -3,12 +3,20 @@
 /**
  * 创建 Token 的响应体（包含明文 Token，仅返回一次）。
  */
-export type CreateTokenResponse = { id: number, name: string, 
-/**
- * 明文 Token（仅创建时返回一次）
- */
-token: string, 
-/**
- * Token 前缀（UI 识别用）
- */
-tokenPrefix: string, allowedModels: Array<string>, requestQuota: number, tokenQuota: number, quotaPeriod: string, createdAt: number, };
+export type CreateTokenResponse = {
+  id: number;
+  name: string;
+  /**
+   * 明文 Token（仅创建时返回一次）
+   */
+  token: string;
+  /**
+   * Token 前缀（UI 识别用）
+   */
+  tokenPrefix: string;
+  allowedModels: Array<string>;
+  requestQuota: number;
+  tokenQuota: number;
+  quotaPeriod: string;
+  createdAt: number;
+};

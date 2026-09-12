@@ -3,16 +3,17 @@
 /**
  * 按金额/额度的模型。
  */
-export type CreditQuota = { 
-/**
- * 剩余额度数值。
- */
-amount: number, 
-/**
- * 单位（如 `"USD"`、`"credits"`、`"CNY"`）。
- */
-currency: string, 
-/**
- * 适配器特定字段。
- */
-extra?: Record<string, any>, };
+export type CreditQuota = {
+  /**
+   * 剩余额度数值。
+   */
+  amount: number;
+  /**
+   * 单位（如 `"USD"`、`"credits"`、`"CNY"`）。
+   */
+  currency: string;
+  /**
+   * 适配器特定字段。
+   */
+  extra?: Record<string, any>;
+};

@@ -5,4 +5,6 @@ import type { RequestQuota } from "./RequestQuota";
 /**
  * 归一化的额度信息。
  */
-export type QuotaInfo = { "kind": "requests", "data": RequestQuota } | { "kind": "credits", "data": CreditQuota };
+export type QuotaInfo =
+  | { kind: "requests"; data: RequestQuota }
+  | { kind: "credits"; data: CreditQuota };

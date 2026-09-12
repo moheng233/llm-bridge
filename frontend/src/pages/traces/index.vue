@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { type TokenListItem } from "@bindings/TokenListItem";
 import { type TraceSummary } from "@bindings/TraceSummary";
-import { Button } from "~/components/ui/button";
 import {
   ChevronLeft,
   ChevronRight,
@@ -11,9 +10,13 @@ import {
   Search,
 } from "@lucide/vue";
 
+import { Button } from "~/components/ui/button";
 import { useApiCall } from "~/composables/useApiCall";
 import { getApi, formatTokens } from "~/lib/api";
 import { statusBadgeFor } from "~/lib/trace-status";
+import { useAuthStore } from "~/stores/auth";
+const auth = useAuthStore();
+const localModels = useApiCall(() => getApi().models.listAllModels());
 
 const api = getApi();
 
@@ -21,7 +24,7 @@ const api = getApi();
 
 const search = ref("");
 const statusFilter = ref("all");
-const modelFilter = ref("all");
+const modelFilter = ref("");
 const tokenFilter = ref("all"); // "all" | TokenListItem.id 字符串
 // 日期筛选（本地时区 yyyy-mm-dd → 当日 00:00 / 24:00 unix 秒；空串 = 不限）
 const dateFrom = ref("");
@@ -58,16 +61,15 @@ const {
   const to = dayRange(dateTo.value, true);
   return api.usage.listTraces({
     status: statusFilter.value === "all" ? null : statusFilter.value,
-    model: modelFilter.value === "all" ? null : modelFilter.value,
+    model: modelFilter.value.trim() || null,
     tokenId: tokenFilter.value === "all" ? null : Number(tokenFilter.value),
     interface: null,
     search: search.value.trim() || null,
-    // dateFrom/dateTo 为新增筛选；绑定生成前以 any 兜底透传（Main 生成后即类型对齐）
-    ...(from != null ? { dateFrom: from } : {}),
-    ...(to != null ? { dateTo: to } : {}),
+    dateFrom: from,
+    dateTo: to,
     page: page.value,
     pageSize: PAGE_SIZE,
-  } as any);
+  });
 });
 
 async function load() {
@@ -86,19 +88,23 @@ async function load() {
 
 // 筛选变更立即重置到第一页并重新查询；搜索输入防抖 300ms
 watch([statusFilter, modelFilter, tokenFilter, dateFrom, dateTo], () => {
-  page.value = 0;
-  load();
+  if (page.value !== 0) page.value = 0;
+  else load();
 });
 let searchTimer: ReturnType<typeof setTimeout> | undefined;
 watch(search, () => {
   clearTimeout(searchTimer);
   searchTimer = setTimeout(() => {
-    page.value = 0;
-    load();
+    if (page.value !== 0) page.value = 0;
+    else load();
   }, 300);
 });
 watch(page, load);
-watchEffect(load);
+onMounted(() => {
+  load();
+  localModels.execute();
+});
+onBeforeUnmount(() => clearTimeout(searchTimer));
 
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / PAGE_SIZE)));
 const pageFrom = computed(() => (total.value === 0 ? 0 : page.value * PAGE_SIZE + 1));
@@ -109,8 +115,28 @@ function goPage(p: number) {
   page.value = p;
 }
 
-// 模型下拉选项：从当前已加载 trace 动态收集（避免额外表查询）
-const modelOptions = computed(() => [...new Set(traces.value.map((t) => t.model))].sort());
+const modelOptions = computed(() =>
+  (localModels.data.value ?? []).map((model) => model.modelName).sort(),
+);
+const filtered = computed(
+  () =>
+    !!(
+      search.value ||
+      modelFilter.value ||
+      dateFrom.value ||
+      dateTo.value ||
+      statusFilter.value !== "all" ||
+      tokenFilter.value !== "all"
+    ),
+);
+function clearFilters() {
+  search.value = "";
+  modelFilter.value = "";
+  dateFrom.value = "";
+  dateTo.value = "";
+  statusFilter.value = "all";
+  tokenFilter.value = "all";
+}
 
 // Token 下拉选项：当前用户全部 Token（本人数据，后端再按 token_id 过滤）
 const tokens = ref<TokenListItem[]>([]);
@@ -144,8 +170,8 @@ function formatCost(usd: number | null): string {
 <template>
   <PageShell>
     <SectionHeader
-      title="请求追踪"
-      description="每次请求的完整生命周期记录"
+      title="请求记录"
+      :description="auth.isAdmin ? '全站请求与用量 · 管理员视角' : '我的请求与用量 · 仅当前用户'"
       :icon="ScrollText"
       :count="total"
       count-label="条"
@@ -155,10 +181,15 @@ function formatCost(usd: number | null): string {
     <div class="flex flex-wrap items-center gap-2">
       <div class="relative min-w-52 flex-1">
         <Search class="absolute top-1/2 left-2.5 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-        <Input v-model="search" placeholder="搜索 request ID / 模型 / 错误信息…" class="pl-8" />
+        <Input
+          v-model="search"
+          aria-label="搜索请求"
+          placeholder="搜索 Request ID / 模型 / 错误信息…"
+          class="pl-8"
+        />
       </div>
       <Select v-model="statusFilter">
-        <SelectTrigger class="w-28">
+        <SelectTrigger class="w-28" aria-label="筛选请求状态">
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
@@ -167,21 +198,22 @@ function formatCost(usd: number | null): string {
           </SelectItem>
         </SelectContent>
       </Select>
-      <Select v-model="modelFilter">
-        <SelectTrigger class="w-52">
-          <SelectValue placeholder="全部模型" />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="all">全部模型</SelectItem>
-          <SelectItem v-for="m in modelOptions" :key="m" :value="m">{{ m }}</SelectItem>
-        </SelectContent>
-      </Select>
+      <Input
+        v-model="modelFilter"
+        list="trace-model-options"
+        class="w-full sm:w-60"
+        placeholder="精确模型 ID（含已删除模型）"
+        aria-label="筛选精确模型 ID"
+      />
+      <datalist id="trace-model-options">
+        <option v-for="model in modelOptions" :key="model" :value="model" />
+      </datalist>
       <Select v-model="tokenFilter">
-        <SelectTrigger class="w-40">
-          <SelectValue placeholder="全部 Token" />
+        <SelectTrigger class="w-48" aria-label="筛选我的令牌">
+          <SelectValue placeholder="不限令牌（候选为我的令牌）" />
         </SelectTrigger>
         <SelectContent>
-          <SelectItem value="all">全部 Token</SelectItem>
+          <SelectItem value="all">不限令牌</SelectItem>
           <SelectItem v-for="t in tokens" :key="t.id" :value="String(t.id)">
             {{ t.name }}（{{ t.tokenPrefix }}）
           </SelectItem>
@@ -191,6 +223,9 @@ function formatCost(usd: number | null): string {
       <span class="text-xs text-muted-foreground">至</span>
       <Input v-model="dateTo" type="date" class="w-36" aria-label="结束日期" />
     </div>
+    <p class="text-sm text-muted-foreground">
+      模型可直接输入历史 ID；下拉令牌候选仅包含我的令牌。成本为基于记录的估算，不是上游账单。
+    </p>
 
     <ErrorState v-if="error" :error="error" inline @retry="load" />
 
@@ -200,21 +235,26 @@ function formatCost(usd: number | null): string {
     </div>
 
     <!-- 空态 -->
-    <EmptyState v-else-if="traces.length === 0" :icon="ScrollText" title="没有匹配的请求记录" />
+    <div v-else-if="!error && traces.length === 0" class="space-y-3 rounded border bg-card p-6">
+      <p>{{ filtered ? "筛选无结果" : "尚无请求记录" }}</p>
+      <Button v-if="filtered" variant="outline" @click="clearFilters">清除筛选</Button
+      ><Button v-else as-child variant="outline"
+        ><RouterLink to="/models">查看模型接入方式</RouterLink></Button
+      >
+    </div>
 
-    <!-- 追踪表格：撑满剩余高度，表格内部滚动，表头吸顶 -->
-    <Card v-else class="min-h-0 flex-1 gap-0 overflow-hidden py-0">
+    <Card v-else-if="!error" class="gap-0 overflow-hidden py-0">
       <Table>
         <TableHeader>
           <TableRow class="hover:bg-transparent">
             <TableHead class="sticky top-0 z-10 w-20 bg-card">状态</TableHead>
             <TableHead class="sticky top-0 z-10 w-40 bg-card">时间</TableHead>
             <TableHead class="sticky top-0 z-10 bg-card">模型</TableHead>
-            <TableHead class="sticky top-0 z-10 w-28 bg-card">Token</TableHead>
-            <TableHead class="sticky top-0 z-10 w-24 bg-card text-right">Tokens</TableHead>
+            <TableHead class="sticky top-0 z-10 w-28 bg-card">访问令牌</TableHead>
+            <TableHead class="sticky top-0 z-10 w-24 bg-card text-right">Token 用量</TableHead>
             <TableHead class="sticky top-0 z-10 w-20 bg-card text-right">TTFT</TableHead>
             <TableHead class="sticky top-0 z-10 w-20 bg-card text-right">延迟</TableHead>
-            <TableHead class="sticky top-0 z-10 w-20 bg-card text-right">成本</TableHead>
+            <TableHead class="sticky top-0 z-10 w-20 bg-card text-right">估算成本</TableHead>
             <TableHead class="sticky top-0 z-10 w-8 bg-card" />
           </TableRow>
         </TableHeader>
@@ -226,7 +266,7 @@ function formatCost(usd: number | null): string {
             @click="$router.push(`/traces/${t.requestId}`)"
           >
             <TableCell>
-              <Badge variant="outline" :class="['text-[10px]', statusBadge(t).cls]">
+              <Badge variant="outline" :class="['text-xs', statusBadge(t).cls]">
                 {{ statusBadge(t).label }}
               </Badge>
             </TableCell>
@@ -235,23 +275,27 @@ function formatCost(usd: number | null): string {
             </TableCell>
             <TableCell>
               <div class="flex items-center gap-1.5">
-                <span class="truncate font-mono text-xs">{{ t.model }}</span>
+                <RouterLink
+                  :to="`/traces/${t.requestId}`"
+                  class="font-mono text-sm break-all text-primary underline"
+                  >{{ t.model }}</RouterLink
+                >
                 <Badge
                   v-if="t.interface === 'ws_rpc'"
                   variant="secondary"
-                  class="shrink-0 px-1 text-[9px]"
+                  class="shrink-0 px-1 text-xs"
                   >WS</Badge
                 >
                 <TooltipProvider v-if="t.hasSnapshot">
                   <Tooltip>
                     <TooltipTrigger as-child>
-                      <span class="h-1.5 w-1.5 shrink-0 rounded-full bg-chart-4" />
+                      <span class="text-xs text-muted-foreground">有快照</span>
                     </TooltipTrigger>
                     <TooltipContent class="text-xs">含内容快照</TooltipContent>
                   </Tooltip>
                 </TooltipProvider>
               </div>
-              <div v-if="t.errorMessage" class="mt-0.5 truncate text-[11px] text-destructive">
+              <div v-if="t.errorMessage" class="mt-0.5 truncate text-xs text-destructive">
                 {{ t.errorMessage }}
               </div>
             </TableCell>
@@ -279,15 +323,16 @@ function formatCost(usd: number | null): string {
     </Card>
     <!-- 分页 -->
     <div
-      v-if="!loading && total > 0"
-      class="flex shrink-0 items-center justify-between gap-2 text-xs text-muted-foreground"
+      v-if="!loading && !error && total > 0"
+      class="flex shrink-0 flex-wrap items-center justify-between gap-2 text-sm text-muted-foreground"
     >
       <span>第 {{ pageFrom }}–{{ pageTo }} 条，共 {{ total }} 条</span>
       <div class="flex items-center gap-1">
         <Button
           variant="outline"
           size="icon"
-          class="h-7 w-7 cursor-pointer"
+          class="cursor-pointer"
+          title="第一页"
           :disabled="page === 0"
           aria-label="第一页"
           @click="goPage(0)"
@@ -297,7 +342,8 @@ function formatCost(usd: number | null): string {
         <Button
           variant="outline"
           size="icon"
-          class="h-7 w-7 cursor-pointer"
+          class="cursor-pointer"
+          title="上一页"
           :disabled="page === 0"
           aria-label="上一页"
           @click="goPage(page - 1)"
@@ -308,7 +354,8 @@ function formatCost(usd: number | null): string {
         <Button
           variant="outline"
           size="icon"
-          class="h-7 w-7 cursor-pointer"
+          class="cursor-pointer"
+          title="下一页"
           :disabled="page >= totalPages - 1"
           aria-label="下一页"
           @click="goPage(page + 1)"
@@ -318,7 +365,8 @@ function formatCost(usd: number | null): string {
         <Button
           variant="outline"
           size="icon"
-          class="h-7 w-7 cursor-pointer"
+          class="cursor-pointer"
+          title="最后一页"
           :disabled="page >= totalPages - 1"
           aria-label="最后一页"
           @click="goPage(totalPages - 1)"

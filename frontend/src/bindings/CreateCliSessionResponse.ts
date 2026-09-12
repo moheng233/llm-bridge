@@ -3,24 +3,25 @@
 /**
  * 创建 CLI 会话响应（给插件）。
  */
-export type CreateCliSessionResponse = { 
-/**
- * 会话 ID（轮询凭据）。
- */
-sessionId: string, 
-/**
- * 6 位用户码（用户在浏览器输入）。
- */
-userCode: string, 
-/**
- * 验证页完整 URL。
- */
-verificationUrl: string, 
-/**
- * 会话有效期（秒）。
- */
-expiresIn: number, 
-/**
- * 建议轮询间隔（秒）。
- */
-interval: number, };
+export type CreateCliSessionResponse = {
+  /**
+   * 会话 ID（轮询凭据）。
+   */
+  sessionId: string;
+  /**
+   * 6 位用户码（用户在浏览器输入）。
+   */
+  userCode: string;
+  /**
+   * 验证页完整 URL。
+   */
+  verificationUrl: string;
+  /**
+   * 会话有效期（秒）。
+   */
+  expiresIn: number;
+  /**
+   * 建议轮询间隔（秒）。
+   */
+  interval: number;
+};

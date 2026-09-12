@@ -4,4 +4,9 @@ import type { DailyPoint } from "./DailyPoint";
 /**
  * 汇总响应的上一周期部分（同构但不含 errorRate/avgTtftMs/modelRanking）。
  */
-export type PrevSummary = { totalRequests: number, totalTokens: number, totalCostUsd: number, daily: Array<DailyPoint>, };
+export type PrevSummary = {
+  totalRequests: number;
+  totalTokens: number;
+  totalCostUsd: number;
+  daily: Array<DailyPoint>;
+};

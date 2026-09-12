@@ -4,8 +4,11 @@ import type { JsonValue } from "./serde_json/JsonValue";
 /**
  * 工具调用部分，对应 LanguageModelToolCallPart
  */
-export type LanguageModelToolCallPart = { callId: string, name: string, 
-/**
- * 工具调用输入，对应 TypeScript 的 `object`
- */
-input: JsonValue, };
+export type LanguageModelToolCallPart = {
+  callId: string;
+  name: string;
+  /**
+   * 工具调用输入，对应 TypeScript 的 `object`
+   */
+  input: JsonValue;
+};

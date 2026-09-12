@@ -3,7 +3,6 @@
 //! 路由解析、模型查询、提供者管理全部通过 SQLite 的
 //! `models` + `model_providers` + `provider_protocols` + `providers` 四张表完成。
 
-pub mod catalog;
 pub mod compat;
 pub mod error;
 pub mod router;
@@ -298,35 +297,10 @@ impl Store {
         provider_id: u64,
         inputs: Vec<ProtocolInput>,
     ) -> Result<Vec<crate::db::models::ProviderProtocol>, String> {
-        let existing = self.list_provider_protocols(provider_id).await?;
-        let existing_ids: std::collections::HashSet<u64> = existing.iter().map(|p| p.id).collect();
-        let kept_ids: std::collections::HashSet<u64> = inputs.iter().filter_map(|i| i.id).collect();
-
-        // 删除：存在但未保留
-        for p in &existing {
-            if !kept_ids.contains(&p.id) {
-                self.delete_provider_protocol(p.id).await?;
-            }
-        }
-
-        // 新建或更新
-        let mut result = Vec::new();
-        for input in inputs {
-            if let Some(id) = input.id {
-                if existing_ids.contains(&id) {
-                    let updated = self.update_provider_protocol(id, input).await?;
-                    result.push(updated);
-                } else {
-                    // id 不存在 → 视为新建（防御性，避免前端误传 id）
-                    let created = self.create_provider_protocol(provider_id, input).await?;
-                    result.push(created);
-                }
-            } else {
-                let created = self.create_provider_protocol(provider_id, input).await?;
-                result.push(created);
-            }
-        }
-        result.sort_by_key(|p| p.priority);
+        let mut db = self.db.clone();
+        let mut tx = db.transaction().await.map_err(|e| e.to_string())?;
+        let result = replace_provider_protocols_in(&mut tx, provider_id, inputs).await?;
+        tx.commit().await.map_err(|e| e.to_string())?;
         Ok(result)
     }
     // ── LLMModel management（标称能力 CRUD）──
@@ -809,6 +783,79 @@ impl Store {
     // ── Admin helpers ──
 }
 
+/// 在调用方事务内保存协议差异；保留 row id，删除使用中的协议必须先迁移连接。
+pub(crate) async fn replace_provider_protocols_in(
+    tx: &mut toasty::Transaction<'_>,
+    provider_id: u64,
+    inputs: Vec<ProtocolInput>,
+) -> Result<Vec<db::models::ProviderProtocol>, String> {
+    use db::models::{ModelProvider, ProviderProtocol};
+    let existing =
+        ProviderProtocol::filter(ProviderProtocol::fields().provider_id().eq(provider_id))
+            .exec(&mut *tx)
+            .await
+            .map_err(|e| e.to_string())?;
+    let existing_ids: std::collections::HashSet<u64> = existing.iter().map(|p| p.id).collect();
+    let mut kept_ids = std::collections::HashSet::new();
+    for input in &inputs {
+        if let Some(id) = input.id
+            && (!existing_ids.contains(&id) || !kept_ids.insert(id))
+        {
+            return Err("invalid_or_duplicate_protocol_id".into());
+        }
+    }
+    for protocol in &existing {
+        if !kept_ids.contains(&protocol.id) {
+            let links =
+                ModelProvider::filter(ModelProvider::fields().protocol_id().eq(protocol.id))
+                    .exec(&mut *tx)
+                    .await
+                    .map_err(|e| e.to_string())?;
+            if !links.is_empty() {
+                return Err(format!("protocol_in_use:{}:{}", protocol.id, links.len()));
+            }
+            ProviderProtocol::filter(ProviderProtocol::fields().id().eq(protocol.id))
+                .delete()
+                .exec(&mut *tx)
+                .await
+                .map_err(|e| e.to_string())?;
+        }
+    }
+    let mut result = Vec::with_capacity(inputs.len());
+    for input in inputs {
+        let protocol = if let Some(id) = input.id {
+            ProviderProtocol::filter(ProviderProtocol::fields().id().eq(id))
+                .update()
+                .protocol(input.protocol)
+                .base_url(input.base_url)
+                .compat_settings(input.compat_settings)
+                .enabled(input.enabled)
+                .priority(input.priority)
+                .exec(&mut *tx)
+                .await
+                .map_err(|e| e.to_string())?;
+            ProviderProtocol::get_by_id(&mut *tx, &id)
+                .await
+                .map_err(|e| e.to_string())?
+        } else {
+            toasty::create!(ProviderProtocol {
+                provider_id,
+                protocol: input.protocol,
+                base_url: input.base_url,
+                compat_settings: input.compat_settings,
+                enabled: input.enabled,
+                priority: input.priority,
+            })
+            .exec(&mut *tx)
+            .await
+            .map_err(|e| e.to_string())?
+        };
+        result.push(protocol);
+    }
+    result.sort_by_key(|p| p.priority);
+    Ok(result)
+}
+
 /// API Key 展示（隐藏敏感信息）。
 #[derive(Debug, Clone, serde::Serialize, ts_rs::TS)]
 #[ts(export)]
@@ -852,7 +899,7 @@ fn default_protocol_priority() -> i64 {
 /// LLMModel 输入（用于创建/更新标称能力）。
 ///
 /// `model_name` 为唯一标识（如 `"openai/gpt-4o"`）；其余字段为标称能力+描述+状态。
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, ts_rs::TS)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, ts_rs::TS)]
 #[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub struct ModelInput {

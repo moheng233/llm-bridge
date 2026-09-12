@@ -4,4 +4,13 @@ import type { EndpointEditToolName } from "./EndpointEditToolName";
 /**
  * BYOK 模型能力，对应 BYOKModelCapabilities
  */
-export type LMModelInfo = { name: string, maxInputTokens: number, maxOutputTokens: number, toolCalling: boolean, vision: boolean, thinking: boolean | null, adaptiveThinking: boolean | null, editTools?: EndpointEditToolName, };
+export type LMModelInfo = {
+  name: string;
+  maxInputTokens: number;
+  maxOutputTokens: number;
+  toolCalling: boolean;
+  vision: boolean;
+  thinking: boolean | null;
+  adaptiveThinking: boolean | null;
+  editTools?: EndpointEditToolName;
+};

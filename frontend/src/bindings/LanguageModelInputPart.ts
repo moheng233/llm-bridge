@@ -9,4 +9,9 @@ import type { LanguageModelToolResultPart } from "./LanguageModelToolResultPart"
  * 消息输入部分的联合类型，对应 LanguageModelInputPart:
  * LanguageModelTextPart | LanguageModelToolResultPart | LanguageModelToolCallPart | LanguageModelDataPart | LanguageModelThinkingPart
  */
-export type LanguageModelInputPart = LanguageModelTextPart | LanguageModelToolResultPart | LanguageModelToolCallPart | LanguageModelDataPart | LanguageModelThinkingPart;
+export type LanguageModelInputPart =
+  | LanguageModelTextPart
+  | LanguageModelToolResultPart
+  | LanguageModelToolCallPart
+  | LanguageModelDataPart
+  | LanguageModelThinkingPart;

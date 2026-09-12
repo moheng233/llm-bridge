@@ -1,238 +1,185 @@
 <script setup lang="ts">
 import { Toaster } from "vue-sonner";
 
-import {
-  Cpu,
-  Key,
-  Globe,
-  Users,
-  LogOut,
-  Sun,
-  Moon,
-  Boxes,
-  LayoutDashboard,
-  PanelLeftClose,
-  PanelLeftOpen,
-  Search,
-  ScrollText,
-} from "@lucide/vue";
+import { LogOut, Sun, Moon, PanelLeftClose, PanelLeftOpen, Search, Menu } from "@lucide/vue";
 
+import ConfirmDialog from "~/components/common/ConfirmDialog.vue";
+import { NAV_ITEMS } from "~/lib/navigation";
 import { useAuthStore } from "~/stores/auth";
 import { useThemeStore } from "~/stores/theme";
-
 const route = useRoute();
-const authStore = useAuthStore();
-const themeStore = useThemeStore();
-const { user, loading, isAdmin, isAuthenticated } = storeToRefs(authStore);
-
-// Sidebar collapse state
-const sidebarCollapsed = ref(localStorage.getItem("llm-bridge:sidebar-collapsed") === "true");
-
-function toggleSidebar() {
-  sidebarCollapsed.value = !sidebarCollapsed.value;
-  localStorage.setItem("llm-bridge:sidebar-collapsed", String(sidebarCollapsed.value));
-}
-
-// 全局搜索（Ctrl+K）
+const auth = useAuthStore();
+const theme = useThemeStore();
+const confirm = useConfirm();
+const collapsed = ref(localStorage.getItem("llm-bridge:sidebar-collapsed") === "true");
+const mobileOpen = ref(false);
 const searchOpen = ref(false);
-function onGlobalKeydown(e: KeyboardEvent) {
-  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
-    e.preventDefault();
+const items = computed(() => NAV_ITEMS.filter((item) => item.group === "use" || auth.isAdmin));
+const activePath = computed(() =>
+  route.path === "/admin/setup"
+    ? route.query.modelId
+      ? "/admin/models"
+      : "/providers"
+    : route.path,
+);
+const current = computed(() =>
+  items.value.find(
+    (item) => activePath.value === item.path || activePath.value.startsWith(`${item.path}/`),
+  ),
+);
+function toggleSidebar() {
+  collapsed.value = !collapsed.value;
+  localStorage.setItem("llm-bridge:sidebar-collapsed", String(collapsed.value));
+}
+function onKey(event: KeyboardEvent) {
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k" && auth.isAuthenticated) {
+    event.preventDefault();
     searchOpen.value = !searchOpen.value;
   }
 }
-onMounted(() => window.addEventListener("keydown", onGlobalKeydown));
-onBeforeUnmount(() => window.removeEventListener("keydown", onGlobalKeydown));
-// 当前路由（供 header 标题用）
-const routePath = computed(() => route.path);
-
-const isAdminRoute = computed(() => {
-  return route.meta.requiresAdmin === true;
-});
-
-const accessDenied = computed(() => isAdminRoute.value && !isAdmin.value);
-
-const memberNavItems = [
-  { path: "/dashboard", label: "用量仪表盘", icon: LayoutDashboard },
-  { path: "/models", label: "模型目录", icon: Cpu },
-  { path: "/tokens", label: "API Token", icon: Key },
-  { path: "/traces", label: "请求追踪", icon: ScrollText },
-];
-
-const adminNavItems = [
-  { path: "/admin/models", label: "模型管理", icon: Boxes },
-  { path: "/providers", label: "提供者管理", icon: Globe },
-  { path: "/users", label: "用户管理", icon: Users },
-];
-
-
-function handleLogout() {
-  authStore.logout();
+async function logout() {
+  if (
+    await confirm({
+      title: "退出登录？",
+      description: "当前未保存的输入将丢失。",
+      confirmText: "退出",
+    })
+  )
+    await auth.logout();
 }
+watch(
+  () => route.fullPath,
+  () => {
+    mobileOpen.value = false;
+  },
+);
+onMounted(() => window.addEventListener("keydown", onKey));
+onBeforeUnmount(() => window.removeEventListener("keydown", onKey));
 </script>
-
 <template>
-  <!-- Loading state -->
-  <div v-if="loading" class="flex h-screen items-center justify-center bg-background">
-    <div class="h-8 w-8 animate-spin rounded-full border-2 border-[#22C55E] border-t-transparent" />
+  <div v-if="auth.loading" class="flex h-svh items-center justify-center" role="status">
+    正在加载…
   </div>
-
-  <!-- Not authenticated -->
-  <div v-else-if="!isAuthenticated" class="flex h-screen items-center justify-center bg-background">
-    <router-view />
+  <div v-else-if="!auth.isAuthenticated" class="flex min-h-svh items-center justify-center p-3">
+    <RouterView />
   </div>
-
-  <!-- Authenticated layout -->
   <div v-else class="flex h-svh overflow-hidden">
-    <!-- Sidebar -->
     <aside
-      :class="[
-        'flex shrink-0 flex-col border-r border-border bg-sidebar transition-all duration-200',
-        sidebarCollapsed ? 'w-[3.25rem]' : 'w-56',
-      ]"
+      :class="['hidden shrink-0 flex-col border-r bg-sidebar md:flex', collapsed ? 'w-14' : 'w-56']"
     >
-      <!-- Header -->
-      <div class="flex items-center gap-2.5 border-b border-border/50 px-3 py-3">
-        <img
-          src="/favicon.svg"
-          alt="LLM Bridge"
-          :class="['h-8 w-8 shrink-0', sidebarCollapsed ? 'mx-auto' : '']"
-        />
-        <span
-          v-if="!sidebarCollapsed"
-          class="overflow-hidden font-mono text-sm font-semibold whitespace-nowrap"
+      <div class="flex h-14 shrink-0 items-center gap-2 border-b px-3">
+        <img src="/favicon.svg" alt="" class="size-8" /><span
+          v-if="!collapsed"
+          class="font-semibold"
           >LLM Bridge</span
         >
       </div>
-
-      <!-- Nav -->
-      <nav class="flex-1 overflow-y-auto py-2">
-        <div class="mb-1 px-2">
-          <span v-if="!sidebarCollapsed" class="px-2 text-xs font-medium text-muted-foreground"
-            >菜单</span
+      <nav aria-label="主导航" class="flex-1 space-y-1 overflow-y-auto p-2">
+        <template v-for="group in ['use', 'admin'] as const" :key="group">
+          <p
+            v-if="!collapsed && (group === 'use' || auth.isAdmin)"
+            class="px-2 pt-4 pb-2 text-xs text-muted-foreground"
           >
-        </div>
-        <RouterLink
-          v-for="item in memberNavItems"
-          :key="item.path"
-          :to="item.path"
-          custom
-          v-slot="{ navigate: nav, isActive }"
-        >
-          <button
-            @click="nav"
-            :title="sidebarCollapsed ? item.label : ''"
-            :class="[
-              'mb-0.5 flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors',
-              isActive || (item.path === '/dashboard' && routePath === '/')
-                ? 'bg-accent font-medium text-accent-foreground'
-                : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
-              sidebarCollapsed ? 'justify-center' : '',
-            ]"
-          >
-            <component :is="item.icon" class="h-4 w-4 shrink-0" />
-            <span v-if="!sidebarCollapsed" class="whitespace-nowrap">{{ item.label }}</span>
-          </button>
-        </RouterLink>
-
-        <template v-if="isAdmin">
-          <div class="mt-4 mb-1 px-2">
-            <span v-if="!sidebarCollapsed" class="px-2 text-xs font-medium text-muted-foreground"
-              >管理</span
-            >
-          </div>
+            {{ group === "use" ? "使用" : "管理" }}
+          </p>
           <RouterLink
-            v-for="item in adminNavItems"
-            :key="item.path"
+            v-for="item in items.filter((i) => i.group === group)"
+            :key="item.key"
             :to="item.path"
-            custom
-            v-slot="{ navigate: nav, isActive }"
+            :aria-label="item.label"
+            :title="item.label"
+            :aria-current="current?.key === item.key ? 'page' : undefined"
+            :class="[
+              'flex min-h-9 items-center gap-2 rounded px-2 py-2 text-sm',
+              current?.key === item.key
+                ? 'bg-accent font-semibold'
+                : 'text-muted-foreground hover:bg-accent',
+              collapsed ? 'justify-center' : '',
+            ]"
+            ><component :is="item.icon" class="size-4 shrink-0" /><span v-if="!collapsed">{{
+              item.label
+            }}</span></RouterLink
           >
-            <button
-              @click="nav"
-              :title="sidebarCollapsed ? item.label : ''"
-              :class="[
-                'mb-0.5 flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors',
-                isActive
-                  ? 'bg-accent font-medium text-accent-foreground'
-                  : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground',
-                sidebarCollapsed ? 'justify-center' : '',
-              ]"
-            >
-              <component :is="item.icon" class="h-4 w-4 shrink-0" />
-              <span v-if="!sidebarCollapsed" class="whitespace-nowrap">{{ item.label }}</span>
-            </button>
-          </RouterLink>
         </template>
       </nav>
-
-      <!-- Footer -->
-      <div class="flex flex-col gap-1 border-t border-border/50 p-2">
-        <div v-if="user && !sidebarCollapsed" class="px-2">
-          <span class="font-mono text-xs text-muted-foreground">{{ user.name }}</span>
-        </div>
-        <button
-          @click="themeStore.toggle()"
-          :title="themeStore.mode === 'dark' ? '切换到白天模式' : '切换到黑夜模式'"
-          :class="[
-            'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground',
-            sidebarCollapsed ? 'justify-center' : '',
-          ]"
-        >
-          <Sun v-if="themeStore.mode === 'dark'" class="h-4 w-4" />
-          <Moon v-else class="h-4 w-4" />
-          <span v-if="!sidebarCollapsed">{{
-            themeStore.mode === "dark" ? "白天模式" : "黑夜模式"
+      <div class="space-y-2 border-t p-2">
+        <p v-if="!collapsed" class="px-2 text-sm break-words">
+          {{ auth.user?.name
+          }}<span class="block text-xs text-muted-foreground">{{
+            auth.isAdmin ? "管理员" : "成员"
           }}</span>
-        </button>
-        <button
-          @click="handleLogout"
-          :class="[
-            'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground',
-            sidebarCollapsed ? 'justify-center' : '',
-          ]"
+        </p>
+        <Button
+          variant="ghost"
+          :class="collapsed ? 'w-full px-0' : 'w-full justify-start'"
+          aria-label="切换明暗主题"
+          title="切换明暗主题"
+          @click="theme.toggle()"
+          ><Sun v-if="theme.mode === 'dark'" /><Moon v-else /><span v-if="!collapsed">{{
+            theme.mode === "dark" ? "亮色主题" : "暗色主题"
+          }}</span></Button
+        ><Button
+          variant="ghost"
+          :class="collapsed ? 'w-full px-0' : 'w-full justify-start'"
+          aria-label="退出登录"
+          title="退出登录"
+          @click="logout"
+          ><LogOut /><span v-if="!collapsed">退出</span></Button
         >
-          <LogOut class="h-4 w-4" />
-          <span v-if="!sidebarCollapsed">退出登录</span>
-        </button>
       </div>
     </aside>
-
-    <!-- Main area -->
-    <div class="flex min-w-0 flex-1 flex-col overflow-hidden">
-      <header class="flex h-12 shrink-0 items-center gap-2 border-b border-border px-4">
-        <button
+    <div class="flex min-w-0 flex-1 flex-col">
+      <header class="flex h-14 shrink-0 items-center gap-3 border-b px-3 md:px-4 lg:px-6">
+        <Button
+          variant="ghost"
+          size="icon"
+          class="md:hidden"
+          aria-label="打开导航"
+          title="打开导航"
+          @click="mobileOpen = true"
+          ><Menu /></Button
+        ><Button
+          variant="ghost"
+          size="icon"
+          class="hidden md:inline-flex"
+          aria-label="折叠或展开导航"
+          title="折叠或展开导航"
           @click="toggleSidebar"
-          class="rounded-md p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-          aria-label="Toggle sidebar"
+          ><PanelLeftOpen v-if="collapsed" /><PanelLeftClose v-else /></Button
+        ><span class="min-w-0 truncate text-sm"
+          >{{ current?.label || (route.path === "/auth/cli-verify" ? "客户端授权" : "LLM Bridge")
+          }}<span v-if="route.path === '/admin/setup'"> / 接入模型</span></span
+        ><Button variant="outline" class="ml-auto" @click="searchOpen = true"
+          ><Search /><span>搜索</span><kbd class="hidden text-xs sm:inline">Ctrl K</kbd></Button
         >
-          <PanelLeftOpen v-if="sidebarCollapsed" class="h-4 w-4" />
-          <PanelLeftClose v-else class="h-4 w-4" />
-        </button>
-        <button
-          @click="searchOpen = true"
-          class="ml-2 flex items-center gap-2 rounded-md border border-border bg-muted/40 px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
-          aria-label="全局搜索"
-        >
-          <Search class="h-3.5 w-3.5" />
-          <span>搜索</span>
-          <kbd class="rounded border border-border bg-background px-1 font-mono text-[10px]">Ctrl K</kbd>
-        </button>
       </header>
-      <main class="flex min-h-0 flex-1 flex-col overflow-hidden p-6">
-        <!-- Admin route guard -->
-        <UnauthorizedPage v-if="accessDenied" />
-        <router-view v-else v-slot="{ Component, route }">
-          <Transition name="page" mode="out-in">
-            <div class="mx-auto flex min-h-0 w-full max-w-5xl flex-1 flex-col" :key="route.path">
-              <component :is="Component" />
-            </div>
-          </Transition>
-        </router-view>
+      <main id="main-content" class="min-h-0 flex-1 overflow-y-auto p-3 md:p-4 lg:p-6">
+        <div class="mx-auto w-full max-w-[1280px] min-w-0">
+          <UnauthorizedPage v-if="route.meta.requiresAdmin && !auth.isAdmin" /><RouterView v-else />
+        </div>
       </main>
     </div>
+    <Sheet v-model:open="mobileOpen"
+      ><SheetContent side="left" class="w-72 max-w-[90vw] bg-sidebar p-4"
+        ><SheetHeader
+          ><SheetTitle>LLM Bridge</SheetTitle
+          ><SheetDescription>使用与管理导航</SheetDescription></SheetHeader
+        >
+        <nav class="flex-1 space-y-1 overflow-y-auto" aria-label="移动导航">
+          <RouterLink
+            v-for="item in items"
+            :key="item.key"
+            :to="item.path"
+            class="flex min-h-11 items-center gap-3 rounded px-3 text-sm"
+            :class="current?.key === item.key ? 'bg-accent font-semibold' : ''"
+            ><component :is="item.icon" class="size-4" />{{ item.label }}</RouterLink
+          >
+        </nav>
+        <p class="text-sm">{{ auth.user?.name }} · {{ auth.isAdmin ? "管理员" : "成员" }}</p>
+        <Button variant="outline" @click="theme.toggle()">切换明暗主题</Button
+        ><Button variant="ghost" @click="logout">退出登录</Button></SheetContent
+      ></Sheet
+    >
   </div>
-
-  <GlobalSearch v-model:open="searchOpen" />
-  <Toaster />
+  <GlobalSearch v-if="auth.isAuthenticated" v-model:open="searchOpen" /><ConfirmDialog /><Toaster />
 </template>

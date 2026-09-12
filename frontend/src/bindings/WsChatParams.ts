@@ -8,4 +8,20 @@ import type { JsonValue } from "./serde_json/JsonValue";
 /**
  * WS 聊天参数；消息和工具与上游适配层使用同一套协议无关类型。
  */
-export type WsChatParams = { model: string, messages: Array<LanguageModelChatMessage>, tools?: Array<LanguageModelTool>, toolChoice?: JsonValue, temperature?: number, maxTokens?: number, topP?: number, stop?: Array<string>, responseFormat?: LanguageModelResponseFormat, reasoning?: LanguageModelReasoningConfig, seed?: number, frequencyPenalty?: number, presencePenalty?: number, logitBias?: { [key in string]: number }, maxCompletionTokens?: number, };
+export type WsChatParams = {
+  model: string;
+  messages: Array<LanguageModelChatMessage>;
+  tools?: Array<LanguageModelTool>;
+  toolChoice?: JsonValue;
+  temperature?: number;
+  maxTokens?: number;
+  topP?: number;
+  stop?: Array<string>;
+  responseFormat?: LanguageModelResponseFormat;
+  reasoning?: LanguageModelReasoningConfig;
+  seed?: number;
+  frequencyPenalty?: number;
+  presencePenalty?: number;
+  logitBias?: { [key in string]: number };
+  maxCompletionTokens?: number;
+};

@@ -1,10 +1,10 @@
-//! 管理员手动目录导入；网络数据不会参与运行时路由。
+//! 管理员只读目录预览；仅供首次预填，网络数据不会参与运行时路由。
 use super::AppState;
 use crate::{
     config::models::ProviderCompatibility,
     db::models::{LLMModel, ModelProvider, Provider, ProviderProtocol},
     middleware::session_auth::AdminAuth,
-    store::{ModelInput, catalog as store_catalog},
+    store::ModelInput,
 };
 use axfetchum::ApiRouter;
 use axum::{
@@ -295,31 +295,12 @@ pub struct CatalogPreview {
     pub providers: Vec<CatalogProviderPreview>,
     pub links: Vec<CatalogLinkPreview>,
 }
-#[derive(Deserialize, TS)]
-#[ts(export)]
-pub struct CatalogSelection {
-    pub models: Vec<String>,
-    pub providers: Vec<String>,
-    pub links: Vec<String>,
-}
-#[derive(Debug, Serialize, TS)]
-#[ts(export)]
-pub struct CatalogImportReport {
-    pub created: u64,
-    pub updated: u64,
-    pub skipped: u64,
-    pub errors: Vec<String>,
-}
 
 pub fn routes() -> ApiRouter<AppState> {
     ApiRouter::new()
         .group("modelsImport")
         .get("/api/v1/admin/models-import/preview", preview)
         .response::<CatalogPreview>()
-        .auth()
-        .done()
-        .post("/api/v1/admin/models-import", import)
-        .json::<CatalogSelection, CatalogImportReport>()
         .auth()
         .done()
 }
@@ -339,21 +320,6 @@ async fn preview(
         .await
         .map(Json)
         .map_err(|message| error(StatusCode::INTERNAL_SERVER_ERROR, message))
-}
-async fn import(
-    State(state): State<AppState>,
-    AdminAuth(_): AdminAuth,
-    Json(selection): Json<CatalogSelection>,
-) -> Result<Json<CatalogImportReport>, Response> {
-    let catalog = state
-        .catalog
-        .load()
-        .await
-        .map_err(|message| error(StatusCode::BAD_GATEWAY, message))?;
-    import_catalog(&state.db, &catalog, &selection)
-        .await
-        .map(Json)
-        .map_err(|message| error(StatusCode::BAD_REQUEST, message))
 }
 
 pub async fn preview_catalog(
@@ -442,100 +408,4 @@ pub async fn preview_catalog(
             .collect(),
         links,
     })
-}
-
-pub async fn import_catalog(
-    db: &crate::db::Db,
-    catalog: &Catalog,
-    selection: &CatalogSelection,
-) -> Result<CatalogImportReport, String> {
-    catalog.validate()?;
-    let mut model_names: HashSet<&str> = selection.models.iter().map(String::as_str).collect();
-    let mut provider_names: HashSet<&str> =
-        selection.providers.iter().map(String::as_str).collect();
-    let keys: HashSet<&str> = selection.links.iter().map(String::as_str).collect();
-    let selected_links: Vec<_> = catalog
-        .links
-        .iter()
-        .filter(|link| keys.contains(link.key().as_str()))
-        .collect();
-    if selected_links.len() != keys.len() {
-        return Err("selection contains an unknown link key; refresh preview".into());
-    }
-    for link in &selected_links {
-        model_names.insert(&link.model_name);
-        provider_names.insert(&link.provider_id);
-    }
-    if model_names
-        .iter()
-        .any(|name| !catalog.models.iter().any(|model| model.model_name == *name))
-        || provider_names.iter().any(|name| {
-            !catalog
-                .providers
-                .iter()
-                .any(|provider| provider.provider_id == *name)
-        })
-    {
-        return Err("selection references an unknown model or provider".into());
-    }
-    let mut db = db.clone();
-    let mut tx = db.transaction().await.map_err(|error| error.to_string())?;
-    toasty::sql::statement("UPDATE llm_bridge_schema_lock SET id = id WHERE id = 1")
-        .exec(&mut tx)
-        .await
-        .map_err(|error| error.to_string())?;
-    let mut report = CatalogImportReport {
-        created: 0,
-        updated: 0,
-        skipped: (catalog.models.len() + catalog.providers.len() + catalog.links.len()
-            - model_names.len()
-            - provider_names.len()
-            - selected_links.len()) as u64,
-        errors: vec![],
-    };
-    let mut record = |created: bool| {
-        if created {
-            report.created += 1;
-        } else {
-            report.updated += 1;
-        }
-    };
-    let mut provider_ids = HashMap::new();
-    let mut protocol_ids = HashMap::new();
-    for provider in catalog
-        .providers
-        .iter()
-        .filter(|provider| provider_names.contains(provider.provider_id.as_str()))
-    {
-        let (id, created) = store_catalog::upsert_provider(&mut tx, provider).await?;
-        record(created);
-        let (protocol, created) =
-            store_catalog::upsert_protocol_by_key(&mut tx, id, provider).await?;
-        record(created);
-        provider_ids.insert(provider.provider_id.as_str(), id);
-        protocol_ids.insert(provider.provider_id.as_str(), protocol);
-    }
-    let mut model_ids = HashMap::new();
-    for model in catalog
-        .models
-        .iter()
-        .filter(|model| model_names.contains(model.model_name.as_str()))
-    {
-        let (id, created) = store_catalog::upsert_model_by_name(&mut tx, model).await?;
-        record(created);
-        model_ids.insert(model.model_name.as_str(), id);
-    }
-    for link in selected_links {
-        let created = store_catalog::upsert_model_provider(
-            &mut tx,
-            model_ids[link.model_name.as_str()],
-            provider_ids[link.provider_id.as_str()],
-            protocol_ids[link.provider_id.as_str()],
-            link,
-        )
-        .await?;
-        record(created);
-    }
-    tx.commit().await.map_err(|error| error.to_string())?;
-    Ok(report)
 }

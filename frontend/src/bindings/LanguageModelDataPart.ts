@@ -4,4 +4,4 @@
  * 二进制数据消息部分，对应 LanguageModelDataPart
  * `data` 对应 Uint8Array，序列化为数字数组
  */
-export type LanguageModelDataPart = { mimeType: string, data: Array<number>, };
+export type LanguageModelDataPart = { mimeType: string; data: Array<number> };

@@ -5,16 +5,20 @@ import type { OpenAiModelProviderInfo } from "./OpenAiModelProviderInfo";
 /**
  * 单个模型的 API 条目（增强版，包含提供者列表和各自的定价/能力）。
  */
-export type OpenAiModelEntry = { id: string, object: string, created: number, 
-/**
- * 主要提供者（第一个可用提供者）
- */
-owned_by: string, 
-/**
- * 模型的标称能力
- */
-capabilities: OpenAiModelCapabilities, 
-/**
- * 各提供者的定价和能力覆盖
- */
-providers: Array<OpenAiModelProviderInfo>, };
+export type OpenAiModelEntry = {
+  id: string;
+  object: string;
+  created: number;
+  /**
+   * 主要提供者（第一个可用提供者）
+   */
+  owned_by: string;
+  /**
+   * 模型的标称能力
+   */
+  capabilities: OpenAiModelCapabilities;
+  /**
+   * 各提供者的定价和能力覆盖
+   */
+  providers: Array<OpenAiModelProviderInfo>;
+};

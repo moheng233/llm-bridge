@@ -7,4 +7,8 @@ import type { JsonValue } from "./serde_json/JsonValue";
 /**
  * 工具结果内容的各种可能类型
  */
-export type LanguageModelToolResultContent = LanguageModelTextPart | LanguageModelPromptTsxPart | LanguageModelDataPart | JsonValue;
+export type LanguageModelToolResultContent =
+  | LanguageModelTextPart
+  | LanguageModelPromptTsxPart
+  | LanguageModelDataPart
+  | JsonValue;

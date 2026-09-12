@@ -1,572 +1,376 @@
 <script setup lang="ts">
 import { type ModelProviderSummary } from "@bindings/ModelProviderSummary";
 import { type ModelResponse } from "@bindings/ModelResponse";
-import {
-  Search,
-  Cpu,
-  Eye,
-  Wrench,
-  Brain,
-  ArrowUpDown,
-  ArrowUp,
-  ArrowDown,
-  Sparkles,
-} from "@lucide/vue";
 
-import { useApiCall } from "~/composables/useApiCall";
 import { getApi, formatTokens, formatPrice } from "~/lib/api";
-import { SKELETON_ROWS } from "~/lib/constants";
-
-const api = getApi();
-
-// ── 价格聚合 ──
-
-function cheapestPrice(
-  providers: ModelProviderSummary[],
-  key: keyof ModelProviderSummary,
-): number | null {
-  const prices = providers.map((p) => p[key]).filter((v): v is number => typeof v === "number");
-  return prices.length > 0 ? Math.min(...prices) : null;
-}
-
-function priceRange(
-  providers: ModelProviderSummary[],
-  key: keyof ModelProviderSummary,
-): { min: number; max: number } | null {
-  const prices = providers.map((p) => p[key]).filter((v): v is number => typeof v === "number");
-  if (prices.length === 0) return null;
-  return { min: Math.min(...prices), max: Math.max(...prices) };
-}
-
-function formatPriceRange(range: { min: number; max: number } | null): string {
-  if (!range) return "—";
-  if (range.min === range.max) return formatPrice(range.min);
-  return `${formatPrice(range.min)} – ${formatPrice(range.max)}`;
-}
-
-function availableProviderCount(providers: ModelProviderSummary[]): number {
-  return providers.filter((p) => p.enabled).length;
-}
-
-// ── 数据加载 ──
-
-const models = ref<ModelResponse[]>([]);
-const search = ref("");
-const onlyAvailable = ref(true);
-
-// 支持从全局搜索跳转定位：/models?model=<name> 预填搜索词
+import { protocolLabel } from "~/lib/constants";
 const route = useRoute();
-watchEffect(() => {
-  const q = route.query.model;
-  if (typeof q === "string" && q) search.value = q;
-});
-
+const onlyAvailable = ref(true);
+const search = ref("");
+const capabilities = reactive({ toolCalling: false, vision: false, thinking: false });
+const capabilityOptions = [
+  { key: "toolCalling", label: "工具调用" },
+  { key: "vision", label: "视觉" },
+  { key: "thinking", label: "推理" },
+] as const;
 const sortField = ref<"name" | "maxInputTokens" | "maxOutputTokens" | "inputPrice">("name");
 const sortDir = ref<"asc" | "desc">("asc");
-
-const {
-  loading,
-  error,
-  execute: fetchModels,
-} = useApiCall(() =>
-  onlyAvailable.value ? api.models.listAvailableModels() : api.models.listAllModels(),
+const columns = [
+  { key: "name", label: "模型" },
+  { key: "maxInputTokens", label: "最大输入 Token" },
+  { key: "maxOutputTokens", label: "最大输出 Token" },
+  { key: "inputPrice", label: "参考输入价格" },
+] as const;
+const call = useApiCall(() =>
+  onlyAvailable.value ? getApi().models.listAvailableModels() : getApi().models.listAllModels(),
 );
-
-async function load() {
-  const result = await fetchModels();
-  if (result) models.value = result;
-}
-
-watchEffect(() => {
-  load();
-});
-
-// ── 能力筛选 ──
-
-const capabilityFilter = ref<{ vision: boolean; tool: boolean; thinking: boolean }>({
-  vision: false,
-  tool: false,
-  thinking: false,
-});
-
-function toggleCapability(key: "vision" | "tool" | "thinking") {
-  capabilityFilter.value[key] = !capabilityFilter.value[key];
-}
-
-const capabilityChips = computed(() => [
-  { key: "tool" as const, label: "工具调用", icon: Wrench, active: capabilityFilter.value.tool },
-  { key: "vision" as const, label: "视觉", icon: Eye, active: capabilityFilter.value.vision },
-  { key: "thinking" as const, label: "推理", icon: Brain, active: capabilityFilter.value.thinking },
-]);
-
-// ── 列表过滤/排序 ──
-
-const filteredModels = computed(() => {
-  let result = models.value;
-  if (search.value.trim()) {
-    const q = search.value.toLowerCase();
-    result = result.filter(
-      (m) => m.modelName.toLowerCase().includes(q) || m.description?.toLowerCase().includes(q),
-    );
+const sheetOpen = ref(false);
+const selectedModel = ref<ModelResponse | null>(null);
+const copyError = ref("");
+const copied = ref(false);
+type PriceField = "inputPricePer1m" | "outputPricePer1m" | "cacheReadPricePer1m";
+function priceRange(
+  providers: ModelProviderSummary[],
+  field: PriceField,
+): { min: number; max: number } | null {
+  let min = Infinity,
+    max = -Infinity;
+  for (const provider of providers) {
+    const price = provider[field];
+    if (provider.enabled && price !== null) {
+      min = Math.min(min, price);
+      max = Math.max(max, price);
+    }
   }
-  if (capabilityFilter.value.vision) result = result.filter((m) => m.vision);
-  if (capabilityFilter.value.tool) result = result.filter((m) => m.toolCalling);
-  if (capabilityFilter.value.thinking)
-    result = result.filter((m) => m.thinking === true || m.adaptiveThinking === true);
-
-  result = [...result].sort((a, b) => {
+  return min === Infinity ? null : { min, max };
+}
+function referencePrice(providers: ModelProviderSummary[], field: PriceField) {
+  const range = priceRange(providers, field);
+  if (!range) return "未知";
+  return range.min === range.max
+    ? formatPrice(range.min)
+    : `${formatPrice(range.min)} – ${formatPrice(range.max)}`;
+}
+const filtered = computed(() => {
+  const query = search.value.trim().toLowerCase();
+  const rows = (call.data.value ?? []).filter(
+    (model) =>
+      `${model.modelName} ${model.displayName} ${model.description ?? ""}`
+        .toLowerCase()
+        .includes(query) &&
+      (!capabilities.toolCalling || model.toolCalling) &&
+      (!capabilities.vision || model.vision) &&
+      (!capabilities.thinking || model.thinking || model.adaptiveThinking),
+  );
+  const price = new Map(
+    rows.map((model) => [
+      model.modelName,
+      priceRange(model.providers, "inputPricePer1m")?.min ?? null,
+    ]),
+  );
+  return rows.sort((a, b) => {
     const dir = sortDir.value === "asc" ? 1 : -1;
     if (sortField.value === "name") return dir * a.modelName.localeCompare(b.modelName);
-    if (sortField.value === "maxInputTokens") return dir * (a.maxInputTokens - b.maxInputTokens);
-    if (sortField.value === "maxOutputTokens") return dir * (a.maxOutputTokens - b.maxOutputTokens);
     if (sortField.value === "inputPrice") {
-      const pa = cheapestPrice(a.providers, "inputPricePer1m") ?? Number.POSITIVE_INFINITY;
-      const pb = cheapestPrice(b.providers, "inputPricePer1m") ?? Number.POSITIVE_INFINITY;
-      return dir * (pa - pb);
+      const x = price.get(a.modelName) ?? null,
+        y = price.get(b.modelName) ?? null;
+      if (x === null) return y === null ? a.modelName.localeCompare(b.modelName) : 1;
+      if (y === null) return -1;
+      return dir * (x - y) || a.modelName.localeCompare(b.modelName);
     }
-    return 0;
+    return dir * (a[sortField.value] - b[sortField.value]);
   });
-  return result;
 });
-
-function toggleSort(field: typeof sortField.value) {
-  if (sortField.value === field) {
-    sortDir.value = sortDir.value === "asc" ? "desc" : "asc";
-  } else {
+const sortedConnections = computed(() =>
+  [...(selectedModel.value?.providers ?? [])].sort(
+    (a, b) =>
+      Number(b.enabled) - Number(a.enabled) ||
+      a.priority - b.priority ||
+      a.providerDisplayName.localeCompare(b.providerDisplayName),
+  ),
+);
+function sort(field: typeof sortField.value) {
+  if (sortField.value === field) sortDir.value = sortDir.value === "asc" ? "desc" : "asc";
+  else {
     sortField.value = field;
     sortDir.value = "asc";
   }
 }
-
-function sortIcon(field: typeof sortField.value) {
-  if (sortField.value !== field) return ArrowUpDown;
-  return sortDir.value === "asc" ? ArrowUp : ArrowDown;
+function clearFilters() {
+  search.value = "";
+  capabilities.toolCalling = false;
+  capabilities.vision = false;
+  capabilities.thinking = false;
 }
-
-// ── 表头定义 ──
-
-interface ColumnDef {
-  key: typeof sortField.value | null;
-  label: string;
-  align: "left" | "right" | "center";
-  sortable: boolean;
-}
-
-const columns: ColumnDef[] = [
-  { key: "name", label: "模型", align: "left", sortable: true },
-  { key: "maxInputTokens", label: "上下文", align: "right", sortable: true },
-  { key: "maxOutputTokens", label: "输出上限", align: "right", sortable: true },
-  { key: null, label: "能力", align: "center", sortable: false },
-  { key: "inputPrice", label: "输入价格", align: "right", sortable: true },
-  { key: null, label: "输出价格", align: "right", sortable: false },
-];
-
-// ── 详情抽屉 ──
-
-const selectedModel = ref<ModelResponse | null>(null);
-const sheetOpen = ref(false);
-
-function openDetail(model: ModelResponse) {
+function open(model: ModelResponse) {
   selectedModel.value = model;
+  copied.value = false;
+  copyError.value = "";
   sheetOpen.value = true;
 }
-
-function capabilityList(m: ModelResponse) {
-  return [
-    { label: "工具调用", icon: Wrench, active: m.toolCalling },
-    { label: "视觉", icon: Eye, active: m.vision },
-    {
-      label: "推理",
-      icon: Brain,
-      active: m.thinking === true || m.adaptiveThinking === true,
-    },
-  ];
+async function copyModel() {
+  if (!selectedModel.value) return;
+  try {
+    if (!navigator.clipboard) throw Error();
+    await navigator.clipboard.writeText(selectedModel.value.modelName);
+    copied.value = true;
+  } catch {
+    copyError.value = "复制失败，请手动选择下方模型 ID 复制。";
+  }
 }
-
-// Provider 详情排序：可用优先，其次按优先级数字（小优先），再按名称
-function sortedProviders(providers: ModelProviderSummary[]): ModelProviderSummary[] {
-  return [...providers].sort((a, b) => {
-    if (a.enabled !== b.enabled) return a.enabled ? -1 : 1;
-    if (a.priority !== b.priority) return a.priority - b.priority;
-    return a.providerDisplayName.localeCompare(b.providerDisplayName);
-  });
+function declarations(model: ModelResponse) {
+  return (
+    [
+      model.toolCalling && "工具调用",
+      model.vision && "视觉",
+      model.thinking && "推理",
+      model.adaptiveThinking && "自适应推理",
+    ]
+      .filter(Boolean)
+      .join(" · ") || "未声明支持特殊能力"
+  );
 }
+function override(value: boolean | null, nominal: boolean | null) {
+  return value === null
+    ? `继承（${nominal ? "支持" : "不声明支持"}）`
+    : value
+      ? "支持（覆盖）"
+      : "不支持（覆盖）";
+}
+watch(onlyAvailable, () => call.execute());
+watch(
+  () => route.query.model,
+  (value) => {
+    if (typeof value === "string") search.value = value;
+  },
+  { immediate: true },
+);
+onMounted(() => call.execute());
 </script>
 
 <template>
   <PageShell>
-    <SectionHeader
-      title="模型目录"
-      description="浏览可用模型的能力、上下文与定价 · 支持多 Provider 路由"
-      :count="models.length"
-      count-label="个模型"
-      :icon="Cpu"
-    />
-
-    <ErrorState v-if="error" :error="error" inline @retry="load" />
-
-    <!-- 过滤栏 -->
-    <div class="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-      <div class="relative max-w-md flex-1">
-        <Search class="absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-        <Input v-model="search" class="pl-9" placeholder="搜索模型名称或描述..." />
-      </div>
-      <div class="flex flex-wrap items-center gap-2">
-        <button
-          v-for="chip in capabilityChips"
-          :key="chip.key"
-          type="button"
-          class="flex cursor-pointer items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors"
-          :class="
-            chip.active
-              ? 'border-cta/40 bg-cta/10 text-cta'
-              : 'border-border bg-transparent text-muted-foreground hover:bg-accent hover:text-foreground'
-          "
-          @click="toggleCapability(chip.key)"
-        >
-          <component :is="chip.icon" class="h-3.5 w-3.5" />
-          {{ chip.label }}
-        </button>
-        <Label
-          class="flex cursor-pointer items-center gap-2 text-sm whitespace-nowrap text-muted-foreground"
-        >
-          <Checkbox v-model="onlyAvailable" class="cursor-pointer" /> 仅可用
-        </Label>
-      </div>
+    <div>
+      <h1>使用模型</h1>
+      <p class="mt-2 text-muted-foreground">
+        本地网关模型的标称能力与连接参考价格；不是外部目录或实时健康监控。
+      </p>
     </div>
-
-    <!-- 加载骨架 -->
-    <div v-if="loading" class="flex flex-col gap-2">
-      <Skeleton v-for="i in SKELETON_ROWS.models" :key="i" class="h-12 w-full rounded-lg" />
+    <div class="flex flex-wrap items-center gap-3">
+      <Input
+        v-model="search"
+        class="min-w-0 md:max-w-md"
+        placeholder="搜索模型 ID / 名称 / 描述"
+        aria-label="搜索模型"
+      /><Button
+        v-for="option in capabilityOptions"
+        :key="option.key"
+        :variant="capabilities[option.key] ? 'default' : 'outline'"
+        :aria-pressed="capabilities[option.key]"
+        @click="capabilities[option.key] = !capabilities[option.key]"
+        >{{ option.label }}</Button
+      ><label class="flex min-h-11 items-center gap-2"
+        ><Checkbox v-model="onlyAvailable" />仅可路由</label
+      >
     </div>
-
-    <!-- 模型表格（桌面端 md+） -->
-    <div
-      v-else
-      class="hidden min-h-0 flex-1 overflow-auto rounded-lg border border-border md:block"
-    >
-      <table class="w-full text-sm">
-        <thead class="sticky top-0 z-10 border-b border-border bg-card">
-          <tr>
-            <th
-              v-for="col in columns"
-              :key="col.label"
-              class="px-4 py-3 font-mono text-xs text-muted-foreground"
-              :class="[
-                col.align === 'left' && 'text-left',
-                col.align === 'right' && 'text-right',
-                col.align === 'center' && 'text-center',
-              ]"
+    <p class="text-sm text-muted-foreground">
+      仅可路由基于本地配置，不代表上游实时健康，也不替代个人 Token
+      范围与额度校验。参考价格只比较已启用连接，单位 USD / 百万 Token；未知不等于免费。
+    </p>
+    <div class="flex flex-wrap items-center gap-2">
+      <span>排序：</span
+      ><Button
+        v-for="column in columns"
+        :key="column.key"
+        variant="outline"
+        :aria-pressed="sortField === column.key"
+        @click="sort(column.key)"
+        >{{ column.label
+        }}{{ sortField === column.key ? (sortDir === "asc" ? " ↑" : " ↓") : "" }}</Button
+      >
+    </div>
+    <ErrorState v-if="call.error.value" :error="call.error.value" @retry="call.execute" />
+    <div v-else-if="call.loading.value" class="space-y-3">
+      <Skeleton v-for="i in 6" :key="i" class="h-14" />
+    </div>
+    <div v-else-if="!filtered.length" class="space-y-3 rounded border bg-card p-6">
+      <p>
+        {{
+          search || Object.values(capabilities).some(Boolean)
+            ? "筛选无结果"
+            : onlyAvailable
+              ? "暂无可路由模型，请联系管理员配置或查看全部本地定义。"
+              : "尚无本地模型定义，请联系管理员。"
+        }}
+      </p>
+      <Button
+        v-if="search || Object.values(capabilities).some(Boolean)"
+        variant="outline"
+        @click="clearFilters"
+        >清除筛选</Button
+      ><Button v-else-if="onlyAvailable" variant="outline" @click="onlyAvailable = false"
+        >查看全部本地定义</Button
+      >
+    </div>
+    <template v-else>
+      <div class="hidden overflow-x-auto rounded border bg-card md:block">
+        <table class="w-full text-left text-sm">
+          <thead>
+            <tr class="border-b">
+              <th class="p-3">模型 / 网关 ID</th>
+              <th class="p-3">最大输入</th>
+              <th class="p-3">最大输出</th>
+              <th class="p-3">声明能力</th>
+              <th class="p-3">参考输入 / 输出价格</th>
+              <th class="p-3">配置连接</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr
+              v-for="model in filtered"
+              :key="model.modelName"
+              class="min-h-14 border-b last:border-0"
             >
-              <button
-                v-if="col.sortable"
-                type="button"
-                class="inline-flex cursor-pointer items-center gap-1 hover:text-foreground"
-                @click="toggleSort(col.key as any)"
-              >
-                {{ col.label }}
-                <component :is="sortIcon(col.key as any)" class="h-3 w-3 opacity-60" />
-              </button>
-              <span v-else>{{ col.label }}</span>
-            </th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr
-            v-for="model in filteredModels"
-            :key="model.modelName"
-            class="cursor-pointer border-b border-border/50 transition-all duration-150 hover:bg-accent/60 hover:shadow-sm"
-            @click="openDetail(model)"
-          >
-            <td class="px-4 py-3">
-              <div class="flex flex-col gap-0.5">
-                <span class="font-mono font-medium text-foreground">{{ model.modelName }}</span>
-                <span v-if="model.description" class="line-clamp-1 text-xs text-muted-foreground">{{
-                  model.description
-                }}</span>
-                <div class="mt-1 flex flex-wrap items-center gap-1">
-                  <Badge variant="secondary" class="px-1.5 py-0 font-mono text-[10px]">
-                    {{ availableProviderCount(model.providers) }}/{{ model.providers.length }} 渠道
-                  </Badge>
-                  <Badge
-                    v-for="p in model.providers.slice(0, 2)"
-                    :key="p.providerModelId"
-                    variant="outline"
-                    class="px-1.5 py-0 font-mono text-[10px]"
-                    :class="!p.enabled && 'line-through opacity-40'"
-                    :title="p.providerModelId"
-                    >{{ p.providerDisplayName }}</Badge
-                  >
-                  <span v-if="model.providers.length > 2" class="text-[10px] text-muted-foreground"
-                    >+{{ model.providers.length - 2 }}</span
-                  >
-                </div>
-              </div>
-            </td>
-            <td class="px-4 py-3 text-right font-mono text-foreground tabular-nums">
-              {{ formatTokens(model.maxInputTokens) }}
-            </td>
-            <td class="px-4 py-3 text-right font-mono text-foreground tabular-nums">
-              {{ formatTokens(model.maxOutputTokens) }}
-            </td>
-            <td class="px-4 py-3">
-              <div class="flex items-center justify-center gap-1.5">
-                <Wrench v-if="model.toolCalling" class="h-3.5 w-3.5 text-cta" title="工具调用" />
-                <Eye v-if="model.vision" class="h-3.5 w-3.5 text-cta" title="视觉" />
-                <Brain
-                  v-if="model.thinking || model.adaptiveThinking"
-                  class="h-3.5 w-3.5 text-cta"
-                  title="推理"
-                />
-                <span
-                  v-if="
-                    !model.toolCalling &&
-                    !model.vision &&
-                    !model.thinking &&
-                    !model.adaptiveThinking
-                  "
-                  class="text-[10px] text-muted-foreground"
-                  >—</span
+              <td class="p-3">
+                <Button
+                  variant="link"
+                  class="h-auto justify-start px-0 text-left whitespace-normal"
+                  @click="open(model)"
+                  >{{ model.displayName || model.modelName }}</Button
                 >
-              </div>
-            </td>
-            <td class="px-4 py-3 text-right font-mono text-foreground tabular-nums">
-              <div class="flex flex-col items-end leading-tight">
-                <span>{{ formatPrice(cheapestPrice(model.providers, "inputPricePer1m")) }}</span>
-                <span class="text-[10px] text-muted-foreground">起 / 1M</span>
-              </div>
-            </td>
-            <td class="px-4 py-3 text-right font-mono text-foreground tabular-nums">
-              {{ formatPrice(cheapestPrice(model.providers, "outputPricePer1m")) }}
-            </td>
-          </tr>
-        </tbody>
-      </table>
-      <div
-        v-if="filteredModels.length === 0"
-        class="flex items-center justify-center py-12 text-muted-foreground"
-      >
-        <div class="flex flex-col items-center gap-2">
-          <Cpu class="h-8 w-8 opacity-30" />
-          <p class="text-sm">未找到匹配的模型</p>
-        </div>
+                <p class="font-mono text-xs break-all">{{ model.modelName }}</p>
+              </td>
+              <td class="p-3 tabular-nums">{{ formatTokens(model.maxInputTokens) }}</td>
+              <td class="p-3 tabular-nums">{{ formatTokens(model.maxOutputTokens) }}</td>
+              <td class="p-3">{{ declarations(model) }}</td>
+              <td class="p-3 tabular-nums">
+                {{ referencePrice(model.providers, "inputPricePer1m") }} /
+                {{ referencePrice(model.providers, "outputPricePer1m") }}
+              </td>
+              <td class="p-3">{{ model.providers.length }} 条</td>
+            </tr>
+          </tbody>
+        </table>
       </div>
-    </div>
-
-    <!-- 模型卡片（移动端 <md） -->
-    <div v-if="!loading" class="flex flex-col gap-2 md:hidden">
-      <button
-        v-for="model in filteredModels"
+      <article
+        v-for="model in filtered"
         :key="model.modelName"
-        type="button"
-        class="flex cursor-pointer flex-col gap-2 rounded-lg border border-border bg-card p-3 text-left transition-colors hover:bg-accent/50"
-        @click="openDetail(model)"
+        class="space-y-3 rounded border bg-card p-4 md:hidden"
       >
-        <div class="flex items-start justify-between gap-2">
-          <div class="min-w-0 flex-1">
-            <div class="font-mono font-medium text-foreground">{{ model.modelName }}</div>
-            <div v-if="model.description" class="mt-0.5 line-clamp-1 text-xs text-muted-foreground">
-              {{ model.description }}
-            </div>
+        <Button
+          variant="link"
+          class="h-auto justify-start p-0 text-left text-lg whitespace-normal"
+          @click="open(model)"
+          >{{ model.displayName || model.modelName }}</Button
+        >
+        <p class="font-mono break-all">{{ model.modelName }}</p>
+        <p>
+          最大输入 {{ formatTokens(model.maxInputTokens) }} / 最大输出
+          {{ formatTokens(model.maxOutputTokens) }} Token
+        </p>
+        <p>{{ declarations(model) }}</p>
+        <p>
+          参考输入 / 输出：{{ referencePrice(model.providers, "inputPricePer1m") }} /
+          {{ referencePrice(model.providers, "outputPricePer1m") }}
+        </p>
+        <p>{{ model.providers.length }} 条配置连接</p>
+      </article>
+    </template>
+    <Sheet v-model:open="sheetOpen"
+      ><SheetContent class="w-full max-w-full sm:max-w-2xl"
+        ><SheetHeader class="border-b p-4 pr-10"
+          ><SheetTitle class="break-words">{{
+            selectedModel?.displayName || selectedModel?.modelName
+          }}</SheetTitle
+          ><SheetDescription
+            >使用网关模型 ID 调用；以下配置与能力声明不代表实时连通性。</SheetDescription
+          ></SheetHeader
+        >
+        <div v-if="selectedModel" class="min-h-0 flex-1 space-y-6 overflow-y-auto p-4">
+          <div class="space-y-3">
+            <code class="block break-all select-all">{{ selectedModel.modelName }}</code
+            ><Button variant="outline" @click="copyModel">{{
+              copied ? "已复制" : "复制模型 ID"
+            }}</Button>
+            <p v-if="copyError" role="alert" class="text-destructive">{{ copyError }}</p>
+            <ClientConnectionInfo :model-name="selectedModel.modelName" />
           </div>
-          <Badge variant="secondary" class="shrink-0 font-mono text-[10px]">
-            {{ availableProviderCount(model.providers) }}/{{ model.providers.length }}
-          </Badge>
-        </div>
-        <div class="flex flex-wrap items-center gap-1.5 text-[11px]">
-          <span class="rounded bg-accent px-1.5 py-0.5 font-mono">{{
-            formatTokens(model.maxInputTokens)
-          }}</span>
-          <span
-            v-if="model.toolCalling"
-            class="inline-flex items-center gap-0.5 rounded bg-cta/10 px-1.5 py-0.5 text-cta"
-          >
-            <Wrench class="h-3 w-3" /> 工具
-          </span>
-          <span
-            v-if="model.vision"
-            class="inline-flex items-center gap-0.5 rounded bg-cta/10 px-1.5 py-0.5 text-cta"
-          >
-            <Eye class="h-3 w-3" /> 视觉
-          </span>
-          <span
-            v-if="model.thinking || model.adaptiveThinking"
-            class="inline-flex items-center gap-0.5 rounded bg-cta/10 px-1.5 py-0.5 text-cta"
-          >
-            <Brain class="h-3 w-3" /> 推理
-          </span>
-        </div>
-        <div class="flex items-center justify-between text-[11px] text-muted-foreground">
-          <span
-            >输入
-            <span class="font-mono text-foreground">{{
-              formatPrice(cheapestPrice(model.providers, "inputPricePer1m"))
-            }}</span></span
-          >
-          <span
-            >输出
-            <span class="font-mono text-foreground">{{
-              formatPrice(cheapestPrice(model.providers, "outputPricePer1m"))
-            }}</span></span
-          >
-        </div>
-      </button>
-      <div
-        v-if="filteredModels.length === 0"
-        class="flex items-center justify-center py-12 text-muted-foreground"
-      >
-        <div class="flex flex-col items-center gap-2">
-          <Cpu class="h-8 w-8 opacity-30" />
-          <p class="text-sm">未找到匹配的模型</p>
-        </div>
-      </div>
-    </div>
-
-    <!-- 模型详情抽屉 -->
-    <Sheet v-model:open="sheetOpen">
-      <SheetContent side="right" class="flex w-full flex-col gap-0 p-0 sm:max-w-lg">
-        <SheetHeader class="flex flex-col gap-2 border-b border-border p-4 pr-10">
-          <div class="flex items-center gap-2">
-            <Sparkles class="h-4 w-4 text-cta" />
-            <SheetTitle class="font-mono text-lg font-bold">{{
-              selectedModel?.modelName
-            }}</SheetTitle>
-          </div>
-          <SheetDescription v-if="selectedModel?.description" class="text-sm text-muted-foreground">
-            {{ selectedModel.description }}
-          </SheetDescription>
-          <SheetDescription v-else class="text-xs text-muted-foreground">暂无描述</SheetDescription>
-          <div v-if="selectedModel" class="flex flex-wrap gap-1.5 pt-1">
-            <Badge
-              v-for="cap in capabilityList(selectedModel)"
-              :key="cap.label"
-              :variant="cap.active ? 'default' : 'outline'"
-              class="gap-1 text-[10px]"
-              :class="cap.active && 'bg-cta/15 text-cta hover:bg-cta/20'"
+          <section class="space-y-3">
+            <h2>标称能力</h2>
+            <p class="break-words whitespace-pre-wrap">
+              {{ selectedModel.description || "暂无描述" }}
+            </p>
+            <p class="tabular-nums">
+              最大输入 {{ selectedModel.maxInputTokens }} / 最大输出
+              {{ selectedModel.maxOutputTokens }} Token
+            </p>
+            <p>{{ declarations(selectedModel) }}</p>
+          </section>
+          <section class="space-y-3">
+            <h2>提供者连接 · {{ selectedModel.providers.length }} 条</h2>
+            <p class="text-sm text-muted-foreground">
+              价格 USD / 百万 Token；null
+              保留继承，显式覆盖只作用于本连接。连接优先级数字越小越优先。
+            </p>
+            <p v-if="!sortedConnections.length">尚未关联提供者。</p>
+            <article
+              v-for="(connection, index) in sortedConnections"
+              :key="index"
+              class="space-y-2 rounded border p-4"
             >
-              <component :is="cap.icon" class="h-3 w-3" />
-              {{ cap.label }}
-            </Badge>
-          </div>
-        </SheetHeader>
-
-        <div v-if="selectedModel" class="min-h-0 flex-1 overflow-auto p-4">
-          <!-- 概览 -->
-          <div class="grid grid-cols-3 gap-2 text-center">
-            <div class="rounded-lg border border-border bg-card p-2">
-              <div class="text-[10px] text-muted-foreground">上下文</div>
-              <div class="font-mono text-sm font-medium text-foreground">
-                {{ formatTokens(selectedModel.maxInputTokens) }}
-              </div>
-            </div>
-            <div class="rounded-lg border border-border bg-card p-2">
-              <div class="text-[10px] text-muted-foreground">输出上限</div>
-              <div class="font-mono text-sm font-medium text-foreground">
-                {{ formatTokens(selectedModel.maxOutputTokens) }}
-              </div>
-            </div>
-            <div class="rounded-lg border border-border bg-card p-2">
-              <div class="text-[10px] text-muted-foreground">可用渠道</div>
-              <div class="font-mono text-sm font-medium text-foreground">
-                {{ availableProviderCount(selectedModel.providers) }}/{{
-                  selectedModel.providers.length
+              <h3 class="font-semibold break-words">
+                {{ connection.providerDisplayName || connection.providerId }}
+              </h3>
+              <p class="font-mono break-all">{{ connection.providerModelId }}</p>
+              <p>
+                {{ protocolLabel(connection.compatibility) }} ·
+                {{ connection.enabled ? "✓ 配置启用" : "− 配置停用" }} · 优先级
+                {{ connection.priority }}
+              </p>
+              <p>
+                输入 / 输出 / 缓存价格：{{
+                  connection.inputPricePer1m === null
+                    ? "未知"
+                    : formatPrice(connection.inputPricePer1m)
                 }}
-              </div>
-            </div>
-          </div>
-
-          <!-- 价格区间 -->
-          <div class="mt-4 rounded-lg border border-border bg-card p-3">
-            <div class="mb-2 font-mono text-xs text-muted-foreground">价格区间（每 1M tokens）</div>
-            <div class="grid grid-cols-3 gap-2 text-sm">
-              <div>
-                <div class="text-[10px] text-muted-foreground">输入</div>
-                <div class="font-mono text-foreground tabular-nums">
-                  {{ formatPriceRange(priceRange(selectedModel.providers, "inputPricePer1m")) }}
-                </div>
-              </div>
-              <div>
-                <div class="text-[10px] text-muted-foreground">输出</div>
-                <div class="font-mono text-foreground tabular-nums">
-                  {{ formatPriceRange(priceRange(selectedModel.providers, "outputPricePer1m")) }}
-                </div>
-              </div>
-              <div>
-                <div class="text-[10px] text-muted-foreground">缓存读</div>
-                <div class="font-mono text-foreground tabular-nums">
-                  {{ formatPriceRange(priceRange(selectedModel.providers, "cacheReadPricePer1m")) }}
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <!-- Provider 列表 -->
-          <div class="mt-4">
-            <div class="mb-2 font-mono text-xs text-muted-foreground">
-              Provider 渠道（{{ selectedModel.providers.length }}）
-            </div>
-            <div class="flex flex-col gap-2">
-              <div
-                v-for="p in sortedProviders(selectedModel.providers)"
-                :key="p.providerModelId"
-                class="rounded-lg border border-border bg-card p-3"
-                :class="!p.enabled && 'opacity-60'"
-              >
-                <div class="flex items-center justify-between gap-2">
-                  <div class="min-w-0 flex-1">
-                    <div class="flex items-center gap-1.5">
-                      <span class="truncate font-mono text-sm font-medium text-foreground">{{
-                        p.providerDisplayName
-                      }}</span>
-                      <span
-                        v-if="p.enabled"
-                        class="inline-flex items-center gap-0.5 rounded bg-cta/15 px-1.5 py-0 text-[9px] font-medium text-cta"
-                        >可用</span
-                      >
-                      <span
-                        v-else
-                        class="inline-flex items-center gap-0.5 rounded bg-muted px-1.5 py-0 text-[9px] font-medium text-muted-foreground"
-                        >停用</span
-                      >
-                    </div>
-                    <div class="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">
-                      {{ p.providerModelId }}
-                    </div>
-                  </div>
-                  <Badge variant="outline" class="font-mono text-[10px]">P{{ p.priority }}</Badge>
-                </div>
-                <div class="mt-2 grid grid-cols-3 gap-2 text-[11px]">
-                  <div>
-                    <span class="text-muted-foreground">输入 </span>
-                    <span class="font-mono text-foreground tabular-nums">{{
-                      formatPrice(p.inputPricePer1m)
-                    }}</span>
-                  </div>
-                  <div>
-                    <span class="text-muted-foreground">输出 </span>
-                    <span class="font-mono text-foreground tabular-nums">{{
-                      formatPrice(p.outputPricePer1m)
-                    }}</span>
-                  </div>
-                  <div>
-                    <span class="text-muted-foreground">缓存 </span>
-                    <span class="font-mono text-foreground tabular-nums">{{
-                      formatPrice(p.cacheReadPricePer1m)
-                    }}</span>
-                  </div>
-                </div>
-                <div class="mt-1.5 flex flex-wrap gap-1 text-[10px]">
-                  <span v-if="p.toolCalling" class="rounded bg-cta/10 px-1 py-0 text-cta"
-                    >工具</span
-                  >
-                  <span v-if="p.vision" class="rounded bg-cta/10 px-1 py-0 text-cta">视觉</span>
-                  <span v-if="p.thinking" class="rounded bg-cta/10 px-1 py-0 text-cta">推理</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </SheetContent>
-    </Sheet>
+                /
+                {{
+                  connection.outputPricePer1m === null
+                    ? "未知"
+                    : formatPrice(connection.outputPricePer1m)
+                }}
+                /
+                {{
+                  connection.cacheReadPricePer1m === null
+                    ? "未知"
+                    : formatPrice(connection.cacheReadPricePer1m)
+                }}
+              </p>
+              <p>
+                最大输入：{{
+                  connection.maxInputTokens === null
+                    ? `继承（${selectedModel.maxInputTokens}）`
+                    : `${connection.maxInputTokens}（覆盖）`
+                }}；最大输出：{{
+                  connection.maxOutputTokens === null
+                    ? `继承（${selectedModel.maxOutputTokens}）`
+                    : `${connection.maxOutputTokens}（覆盖）`
+                }}
+              </p>
+              <p>
+                工具调用：{{
+                  override(connection.toolCalling, selectedModel.toolCalling)
+                }}；视觉：{{ override(connection.vision, selectedModel.vision) }}
+              </p>
+              <p>
+                推理：{{ override(connection.thinking, selectedModel.thinking) }}；自适应推理：{{
+                  override(connection.adaptiveThinking, selectedModel.adaptiveThinking)
+                }}
+              </p>
+            </article>
+          </section>
+        </div></SheetContent
+      ></Sheet
+    >
   </PageShell>
 </template>

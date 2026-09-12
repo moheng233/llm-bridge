@@ -4,4 +4,7 @@ import type { LanguageModelToolResultContent } from "./LanguageModelToolResultCo
 /**
  * 工具结果部分，对应 LanguageModelToolResultPart
  */
-export type LanguageModelToolResultPart = { callId: string, content: Array<LanguageModelToolResultContent>, };
+export type LanguageModelToolResultPart = {
+  callId: string;
+  content: Array<LanguageModelToolResultContent>;
+};

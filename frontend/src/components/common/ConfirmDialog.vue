@@ -4,6 +4,7 @@ const state = getConfirmState();
 
 <template>
   <Dialog
+    v-if="state"
     :open="state?.open ?? false"
     @update:open="
       (v: boolean) => {
@@ -13,14 +14,12 @@ const state = getConfirmState();
   >
     <DialogContent class="sm:max-w-sm">
       <DialogHeader>
-        <DialogTitle class="font-mono text-sm">
+        <DialogTitle class="text-lg">
           {{ state?.title ?? "" }}
         </DialogTitle>
-        <DialogDescription
-          v-if="state?.description"
-          class="text-sm text-muted-foreground"
-          v-html="state.description"
-        />
+        <DialogDescription v-if="state?.description" class="text-sm text-muted-foreground">
+          {{ state.description }}
+        </DialogDescription>
       </DialogHeader>
       <div class="flex gap-2 pt-2">
         <Button variant="outline" class="flex-1 cursor-pointer" @click="state?.resolve(false)">

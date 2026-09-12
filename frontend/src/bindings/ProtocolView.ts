@@ -4,4 +4,12 @@ import type { ProviderCompatibility } from "./ProviderCompatibility";
 /**
  * ProviderProtocol 响应。
  */
-export type ProtocolView = { id: number, providerId: number, protocol: ProviderCompatibility, baseUrl: string, compatSettings: string | null, enabled: boolean, priority: number, };
+export type ProtocolView = {
+  id: number;
+  providerId: number;
+  protocol: ProviderCompatibility;
+  baseUrl: string;
+  compatSettings: string | null;
+  enabled: boolean;
+  priority: number;
+};

@@ -4,7 +4,7 @@
 export function statusBadgeFor(status: string): { label: string; cls: string } {
   switch (status) {
     case "success":
-      return { label: "成功", cls: "text-cta border-cta/30 bg-cta/10" };
+      return { label: "成功", cls: "text-primary border-primary/30 bg-primary/10" };
     case "error":
       return { label: "失败", cls: "text-destructive border-destructive/30 bg-destructive/10" };
     case "cancelled":

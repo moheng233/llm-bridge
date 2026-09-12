@@ -5,4 +5,8 @@ import type { JsonValue } from "./serde_json/JsonValue";
 /**
  * 思考/推理内容部分，对应 LanguageModelThinkingPart
  */
-export type LanguageModelThinkingPart = { value: LanguageModelThinkingValue, id?: string, metadata?: JsonValue, };
+export type LanguageModelThinkingPart = {
+  value: LanguageModelThinkingValue;
+  id?: string;
+  metadata?: JsonValue;
+};

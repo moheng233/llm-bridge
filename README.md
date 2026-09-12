@@ -394,6 +394,8 @@ resolve_model(model_name)
 | `/api/v1/admin/providers/{id}/models` | GET / POST | Provider 下的模型关联 |
 | `/api/v1/admin/providers/{id}/models/{mid}` | PUT / DELETE | 更新 / 删除关联 |
 | `/api/v1/admin/providers/{id}/protocols` | GET / PUT | 查看 / 全量替换提供者协议列表 |
+| `/api/v1/admin/model-connections` | POST | 原子保存本批新模型定义与连接；已存在连接原样复用 |
+| `/api/v1/admin/models-import/preview` | GET | 只读目录预览与本地匹配；仅创建时预填 |
 | `/api/v1/admin/users` | GET | 列出所有用户 |
 | `/api/v1/admin/users/{id}/role` | PATCH | 修改用户角色 |
 
@@ -408,15 +410,16 @@ Vue 3 单页应用位于 `frontend/`，使用 Vue Router、Pinia、Tailwind CSS 
 | 页面 | 路由 | 权限 | 功能 |
 |------|------|------|------|
 | 登录 | `/login` | 无 | 触发 OIDC 跳转 |
-| 用量仪表盘 | `/` `/dashboard` | Session | 当前/上周期用量、真实环比、日趋势与最近请求 |
-| 模型目录 | `/models` | Session | 模型表格，支持搜索、排序、全部/可用筛选 |
-| API Token | `/tokens` | Session | 当前用户 Token 的 CRUD |
-| 请求追踪 | `/traces` `/traces/:id` | Session | 用户隔离的筛选、分页、生命周期与 Opt-In 内容快照 |
-| 模型管理 | `/admin/models` | Admin | 标称能力、提供者连接与目录导入 |
-| 提供者管理 | `/providers` | Admin | 卡片列表，含 Provider、Protocol、ModelProvider 关联管理 |
-| 用户管理 | `/users` | Admin | 用户列表 + 角色修改 |
+| 概览 | `/` `/dashboard` | Session | 按角色显示全站/个人用量、接入引导、趋势与最近请求 |
+| 使用模型 | `/models` | Session | 本地模型搜索、能力/可路由筛选、未知价格与客户端接入说明 |
+| 访问令牌 | `/tokens` | Session | 个人 Token、模型范围与配额自限；一次性明文展示 |
+| 请求记录 | `/traces` `/traces/:id` | Session | 按角色隔离的筛选、分页、生命周期与 Opt-In 内容快照 |
+| 模型定义 | `/admin/models` `/admin/models/new` `/admin/models/:id` | Admin | 创建与维护共享标称定义、独立连接覆盖及手动上游检测 |
+| 提供者 | `/providers` `/providers/:id` | Admin | 接入实例列表、连接与协议/凭据的单次保存 |
+| 接入模型 | `/admin/setup` | Admin | 目录只读预填或手动配置；提供者与批量模型连接两个事务检查点 |
+| 用户 | `/users` | Admin | 角色变更确认；修改自身角色后刷新权限 |
 
-侧边栏按 RBAC 分组：菜单区（仪表盘、模型目录、API Token、请求追踪）所有登录用户可见；管理区（提供者、模型、用户）仅 Admin 可见。未认证访问受保护路由会自动跳转到 `/login`。`Ctrl+K` / `Cmd+K` 打开全局页面与模型搜索。
+侧边栏按使用与管理任务分组；管理入口仅 Admin 可见。未认证访问受保护路由会跳转到 `/login`。`Ctrl+K` / `Cmd+K` 搜索页面与本地模型。目录只在首次创建时预填，保存后独立维护，不同步或覆盖；客户端使用网关模型 ID 和个人访问令牌，不使用上游 Key。手动检测仅表示本浏览会话最近结果，不是实时健康监控。
 
 ---
 

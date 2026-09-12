@@ -1,11 +1,19 @@
 // Auth Pinia store — 用户认证状态管理
 import { type MeResponse } from "@bindings/MeResponse";
 
+import { useConnectionTestsStore } from "~/stores/connection-tests";
+
 export const useAuthStore = defineStore("auth", () => {
   const user = ref<MeResponse | null>(null);
   const loading = ref(true);
   const error = ref("");
   const isAdmin = ref(false);
+  const connectionTests = useConnectionTestsStore();
+  watch(
+    () => user.value?.userId,
+    () => connectionTests.clear(),
+    { flush: "sync" },
+  );
 
   const isAuthenticated = computed(() => user.value !== null);
 
@@ -39,6 +47,7 @@ export const useAuthStore = defineStore("auth", () => {
   }
 
   async function logout() {
+    connectionTests.clear();
     await fetch("/auth/logout", { method: "POST", credentials: "include" });
     user.value = null;
     isAdmin.value = false;

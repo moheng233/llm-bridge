@@ -3,4 +3,10 @@ import type { CatalogLinkPreview } from "./CatalogLinkPreview";
 import type { CatalogModelPreview } from "./CatalogModelPreview";
 import type { CatalogProviderPreview } from "./CatalogProviderPreview";
 
-export type CatalogPreview = { sourceRev: string, generatedAt: string, models: Array<CatalogModelPreview>, providers: Array<CatalogProviderPreview>, links: Array<CatalogLinkPreview>, };
+export type CatalogPreview = {
+  sourceRev: string;
+  generatedAt: string;
+  models: Array<CatalogModelPreview>;
+  providers: Array<CatalogProviderPreview>;
+  links: Array<CatalogLinkPreview>;
+};

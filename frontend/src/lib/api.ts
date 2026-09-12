@@ -39,8 +39,7 @@ export function formatTokens(n: number): string {
  * 返回 null 表示无法解析。
  */
 export function parseTokens(input: string | number): number | null {
-  if (typeof input === "number")
-    return Number.isFinite(input) && input >= 0 && Number.isSafeInteger(Math.floor(input)) ? Math.floor(input) : null;
+  if (typeof input === "number") return Number.isSafeInteger(input) && input >= 0 ? input : null;
   const s = input.trim();
   if (s === "") return null;
   const m = s.match(/^(\d+(?:\.\d+)?|\.\d+)\s*([MmKk])?$/);
@@ -48,14 +47,14 @@ export function parseTokens(input: string | number): number | null {
   const n = parseFloat(m[1]);
   if (!Number.isFinite(n) || n < 0) return null;
   const unit = (m[2] ?? "").toUpperCase();
-  const count = Math.floor(n * (unit === "M" ? 1_000_000 : unit === "K" ? 1_000 : 1));
+  const count = n * (unit === "M" ? 1_000_000 : unit === "K" ? 1_000 : 1);
   return Number.isSafeInteger(count) ? count : null;
 }
 
 // Utility: format price per 1M tokens
 export function formatPrice(price: number | null | undefined): string {
-  if (price == null) return "—";
-  if (price === 0) return "free";
+  if (price == null) return "未知";
+  if (price === 0) return "免费";
   return `$${price.toFixed(2)}`;
 }
 

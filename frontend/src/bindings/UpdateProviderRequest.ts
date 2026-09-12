@@ -3,16 +3,21 @@ import type { ApiKeyEntry } from "./ApiKeyEntry";
 import type { ProtocolInput } from "./ProtocolInput";
 import type { ProviderQuotaAdapter } from "./ProviderQuotaAdapter";
 
-export type UpdateProviderRequest = { displayName: string, apiKeys: Array<ApiKeyEntry>, 
-/**
- * 同 CreateProviderRequest.protocols语义：传入则同步替换；为空 [] 表示清空所有协议。
- */
-protocols: Array<ProtocolInput>, enabled: boolean, priority: number, 
-/**
- * 额度适配器类型；未传或为 null 表示不查询上游额度。
- */
-quotaAdapter: ProviderQuotaAdapter | null, 
-/**
- * 额度适配器配置（JSON 字符串）。
- */
-quotaAdapterConfig: string | null, };
+export type UpdateProviderRequest = {
+  displayName: string;
+  apiKeys: Array<ApiKeyEntry>;
+  /**
+   * 同 CreateProviderRequest.protocols语义：传入则同步替换；为空 [] 表示清空所有协议。
+   */
+  protocols: Array<ProtocolInput>;
+  enabled: boolean;
+  priority: number;
+  /**
+   * 额度适配器类型；未传或为 null 表示不查询上游额度。
+   */
+  quotaAdapter: ProviderQuotaAdapter | null;
+  /**
+   * 额度适配器配置（JSON 字符串）。
+   */
+  quotaAdapterConfig: string | null;
+};

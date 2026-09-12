@@ -3,12 +3,22 @@ import type { ApiKeyDisplay } from "./ApiKeyDisplay";
 import type { ProtocolView } from "./ProtocolView";
 import type { ProviderQuotaAdapter } from "./ProviderQuotaAdapter";
 
-export type ProviderResponse = { id: number, providerId: string, displayName: string, apiKeys: Array<ApiKeyDisplay>, enabled: boolean, priority: number, createdAt: number, modelCount: number, protocols: Array<ProtocolView>, 
-/**
- * 额度适配器类型；None 表示不查询上游额度。
- */
-quotaAdapter: ProviderQuotaAdapter | null, 
-/**
- * 额度适配器配置（JSON 字符串）。
- */
-quotaAdapterConfig: string | null, };
+export type ProviderResponse = {
+  id: number;
+  providerId: string;
+  displayName: string;
+  apiKeys: Array<ApiKeyDisplay>;
+  enabled: boolean;
+  priority: number;
+  createdAt: number;
+  modelCount: number;
+  protocols: Array<ProtocolView>;
+  /**
+   * 额度适配器类型；None 表示不查询上游额度。
+   */
+  quotaAdapter: ProviderQuotaAdapter | null;
+  /**
+   * 额度适配器配置（JSON 字符串）。
+   */
+  quotaAdapterConfig: string | null;
+};

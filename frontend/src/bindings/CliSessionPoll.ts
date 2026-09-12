@@ -3,4 +3,4 @@
 /**
  * 轮询响应：pending / consumed / expired（无 Token）。
  */
-export type CliSessionPoll = { status: string, };
+export type CliSessionPoll = { status: string };

@@ -3,16 +3,23 @@ import type { DailyPoint } from "./DailyPoint";
 import type { ModelRanking } from "./ModelRanking";
 import type { PrevSummary } from "./PrevSummary";
 
-export type UsageSummaryResponse = { days: number, totalRequests: number, totalTokens: number, totalCostUsd: number, errorRate: number, avgTtftMs: number | null, 
-/**
- * 按日序列（升序）
- */
-daily: Array<DailyPoint>, 
-/**
- * 模型用量排行（按 total_tokens 降序）
- */
-modelRanking: Array<ModelRanking>, 
-/**
- * 上一周期（同长度）真实汇总，用于真环比；无数据时为 null。
- */
-prevSummary: PrevSummary | null, };
+export type UsageSummaryResponse = {
+  days: number;
+  totalRequests: number;
+  totalTokens: number;
+  totalCostUsd: number;
+  errorRate: number;
+  avgTtftMs: number | null;
+  /**
+   * 按日序列（升序）
+   */
+  daily: Array<DailyPoint>;
+  /**
+   * 模型用量排行（按 total_tokens 降序）
+   */
+  modelRanking: Array<ModelRanking>;
+  /**
+   * 上一周期（同长度）真实汇总，用于真环比；无数据时为 null。
+   */
+  prevSummary: PrevSummary | null;
+};

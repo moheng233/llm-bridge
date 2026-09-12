@@ -15,6 +15,9 @@ import {
 import { useApiCall } from "~/composables/useApiCall";
 import { formatTokens, getApi } from "~/lib/api";
 import { statusBadgeFor } from "~/lib/trace-status";
+import { useAuthStore } from "~/stores/auth";
+const auth = useAuthStore();
+const availableModels = useApiCall(() => getApi().models.listAvailableModels());
 
 const api = getApi();
 
@@ -35,7 +38,7 @@ const {
   error,
   execute: fetchSummary,
 } = useApiCall((days: number) => api.usage.getUsageSummary({ days }));
-const { execute: fetchRecent } = useApiCall(() =>
+const { error: recentError, execute: fetchRecent } = useApiCall(() =>
   api.usage.listTraces({
     status: null,
     model: null,
@@ -50,14 +53,17 @@ const { execute: fetchRecent } = useApiCall(() =>
 );
 
 async function load() {
-  const s = await fetchSummary(Number(rangeDays.value));
-  if (s) summary.value = s;
-  const r = await fetchRecent();
+  const [s, r] = await Promise.all([
+    fetchSummary(Number(rangeDays.value)),
+    fetchRecent(),
+    availableModels.execute(),
+  ]);
+  summary.value = s ?? null;
   if (r) recentTraces.value = r.items;
 }
 
 watch(rangeDays, load);
-watchEffect(load);
+onMounted(load);
 
 const daily = computed(() => summary.value?.daily ?? []);
 const ranking = computed(() => (summary.value?.modelRanking ?? []).slice(0, 6));
@@ -75,8 +81,7 @@ const kpis = computed(
 /** 同长度上一周期汇总（后端 prevSummary；缺数据/无请求时为 null，前端不得伪造百分比）。 */
 type PrevTotals = { totalRequests: number; totalTokens: number; totalCostUsd: number } | null;
 const prev = computed<PrevTotals>(() => {
-  const p = (summary.value as UsageSummaryResponse & { prevSummary?: PrevTotals })
-    ?.prevSummary;
+  const p = (summary.value as UsageSummaryResponse & { prevSummary?: PrevTotals })?.prevSummary;
   if (!p) return null;
   // 上一周期全为 0 时无法计算有意义百分比，按缺数据处理
   if (p.totalRequests === 0 && p.totalTokens === 0 && p.totalCostUsd === 0) return null;
@@ -107,21 +112,18 @@ function formatCost(usd: number): string {
   return `$${usd.toFixed(3)}`;
 }
 
-
 /** 缓存率 = 缓存 tokens / 输入 tokens（缓存命中是输入前缀的重用） */
 function cacheRate(d: { inputTokens: number; cachedTokens: number }): string {
   if (d.inputTokens <= 0) return "0.0";
   return ((d.cachedTokens / d.inputTokens) * 100).toFixed(1);
 }
-
-
 </script>
 
 <template>
   <PageShell>
     <SectionHeader
-      title="用量仪表盘"
-      description="请求量、Token 消耗与成本总览"
+      title="概览"
+      :description="auth.isAdmin ? '全站用量 · 管理员视角' : '我的用量 · 仅当前用户'"
       :icon="LayoutDashboard"
     >
       <template #actions>
@@ -140,247 +142,294 @@ function cacheRate(d: { inputTokens: number; cachedTokens: number }): string {
 
     <ErrorState v-if="error" :error="error" inline @retry="load" />
 
-    <!-- KPI 卡片 -->
+    <ErrorState
+      v-if="availableModels.error.value"
+      :error="availableModels.error.value"
+      @retry="availableModels.execute"
+    />
+    <div
+      v-if="
+        !availableModels.loading.value &&
+        availableModels.data.value &&
+        !error &&
+        summary?.totalRequests === 0
+      "
+      class="space-y-3 rounded-lg border bg-card p-6"
+    >
+      <template v-if="!availableModels.data.value.length && auth.isAdmin"
+        ><h2>接入第一个模型</h2>
+        <p class="text-muted-foreground">
+          配置提供者、协议与上游 Key，再添加模型连接；保存配置不代表上游实时可达。
+        </p>
+        <Button as-child
+          ><RouterLink to="/admin/setup">接入第一个模型</RouterLink></Button
+        ></template
+      >
+      <template v-else-if="!availableModels.data.value.length"
+        ><h2>尚无可路由模型</h2>
+        <p class="text-muted-foreground">请联系管理员配置并启用模型连接。</p></template
+      >
+      <template v-else
+        ><h2>模型已配置，尚无请求记录</h2>
+        <p class="text-muted-foreground">
+          使用个人访问令牌从客户端发起请求。上游检测不等同于客户端使用验证。
+        </p>
+        <div class="flex flex-wrap gap-2">
+          <Button as-child><RouterLink to="/models">查看使用模型</RouterLink></Button
+          ><Button as-child variant="outline"
+            ><RouterLink to="/tokens">创建个人 Token</RouterLink></Button
+          >
+        </div></template
+      >
+    </div>
     <div v-if="loading && !summary" class="grid grid-cols-2 gap-4 xl:grid-cols-4">
-      <Skeleton v-for="i in 4" :key="i" class="h-24 w-full rounded-xl" />
+      <Skeleton v-for="i in 4" :key="i" class="h-24 rounded-xl" />
     </div>
-    <div v-else class="grid grid-cols-2 gap-4 xl:grid-cols-4">
-      <Card class="gap-2 py-4">
-        <CardHeader class="px-4 pb-0">
-          <div class="flex items-center justify-between">
-            <CardDescription class="text-xs">总请求数</CardDescription>
-            <Activity class="h-4 w-4 text-muted-foreground" />
-          </div>
-          <CardTitle class="font-mono text-2xl">{{
-            kpis.totalRequests.toLocaleString()
-          }}</CardTitle>
-        </CardHeader>
-        <CardContent class="px-4 pt-0">
-          <span v-if="deltas.requests == null" class="text-xs text-muted-foreground">
-            上周期无数据
-          </span>
-          <span
-            v-else-if="deltas.requests === 0"
-            class="flex items-center gap-1 text-xs text-muted-foreground"
-          >
-            持平（与上周期相比）
-          </span>
-          <span
-            v-else
-            :class="['flex items-center gap-1 text-xs', deltas.requests > 0 ? 'text-cta' : 'text-chart-2']"
-          >
-            <ArrowUpRight v-if="deltas.requests > 0" class="h-3 w-3" />
-            <ArrowDownRight v-else class="h-3 w-3" />
-            {{ deltas.requests > 0 ? "+" : "" }}{{ deltas.requests.toFixed(1) }}% 环比
-          </span>
-        </CardContent>
-      </Card>
-
-      <Card class="gap-2 py-4">
-        <CardHeader class="px-4 pb-0">
-          <div class="flex items-center justify-between">
-            <CardDescription class="text-xs">Token 消耗</CardDescription>
-            <Zap class="h-4 w-4 text-muted-foreground" />
-          </div>
-          <CardTitle class="font-mono text-2xl">{{ formatTokens(kpis.totalTokens) }}</CardTitle>
-        </CardHeader>
-        <CardContent class="px-4 pt-0">
-          <span v-if="deltas.tokens == null" class="text-xs text-muted-foreground">
-            上周期无数据
-          </span>
-          <span
-            v-else-if="deltas.tokens === 0"
-            class="flex items-center gap-1 text-xs text-muted-foreground"
-          >
-            持平（与上周期相比）
-          </span>
-          <span
-            v-else
-            :class="['flex items-center gap-1 text-xs', deltas.tokens > 0 ? 'text-cta' : 'text-chart-2']"
-          >
-            <ArrowUpRight v-if="deltas.tokens > 0" class="h-3 w-3" />
-            <ArrowDownRight v-else class="h-3 w-3" />
-            {{ deltas.tokens > 0 ? "+" : "" }}{{ deltas.tokens.toFixed(1) }}% 环比
-          </span>
-        </CardContent>
-      </Card>
-
-      <Card class="gap-2 py-4">
-        <CardHeader class="px-4 pb-0">
-          <div class="flex items-center justify-between">
-            <CardDescription class="text-xs">估算成本</CardDescription>
-            <Coins class="h-4 w-4 text-muted-foreground" />
-          </div>
-          <CardTitle class="font-mono text-2xl">{{ formatCost(kpis.totalCostUsd) }}</CardTitle>
-        </CardHeader>
-        <CardContent class="px-4 pt-0">
-          <span v-if="deltas.cost == null" class="text-xs text-muted-foreground">
-            上周期无数据
-          </span>
-          <span
-            v-else-if="deltas.cost === 0"
-            class="flex items-center gap-1 text-xs text-muted-foreground"
-          >
-            持平（与上周期相比）
-          </span>
-          <span
-            v-else
-            :class="['flex items-center gap-1 text-xs', deltas.cost > 0 ? 'text-cta' : 'text-chart-2']"
-          >
-            <ArrowUpRight v-if="deltas.cost > 0" class="h-3 w-3" />
-            <ArrowDownRight v-else class="h-3 w-3" />
-            {{ deltas.cost > 0 ? "+" : "" }}{{ deltas.cost.toFixed(1) }}% 环比
-          </span>
-        </CardContent>
-      </Card>
-
-      <Card class="gap-2 py-4">
-        <CardHeader class="px-4 pb-0">
-          <div class="flex items-center justify-between">
-            <CardDescription class="text-xs">错误率 / 平均 TTFT</CardDescription>
-            <AlertTriangle class="h-4 w-4 text-muted-foreground" />
-          </div>
-          <CardTitle class="font-mono text-2xl">
-            {{ (kpis.errorRate * 100).toFixed(1) }}%
-            <span class="text-sm font-normal text-muted-foreground">/ {{ kpis.avgTtftMs }}ms</span>
-          </CardTitle>
-        </CardHeader>
-        <CardContent class="px-4 pt-0">
-          <span class="flex items-center gap-1 text-xs text-muted-foreground">
-            <Clock3 class="h-3 w-3" /> 首 token 延迟
-          </span>
-        </CardContent>
-      </Card>
-    </div>
-
-    <!-- Token 消耗趋势（自绘柱状图） -->
-    <Card class="gap-3 py-4">
-      <CardHeader class="px-4 pb-0">
-        <div class="flex items-center justify-between">
-          <div>
-            <CardTitle class="text-sm font-medium">Token 消耗趋势</CardTitle>
-            <CardDescription class="text-xs"
-              >按日聚合输入 / 输出（含推理）/ 缓存 tokens</CardDescription
+    <template v-if="summary && !error && summary.totalRequests > 0">
+      <div class="flex flex-wrap gap-2">
+        <Button as-child variant="outline"><RouterLink to="/models">使用模型</RouterLink></Button
+        ><Button as-child variant="outline"><RouterLink to="/tokens">访问令牌</RouterLink></Button
+        ><Button v-if="auth.isAdmin" as-child variant="outline"
+          ><RouterLink to="/admin/setup">接入模型</RouterLink></Button
+        >
+      </div>
+      <div class="grid grid-cols-2 gap-4 xl:grid-cols-4">
+        <Card class="gap-2 py-4">
+          <CardHeader class="px-4 pb-0">
+            <div class="flex items-center justify-between">
+              <CardDescription class="text-xs">总请求数</CardDescription>
+              <Activity class="h-4 w-4 text-muted-foreground" />
+            </div>
+            <CardTitle class="font-mono text-2xl">{{
+              kpis.totalRequests.toLocaleString()
+            }}</CardTitle>
+          </CardHeader>
+          <CardContent class="px-4 pt-0">
+            <span v-if="deltas.requests == null" class="text-xs text-muted-foreground">
+              上周期无数据
+            </span>
+            <span
+              v-else-if="deltas.requests === 0"
+              class="flex items-center gap-1 text-xs text-muted-foreground"
             >
-          </div>
-          <div class="flex items-center gap-4 text-xs text-muted-foreground">
-            <span class="flex items-center gap-1.5">
-              <span class="h-2.5 w-2.5 rounded-sm bg-cta" /> 输入
+              持平（与上周期相比）
             </span>
-            <span class="flex items-center gap-1.5">
-              <span class="h-2.5 w-2.5 rounded-sm bg-chart-2" /> 输出
+            <span v-else class="flex items-center gap-1 text-xs text-muted-foreground">
+              <ArrowUpRight v-if="deltas.requests > 0" class="h-3 w-3" />
+              <ArrowDownRight v-else class="h-3 w-3" />
+              {{ deltas.requests > 0 ? "+" : "" }}{{ deltas.requests.toFixed(1) }}% 环比
             </span>
-            <span class="flex items-center gap-1.5">
-              <span class="h-2.5 w-2.5 rounded-sm bg-chart-4" /> 缓存
-            </span>
-          </div>
-        </div>
-      </CardHeader>
-      <CardContent class="px-4 pt-1">
-        <div class="flex h-44 items-end gap-1.5">
-          <TooltipProvider v-for="d in daily" :key="d.day">
-            <Tooltip>
-              <TooltipTrigger as-child>
-                <div class="group flex h-full min-w-0 flex-1 flex-col justify-end gap-0.5">
-                  <!-- 堆叠顺序（自下而上）：缓存 → 输入 → 输出 -->
-                  <div
-                    class="w-full rounded-t-sm bg-chart-2 transition-opacity group-hover:opacity-80"
-                    :style="{ height: `${(d.outputTokens / maxTokens) * 100}%` }"
-                  />
-                  <div
-                    class="w-full bg-cta transition-opacity group-hover:opacity-80"
-                    :style="{ height: `${(d.inputTokens / maxTokens) * 100}%` }"
-                  />
-                  <div
-                    class="w-full bg-chart-4 transition-opacity group-hover:opacity-80"
-                    :style="{ height: `${(d.cachedTokens / maxTokens) * 100}%` }"
-                  />
-                </div>
-              </TooltipTrigger>
-              <TooltipContent>
-                <div class="flex flex-col gap-0.5 font-mono text-xs">
-                  <span class="font-semibold">{{ d.day }}</span>
-                  <span>输入 {{ formatTokens(d.inputTokens) }}</span>
-                  <span>输出 {{ formatTokens(d.outputTokens) }}</span>
-                  <span> 缓存 {{ formatTokens(d.cachedTokens) }}（{{ cacheRate(d) }}%） </span>
-                  <span>{{ d.requests }} 次请求 · {{ formatCost(d.costUsd) }}</span>
-                </div>
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
-        </div>
-        <div class="mt-2 flex gap-1.5">
-          <span
-            v-for="(d, i) in daily"
-            :key="d.day"
-            class="min-w-0 flex-1 truncate text-center font-mono text-[10px] text-muted-foreground"
-            >{{ i % 2 === 0 ? d.day.slice(5) : "" }}</span
-          >
-        </div>
-      </CardContent>
-    </Card>
+          </CardContent>
+        </Card>
 
-    <!-- 模型排行 + 最近请求 -->
-    <div class="grid gap-4 lg:grid-cols-2">
+        <Card class="gap-2 py-4">
+          <CardHeader class="px-4 pb-0">
+            <div class="flex items-center justify-between">
+              <CardDescription class="text-xs">Token 消耗</CardDescription>
+              <Zap class="h-4 w-4 text-muted-foreground" />
+            </div>
+            <CardTitle class="font-mono text-2xl">{{ formatTokens(kpis.totalTokens) }}</CardTitle>
+          </CardHeader>
+          <CardContent class="px-4 pt-0">
+            <span v-if="deltas.tokens == null" class="text-xs text-muted-foreground">
+              上周期无数据
+            </span>
+            <span
+              v-else-if="deltas.tokens === 0"
+              class="flex items-center gap-1 text-xs text-muted-foreground"
+            >
+              持平（与上周期相比）
+            </span>
+            <span v-else class="flex items-center gap-1 text-xs text-muted-foreground">
+              <ArrowUpRight v-if="deltas.tokens > 0" class="h-3 w-3" />
+              <ArrowDownRight v-else class="h-3 w-3" />
+              {{ deltas.tokens > 0 ? "+" : "" }}{{ deltas.tokens.toFixed(1) }}% 环比
+            </span>
+          </CardContent>
+        </Card>
+
+        <Card class="gap-2 py-4">
+          <CardHeader class="px-4 pb-0">
+            <div class="flex items-center justify-between">
+              <CardDescription class="text-xs">已记录估算成本</CardDescription>
+              <Coins class="h-4 w-4 text-muted-foreground" />
+            </div>
+            <CardTitle class="font-mono text-2xl">{{ formatCost(kpis.totalCostUsd) }}</CardTitle>
+          </CardHeader>
+          <CardContent class="px-4 pt-0">
+            <span v-if="deltas.cost == null" class="text-xs text-muted-foreground">
+              上周期无数据
+            </span>
+            <span
+              v-else-if="deltas.cost === 0"
+              class="flex items-center gap-1 text-xs text-muted-foreground"
+            >
+              持平（与上周期相比）
+            </span>
+            <span v-else class="flex items-center gap-1 text-xs text-muted-foreground">
+              <ArrowUpRight v-if="deltas.cost > 0" class="h-3 w-3" />
+              <ArrowDownRight v-else class="h-3 w-3" />
+              {{ deltas.cost > 0 ? "+" : "" }}{{ deltas.cost.toFixed(1) }}% 环比
+            </span>
+          </CardContent>
+        </Card>
+
+        <Card class="gap-2 py-4">
+          <CardHeader class="px-4 pb-0">
+            <div class="flex items-center justify-between">
+              <CardDescription class="text-xs">错误率</CardDescription>
+              <AlertTriangle class="h-4 w-4 text-muted-foreground" />
+            </div>
+            <CardTitle class="font-mono text-2xl">
+              {{ (kpis.errorRate * 100).toFixed(1) }}%
+            </CardTitle>
+          </CardHeader>
+          <CardContent class="px-4 pt-0">
+            <span class="flex items-center gap-1 text-xs text-muted-foreground">
+              <Clock3 class="h-3 w-3" /> 平均首 Token 延迟：{{
+                kpis.avgTtftMs === null ? "—" : `${kpis.avgTtftMs} ms`
+              }}
+            </span>
+          </CardContent>
+        </Card>
+      </div>
+      <p class="text-sm text-muted-foreground">
+        成本基于已有 usage 与配置价格估算，非上游账单；缺价格或缺 usage 不代表免费。
+      </p>
+
+      <!-- Token 消耗趋势（自绘柱状图） -->
       <Card class="gap-3 py-4">
         <CardHeader class="px-4 pb-0">
-          <CardTitle class="text-sm font-medium">模型用量排行</CardTitle>
-          <CardDescription class="text-xs">按总 token 消耗排序</CardDescription>
-        </CardHeader>
-        <CardContent class="flex flex-col gap-3 px-4 pt-1">
-          <div v-for="r in ranking" :key="r.model" class="flex flex-col gap-1">
-            <div class="flex items-center justify-between gap-2 text-xs">
-              <span class="truncate font-mono">{{ r.model }}</span>
-              <span class="shrink-0 font-mono text-muted-foreground">
-                {{ formatTokens(r.totalTokens) }} · {{ formatCost(r.costUsd) }}
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <CardTitle class="text-lg font-semibold">Token 用量趋势</CardTitle>
+              <CardDescription class="text-xs"
+                >按日聚合输入 / 输出（含推理）/ 缓存 tokens</CardDescription
+              >
+            </div>
+            <div class="flex items-center gap-4 text-xs text-muted-foreground">
+              <span class="flex items-center gap-1.5">
+                <span class="h-2.5 w-2.5 rounded-sm bg-primary" /> 输入
+              </span>
+              <span class="flex items-center gap-1.5">
+                <span class="h-2.5 w-2.5 rounded-sm bg-chart-2" /> 输出
+              </span>
+              <span class="flex items-center gap-1.5">
+                <span class="h-2.5 w-2.5 rounded-sm bg-chart-4" /> 缓存
               </span>
             </div>
-            <div class="h-1.5 w-full overflow-hidden rounded-full bg-muted">
-              <div
-                class="h-full rounded-full bg-cta"
-                :style="{ width: `${(r.totalTokens / maxRankTokens) * 100}%` }"
-              />
-            </div>
+          </div>
+        </CardHeader>
+        <CardContent class="px-4 pt-1">
+          <div class="flex h-44 items-end gap-1.5">
+            <TooltipProvider v-for="d in daily" :key="d.day">
+              <Tooltip>
+                <TooltipTrigger as-child>
+                  <div class="group flex h-full min-w-0 flex-1 flex-col justify-end gap-0.5">
+                    <!-- 堆叠顺序（自下而上）：缓存 → 输入 → 输出 -->
+                    <div
+                      class="w-full rounded-t-sm bg-chart-2 transition-opacity group-hover:opacity-80"
+                      :style="{ height: `${(d.outputTokens / maxTokens) * 100}%` }"
+                    />
+                    <div
+                      class="w-full bg-primary transition-opacity group-hover:opacity-80"
+                      :style="{ height: `${(d.inputTokens / maxTokens) * 100}%` }"
+                    />
+                    <div
+                      class="w-full bg-chart-4 transition-opacity group-hover:opacity-80"
+                      :style="{ height: `${(d.cachedTokens / maxTokens) * 100}%` }"
+                    />
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <div class="flex flex-col gap-0.5 font-mono text-xs">
+                    <span class="font-semibold">{{ d.day }}</span>
+                    <span>输入 {{ formatTokens(d.inputTokens) }}</span>
+                    <span>输出 {{ formatTokens(d.outputTokens) }}</span>
+                    <span> 缓存 {{ formatTokens(d.cachedTokens) }}（{{ cacheRate(d) }}%） </span>
+                    <span>{{ d.requests }} 次请求 · {{ formatCost(d.costUsd) }}</span>
+                  </div>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          </div>
+          <div class="mt-2 flex gap-1.5">
+            <span
+              v-for="(d, i) in daily"
+              :key="d.day"
+              class="min-w-0 flex-1 truncate text-center font-mono text-xs text-muted-foreground"
+              >{{ i % 2 === 0 ? d.day.slice(5) : "" }}</span
+            >
           </div>
         </CardContent>
       </Card>
 
-      <Card class="gap-3 py-4">
-        <CardHeader class="px-4 pb-0">
-          <div class="flex items-center justify-between">
-            <div>
-              <CardTitle class="text-sm font-medium">最近请求</CardTitle>
-              <CardDescription class="text-xs">最新的 5 条请求追踪</CardDescription>
+      <!-- 模型排行 + 最近请求 -->
+      <div class="grid gap-4 lg:grid-cols-2">
+        <Card class="gap-3 py-4">
+          <CardHeader class="px-4 pb-0">
+            <CardTitle class="text-lg font-semibold">模型用量排行</CardTitle>
+            <CardDescription class="text-xs">按总 token 消耗排序</CardDescription>
+          </CardHeader>
+          <CardContent class="flex flex-col gap-3 px-4 pt-1">
+            <div v-for="r in ranking" :key="r.model" class="flex flex-col gap-1">
+              <div class="flex items-center justify-between gap-2 text-xs">
+                <span class="truncate font-mono">{{ r.model }}</span>
+                <span class="shrink-0 font-mono text-muted-foreground">
+                  {{ formatTokens(r.totalTokens) }} · {{ formatCost(r.costUsd) }}
+                </span>
+              </div>
+              <div class="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+                <div
+                  class="h-full rounded-full bg-primary"
+                  :style="{ width: `${(r.totalTokens / maxRankTokens) * 100}%` }"
+                />
+              </div>
             </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              class="h-7 cursor-pointer px-2 text-xs"
-              @click="$router.push('/traces')"
+          </CardContent>
+        </Card>
+
+        <Card class="gap-3 py-4">
+          <CardHeader class="px-4 pb-0">
+            <div class="flex items-center justify-between">
+              <div>
+                <CardTitle class="text-lg font-semibold">最近请求</CardTitle>
+                <CardDescription class="text-xs">最新的 5 条请求追踪</CardDescription>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                class="cursor-pointer px-2 text-sm"
+                @click="$router.push('/traces')"
+              >
+                查看全部 →
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent class="flex flex-col px-4 pt-1">
+            <ErrorState v-if="recentError" :error="recentError" @retry="load" />
+            <button
+              v-for="t in recentTraces"
+              :key="t.requestId"
+              class="-mx-2 flex cursor-pointer items-center justify-between gap-2 rounded-md px-2 py-2 text-left transition-colors hover:bg-accent/50"
+              @click="$router.push(`/traces/${t.requestId}`)"
             >
-              查看全部 →
-            </Button>
-          </div>
-        </CardHeader>
-        <CardContent class="flex flex-col px-4 pt-1">
-          <button
-            v-for="t in recentTraces"
-            :key="t.requestId"
-            class="-mx-2 flex cursor-pointer items-center justify-between gap-2 rounded-md px-2 py-2 text-left transition-colors hover:bg-accent/50"
-            @click="$router.push(`/traces/${t.requestId}`)"
-          >
-            <div class="flex min-w-0 items-center gap-2">
-              <Badge variant="outline" :class="['shrink-0 text-[10px]', statusBadgeFor(t.status).cls]">
-                {{ statusBadgeFor(t.status).label }}
-              </Badge>
-              <span class="truncate font-mono text-xs">{{ t.model }}</span>
-            </div>
-            <span class="shrink-0 font-mono text-[11px] text-muted-foreground">
-              {{ t.latencyMs != null ? `${(t.latencyMs / 1000).toFixed(1)}s` : "—" }}
-            </span>
-          </button>
-        </CardContent>
-      </Card>
-    </div>
+              <div class="flex min-w-0 items-center gap-2">
+                <Badge
+                  variant="outline"
+                  :class="['shrink-0 text-xs', statusBadgeFor(t.status).cls]"
+                >
+                  {{ statusBadgeFor(t.status).label }}
+                </Badge>
+                <span class="truncate font-mono text-xs">{{ t.model }}</span>
+              </div>
+              <span class="shrink-0 text-xs text-muted-foreground tabular-nums">
+                {{ t.latencyMs != null ? `${(t.latencyMs / 1000).toFixed(1)}s` : "—" }}
+              </span>
+            </button>
+          </CardContent>
+        </Card>
+      </div>
+    </template>
   </PageShell>
 </template>

@@ -1,5 +1,4 @@
-// 全局确认对话框 composable — 替代原 useConfirm.svelte.ts
-// 仅用于删除场景（启用/禁用、改角色直接执行）。
+// 全局确认器：危险操作、角色变更和未保存草稿共用。
 //
 // 用法：
 //   import { useConfirm } from '~/composables/useConfirm'
@@ -33,11 +32,14 @@ export function useConfirm() {
       current.value.resolve(false);
     }
     return new Promise<boolean>((resolve) => {
-      current.value = {
-        ...opts,
-        resolve,
-        open: true,
+      let settled = false;
+      const finish = (value: boolean) => {
+        if (settled) return;
+        settled = true;
+        if (current.value?.resolve === finish) current.value = null;
+        resolve(value);
       };
+      current.value = { ...opts, resolve: finish, open: true };
     });
   };
 }

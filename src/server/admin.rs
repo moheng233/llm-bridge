@@ -63,6 +63,10 @@ pub fn model_browse_routes() -> ApiRouter<AppState> {
 pub fn admin_crud_routes() -> ApiRouter<AppState> {
     ApiRouter::<AppState>::new()
         .group("admin")
+        .post("/api/v1/admin/model-connections", create_model_connections)
+        .json::<CreateModelConnectionsRequest, CreateModelConnectionsResponse>()
+        .auth()
+        .done()
         // Providers
         .get("/api/v1/admin/providers", list_providers)
         .response::<Vec<ProviderResponse>>()
@@ -191,6 +195,382 @@ fn db_err(e: impl std::fmt::Display) -> Response {
         Json(serde_json::json!({"error": e.to_string()})),
     )
         .into_response()
+}
+
+fn configuration_error(status: StatusCode, error: &str) -> Response {
+    (status, Json(serde_json::json!({"error": error}))).into_response()
+}
+
+async fn lock_configuration(tx: &mut toasty::Transaction<'_>) -> Result<(), Response> {
+    toasty::sql::statement("UPDATE llm_bridge_schema_lock SET id = id WHERE id = 1")
+        .exec(tx)
+        .await
+        .map_err(db_err)?;
+    Ok(())
+}
+
+fn validate_provider_fields(
+    keys: &[ApiKeyEntry],
+    protocols: &[ProtocolInput],
+    priority: i64,
+    config: Option<&str>,
+    existing: Option<&models::Provider>,
+) -> Result<(), Response> {
+    let invalid = |field: String| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error":"invalid_provider_configuration", "field":field})),
+        )
+            .into_response()
+    };
+    if !(0..=u32::MAX as i64).contains(&priority) {
+        return Err(invalid("priority".into()));
+    }
+    let mut labels = std::collections::HashSet::new();
+    for (index, key) in keys.iter().enumerate() {
+        if key.label.trim().is_empty()
+            || key.label.trim() != key.label
+            || !labels.insert(&key.label)
+        {
+            return Err(invalid(format!("apiKeys.{index}.label")));
+        }
+        if key.weight == 0 {
+            return Err(invalid(format!("apiKeys.{index}.weight")));
+        }
+        if key.key.trim().is_empty()
+            && !existing
+                .is_some_and(|provider| provider.api_keys.iter().any(|old| old.label == key.label))
+        {
+            return Err(invalid(format!("apiKeys.{index}.key")));
+        }
+    }
+    for (index, protocol) in protocols.iter().enumerate() {
+        let url = reqwest::Url::parse(&protocol.base_url)
+            .map_err(|_| invalid(format!("protocols.{index}.baseUrl")))?;
+        if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
+            return Err(invalid(format!("protocols.{index}.baseUrl")));
+        }
+        if !(0..=u32::MAX as i64).contains(&protocol.priority) {
+            return Err(invalid(format!("protocols.{index}.priority")));
+        }
+        if let Some(json) = protocol
+            .compat_settings
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+        {
+            serde_json::from_str::<serde_json::Value>(json)
+                .map_err(|_| invalid(format!("protocols.{index}.compatSettings")))?;
+        }
+    }
+    if let Some(json) = config.filter(|value| !value.trim().is_empty()) {
+        serde_json::from_str::<serde_json::Value>(json)
+            .map_err(|_| invalid("quotaAdapterConfig".into()))?;
+    }
+    Ok(())
+}
+
+fn validate_model_input(input: &ModelInput) -> Result<(), &'static str> {
+    if input.model_name.trim().is_empty() {
+        return Err("modelName");
+    }
+    if !(1..=u32::MAX as i64).contains(&input.max_input_tokens) {
+        return Err("maxInputTokens");
+    }
+    if !(1..=u32::MAX as i64).contains(&input.max_output_tokens) {
+        return Err("maxOutputTokens");
+    }
+    Ok(())
+}
+
+async fn create_model_in(
+    tx: &mut toasty::Transaction<'_>,
+    input: ModelInput,
+) -> Result<models::LLMModel, Response> {
+    let display_name = if input.display_name.is_empty() {
+        input.model_name.clone()
+    } else {
+        input.display_name
+    };
+    toasty::create!(models::LLMModel {
+        model_name: input.model_name,
+        display_name,
+        description: input.description,
+        max_input_tokens: input.max_input_tokens,
+        max_output_tokens: input.max_output_tokens,
+        tool_calling: input.tool_calling,
+        vision: input.vision,
+        thinking: input.thinking,
+        adaptive_thinking: input.adaptive_thinking,
+        status: input.status,
+    })
+    .exec(&mut *tx)
+    .await
+    .map_err(db_err)
+}
+
+#[derive(Deserialize, TS)]
+#[ts(export)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+enum ModelConnectionReference {
+    Existing { id: u64 },
+    New { model: ModelInput },
+}
+
+#[derive(Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+struct ModelConnectionItem {
+    model: ModelConnectionReference,
+    link: AddModelProviderRequest,
+}
+
+#[derive(Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+struct CreateModelConnectionsRequest {
+    items: Vec<ModelConnectionItem>,
+}
+
+#[derive(Serialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+struct CreatedModelConnection {
+    model_id: u64,
+    link: ModelLinkView,
+    model_created: bool,
+    link_created: bool,
+}
+
+#[derive(Serialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+struct CreateModelConnectionsResponse {
+    items: Vec<CreatedModelConnection>,
+}
+
+fn connection_item_error(
+    status: StatusCode,
+    error: &str,
+    item_index: usize,
+    field: &str,
+) -> Response {
+    (
+        status,
+        Json(serde_json::json!({"error": error, "itemIndex": item_index, "field": field})),
+    )
+        .into_response()
+}
+
+async fn create_model_connections(
+    State(state): State<AppState>,
+    AdminAuth(_user): AdminAuth,
+    Json(req): Json<CreateModelConnectionsRequest>,
+) -> Result<Json<CreateModelConnectionsResponse>, Response> {
+    use std::collections::HashMap;
+    if req.items.is_empty() {
+        return Err(configuration_error(
+            StatusCode::BAD_REQUEST,
+            "empty_selection",
+        ));
+    }
+    let mut definitions: HashMap<&str, &ModelInput> = HashMap::new();
+    for (index, item) in req.items.iter().enumerate() {
+        let invalid = |field: &str| {
+            connection_item_error(StatusCode::BAD_REQUEST, "invalid_connection", index, field)
+        };
+        if let ModelConnectionReference::New { model } = &item.model {
+            validate_model_input(model).map_err(|field| invalid(&format!("model.{field}")))?;
+            if let Some(previous) = definitions.insert(&model.model_name, model)
+                && previous != model
+            {
+                return Err(connection_item_error(
+                    StatusCode::BAD_REQUEST,
+                    "conflicting_model_definitions",
+                    index,
+                    "model",
+                ));
+            }
+        }
+        if item.link.provider_model_id.trim().is_empty() {
+            return Err(invalid("providerModelId"));
+        }
+        for (field, value) in [
+            ("maxInputTokens", item.link.max_input_tokens),
+            ("maxOutputTokens", item.link.max_output_tokens),
+        ] {
+            if value.is_some_and(|value| !(1..=u32::MAX as i64).contains(&value)) {
+                return Err(invalid(field));
+            }
+        }
+        for (field, value) in [
+            ("inputPricePer1m", item.link.input_price_per_1m),
+            ("outputPricePer1m", item.link.output_price_per_1m),
+            ("cacheReadPricePer1m", item.link.cache_read_price_per_1m),
+        ] {
+            if value.is_some_and(|value| !value.is_finite() || value < 0.0) {
+                return Err(invalid(field));
+            }
+        }
+        if !(0..=u32::MAX as i64).contains(&item.link.priority) {
+            return Err(invalid("priority"));
+        }
+    }
+    let mut db = state.db.clone();
+    let mut tx = db.transaction().await.map_err(db_err)?;
+    lock_configuration(&mut tx).await?;
+    let mut providers: HashMap<u64, models::Provider> = HashMap::new();
+    let mut protocols: HashMap<u64, models::ProviderProtocol> = HashMap::new();
+    let mut new_models: HashMap<String, u64> = HashMap::new();
+    let mut existing_models = std::collections::HashSet::new();
+    let mut results = Vec::with_capacity(req.items.len());
+    for (index, item) in req.items.into_iter().enumerate() {
+        let link = item.link;
+        if let std::collections::hash_map::Entry::Vacant(entry) = providers.entry(link.provider_id)
+        {
+            let provider =
+                models::Provider::filter(models::Provider::fields().id().eq(link.provider_id))
+                    .exec(&mut tx)
+                    .await
+                    .map_err(db_err)?
+                    .into_iter()
+                    .next()
+                    .ok_or_else(|| {
+                        connection_item_error(
+                            StatusCode::NOT_FOUND,
+                            "provider_not_found",
+                            index,
+                            "providerId",
+                        )
+                    })?;
+            entry.insert(provider);
+        }
+        if let std::collections::hash_map::Entry::Vacant(entry) = protocols.entry(link.protocol_id)
+        {
+            let protocol = models::ProviderProtocol::filter(
+                models::ProviderProtocol::fields().id().eq(link.protocol_id),
+            )
+            .exec(&mut tx)
+            .await
+            .map_err(db_err)?
+            .into_iter()
+            .next()
+            .ok_or_else(|| {
+                connection_item_error(
+                    StatusCode::NOT_FOUND,
+                    "protocol_not_found",
+                    index,
+                    "protocolId",
+                )
+            })?;
+            entry.insert(protocol);
+        }
+        let protocol = &protocols[&link.protocol_id];
+        if protocol.provider_id != link.provider_id {
+            return Err(connection_item_error(
+                StatusCode::BAD_REQUEST,
+                "protocol_provider_mismatch",
+                index,
+                "protocolId",
+            ));
+        }
+        let (model_id, model_created) = match item.model {
+            ModelConnectionReference::Existing { id } => {
+                if existing_models.insert(id) {
+                    let models = models::LLMModel::filter(models::LLMModel::fields().id().eq(id))
+                        .exec(&mut tx)
+                        .await
+                        .map_err(db_err)?;
+                    if models.is_empty() {
+                        return Err(connection_item_error(
+                            StatusCode::NOT_FOUND,
+                            "model_not_found",
+                            index,
+                            "model.id",
+                        ));
+                    }
+                }
+                (id, false)
+            }
+            ModelConnectionReference::New { model } => {
+                if let Some(id) = new_models.get(&model.model_name) {
+                    (*id, false)
+                } else {
+                    let existing = models::LLMModel::filter(
+                        models::LLMModel::fields()
+                            .model_name()
+                            .eq(&model.model_name),
+                    )
+                    .exec(&mut tx)
+                    .await
+                    .map_err(db_err)?;
+                    if !existing.is_empty() {
+                        return Err((StatusCode::CONFLICT, Json(serde_json::json!({"error":"model_name_exists", "itemIndex":index, "field":"model.modelName", "modelName":model.model_name, "modelId":existing[0].id}))).into_response());
+                    }
+                    let name = model.model_name.clone();
+                    let model = create_model_in(&mut tx, model).await?;
+                    new_models.insert(name, model.id);
+                    (model.id, true)
+                }
+            }
+        };
+        let existing = models::ModelProvider::filter(
+            models::ModelProvider::fields()
+                .model_id()
+                .eq(model_id)
+                .and(
+                    models::ModelProvider::fields()
+                        .protocol_id()
+                        .eq(link.protocol_id),
+                )
+                .and(
+                    models::ModelProvider::fields()
+                        .provider_model_id()
+                        .eq(&link.provider_model_id),
+                ),
+        )
+        .exec(&mut tx)
+        .await
+        .map_err(db_err)?;
+        let (row, link_created) = if let Some(row) = existing.into_iter().min_by_key(|row| row.id) {
+            (row, false)
+        } else {
+            let display_name = if link.display_name.is_empty() {
+                link.provider_model_id.clone()
+            } else {
+                link.display_name
+            };
+            let row = toasty::create!(models::ModelProvider {
+                model_id,
+                provider_id: link.provider_id,
+                protocol_id: link.protocol_id,
+                provider_model_id: link.provider_model_id,
+                display_name,
+                max_input_tokens: link.max_input_tokens,
+                max_output_tokens: link.max_output_tokens,
+                tool_calling: link.tool_calling,
+                vision: link.vision,
+                thinking: link.thinking,
+                adaptive_thinking: link.adaptive_thinking,
+                input_price_per_1m: link.input_price_per_1m,
+                output_price_per_1m: link.output_price_per_1m,
+                cache_read_price_per_1m: link.cache_read_price_per_1m,
+                enabled: link.enabled,
+                priority: link.priority,
+            })
+            .exec(&mut tx)
+            .await
+            .map_err(db_err)?;
+            (row, true)
+        };
+        results.push(CreatedModelConnection {
+            model_id,
+            link: model_link_view(&row, &providers[&link.provider_id], protocol),
+            model_created,
+            link_created,
+        });
+    }
+    tx.commit().await.map_err(db_err)?;
+    Ok(Json(CreateModelConnectionsResponse { items: results }))
 }
 
 // ── Models ──
@@ -608,125 +988,135 @@ async fn create_provider(
     AdminAuth(_user): AdminAuth,
     Json(req): Json<CreateProviderRequest>,
 ) -> Result<(StatusCode, Json<ProviderResponse>), Response> {
+    if req.provider_id.trim().is_empty() {
+        return Err(configuration_error(
+            StatusCode::BAD_REQUEST,
+            "provider_id_required",
+        ));
+    }
+    validate_provider_fields(
+        &req.api_keys,
+        &req.protocols,
+        req.priority,
+        req.quota_adapter_config.as_deref(),
+        None,
+    )?;
+    let mut db = state.db.clone();
+    let mut tx = db.transaction().await.map_err(db_err)?;
+    lock_configuration(&mut tx).await?;
+    let existing = models::Provider::filter(
+        models::Provider::fields()
+            .provider_id()
+            .eq(&req.provider_id),
+    )
+    .exec(&mut tx)
+    .await
+    .map_err(db_err)?;
+    if !existing.is_empty() {
+        return Err(configuration_error(
+            StatusCode::CONFLICT,
+            "provider_id_exists",
+        ));
+    }
     let display_name = if req.display_name.is_empty() {
         req.provider_id.clone()
     } else {
         req.display_name
     };
-
-    let provider = state
-        .store
-        .upsert_provider(
-            req.provider_id,
-            display_name,
-            req.api_keys,
-            req.enabled,
-            req.priority,
-            req.quota_adapter,
-            req.quota_adapter_config,
-        )
+    let provider = toasty::create!(models::Provider {
+        provider_id: req.provider_id,
+        display_name,
+        api_keys: req.api_keys,
+        enabled: req.enabled,
+        priority: req.priority,
+        quota_adapter: req.quota_adapter,
+        quota_adapter_config: req.quota_adapter_config,
+    })
+    .exec(&mut tx)
+    .await
+    .map_err(db_err)?;
+    let protocols = store::replace_provider_protocols_in(&mut tx, provider.id, req.protocols)
         .await
         .map_err(db_err)?;
-
-    // 同步协议：传入则全量替换；传入 [] 表示清空
-    let protos = state
-        .store
-        .replace_provider_protocols(provider.id, req.protocols)
-        .await
-        .map_err(db_err)?;
-    let proto_views = protos.iter().map(protocol_to_view).collect();
-
-    let models = state
-        .store
-        .list_provider_models(provider.id)
-        .await
-        .unwrap_or_default();
-    Ok((
-        StatusCode::CREATED,
-        Json(provider_to_response(&provider, models.len(), proto_views)),
-    ))
+    let response = provider_to_response(
+        &provider,
+        0,
+        protocols.iter().map(protocol_to_view).collect(),
+    );
+    tx.commit().await.map_err(db_err)?;
+    Ok((StatusCode::CREATED, Json(response)))
 }
 
 async fn update_provider(
     State(state): State<AppState>,
     AdminAuth(_user): AdminAuth,
     Path(id): Path<u64>,
-    Json(req): Json<UpdateProviderRequest>,
+    Json(mut req): Json<UpdateProviderRequest>,
 ) -> Result<Json<ProviderResponse>, Response> {
-    let provider = state
-        .store
-        .get_provider_by_id(id)
+    let mut db = state.db.clone();
+    let mut tx = db.transaction().await.map_err(db_err)?;
+    lock_configuration(&mut tx).await?;
+    let provider = models::Provider::filter(models::Provider::fields().id().eq(id))
+        .exec(&mut tx)
         .await
         .map_err(db_err)?
-        .ok_or_else(|| {
-            (
-                StatusCode::NOT_FOUND,
-                Json(serde_json::json!({"error": "provider not found"})),
-            )
-                .into_response()
-        })?;
-
+        .into_iter()
+        .next()
+        .ok_or_else(|| configuration_error(StatusCode::NOT_FOUND, "provider_not_found"))?;
+    validate_provider_fields(
+        &req.api_keys,
+        &req.protocols,
+        req.priority,
+        req.quota_adapter_config.as_deref(),
+        Some(&provider),
+    )?;
+    for key in &mut req.api_keys {
+        if key.key.is_empty()
+            && let Some(old) = provider.api_keys.iter().find(|old| old.label == key.label)
+        {
+            key.key = old.key.clone();
+        }
+    }
     let display_name = if req.display_name.is_empty() {
-        provider.display_name.clone()
+        provider.provider_id.clone()
     } else {
         req.display_name
     };
-
-    // 编辑模式下，前端传空 key 表示「保留原值」：同 label 的现有 key 被保留。
-    // 通过 label 匹配回填。完全新增的 key 才直接写入明文。
-    let merged_api_keys: Vec<ApiKeyEntry> = req
-        .api_keys
-        .into_iter()
-        .map(|k| {
-            if k.key.is_empty() {
-                provider
-                    .api_keys
-                    .iter()
-                    .find(|existing| existing.label == k.label)
-                    .map(|existing| ApiKeyEntry {
-                        label: k.label.clone(),
-                        key: existing.key.clone(),
-                        weight: k.weight,
-                    })
-                    .unwrap_or(k)
+    models::Provider::filter(models::Provider::fields().id().eq(id))
+        .update()
+        .display_name(display_name)
+        .api_keys(req.api_keys)
+        .enabled(req.enabled)
+        .priority(req.priority)
+        .quota_adapter(req.quota_adapter)
+        .quota_adapter_config(req.quota_adapter_config)
+        .exec(&mut tx)
+        .await
+        .map_err(db_err)?;
+    let protocols = store::replace_provider_protocols_in(&mut tx, id, req.protocols)
+        .await
+        .map_err(|error| {
+            if error.starts_with("protocol_in_use:") || error == "invalid_or_duplicate_protocol_id"
+            {
+                configuration_error(StatusCode::BAD_REQUEST, &error)
             } else {
-                k
+                db_err(error)
             }
-        })
-        .collect();
-
-    let updated = state
-        .store
-        .update_provider_by_id(
-            id,
-            display_name,
-            merged_api_keys,
-            req.enabled,
-            req.priority,
-            req.quota_adapter,
-            req.quota_adapter_config,
-        )
+        })?;
+    let updated = models::Provider::get_by_id(&mut tx, &id)
         .await
         .map_err(db_err)?;
-
-    // 同步协议：传入则全量替换；传入 [] 表示清空
-    let protos = state
-        .store
-        .replace_provider_protocols(updated.id, req.protocols)
+    let links = models::ModelProvider::filter(models::ModelProvider::fields().provider_id().eq(id))
+        .exec(&mut tx)
         .await
         .map_err(db_err)?;
-    let proto_views = protos.iter().map(protocol_to_view).collect();
-
-    let models = state
-        .store
-        .list_provider_models(updated.id)
-        .await
-        .unwrap_or_default();
-    Ok(Json(provider_to_response(
+    let response = provider_to_response(
         &updated,
-        models.len(),
-        proto_views,
-    )))
+        links.len(),
+        protocols.iter().map(protocol_to_view).collect(),
+    );
+    tx.commit().await.map_err(db_err)?;
+    Ok(Json(response))
 }
 
 async fn delete_provider(
@@ -1093,7 +1483,15 @@ async fn model_link_to_view(
             .await
             .map_err(db_err)?;
 
-    Ok(ModelLinkView {
+    Ok(model_link_view(mp, &provider, &protocol))
+}
+
+fn model_link_view(
+    mp: &models::ModelProvider,
+    provider: &models::Provider,
+    protocol: &models::ProviderProtocol,
+) -> ModelLinkView {
+    ModelLinkView {
         id: mp.id,
         provider_id: mp.provider_id,
         provider_display_name: provider.display_name.clone(),
@@ -1113,7 +1511,7 @@ async fn model_link_to_view(
         cache_read_price_per_1m: mp.cache_read_price_per_1m,
         enabled: mp.enabled,
         priority: mp.priority,
-    })
+    }
 }
 
 async fn list_admin_models(
@@ -1167,15 +1565,36 @@ async fn create_admin_model(
     AdminAuth(_user): AdminAuth,
     Json(input): Json<ModelInput>,
 ) -> Result<(StatusCode, Json<AdminModelResponse>), Response> {
-    let display_name = if input.display_name.is_empty() {
-        input.model_name.clone()
-    } else {
-        input.display_name.clone()
-    };
-    let mut input = input;
-    input.display_name = display_name;
-    let m = state.store.create_model(input).await.map_err(db_err)?;
-    Ok((StatusCode::CREATED, Json(admin_model_to_response(&m, 0))))
+    validate_model_input(&input).map_err(|field| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error":"invalid_model", "field":field})),
+        )
+            .into_response()
+    })?;
+    let mut db = state.db.clone();
+    let mut tx = db.transaction().await.map_err(db_err)?;
+    lock_configuration(&mut tx).await?;
+    let existing = models::LLMModel::filter(
+        models::LLMModel::fields()
+            .model_name()
+            .eq(&input.model_name),
+    )
+    .exec(&mut tx)
+    .await
+    .map_err(db_err)?;
+    if !existing.is_empty() {
+        return Err(configuration_error(
+            StatusCode::CONFLICT,
+            "model_name_exists",
+        ));
+    }
+    let model = create_model_in(&mut tx, input).await?;
+    tx.commit().await.map_err(db_err)?;
+    Ok((
+        StatusCode::CREATED,
+        Json(admin_model_to_response(&model, 0)),
+    ))
 }
 
 async fn update_admin_model(
@@ -1196,6 +1615,19 @@ async fn update_admin_model(
             )
                 .into_response()
         })?;
+    if input.model_name != existing.model_name {
+        return Err(configuration_error(
+            StatusCode::BAD_REQUEST,
+            "model_name_is_immutable",
+        ));
+    }
+    validate_model_input(&input).map_err(|field| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"error":"invalid_model", "field":field})),
+        )
+            .into_response()
+    })?;
     let display_name = if input.display_name.is_empty() {
         existing.display_name.clone()
     } else {
@@ -1322,6 +1754,7 @@ struct UpdateModelProviderRequest {
 struct TestModelProviderRequest {
     /// 可选自定义测试提示词。为空时使用服务端默认提示词。
     #[serde(default)]
+    #[ts(optional)]
     prompt: Option<String>,
 }
 

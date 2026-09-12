@@ -5,4 +5,8 @@ import type { LanguageModelInputPart } from "./LanguageModelInputPart";
 /**
  * 聊天消息，对应 LanguageModelChatMessage
  */
-export type LanguageModelChatMessage = { role: LanguageModelChatMessageRole, content: Array<LanguageModelInputPart>, name: string | null, };
+export type LanguageModelChatMessage = {
+  role: LanguageModelChatMessageRole;
+  content: Array<LanguageModelInputPart>;
+  name: string | null;
+};

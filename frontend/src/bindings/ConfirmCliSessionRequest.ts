@@ -3,4 +3,4 @@
 /**
  * 确认请求体（验证页提交）。
  */
-export type ConfirmCliSessionRequest = { userCode: string, };
+export type ConfirmCliSessionRequest = { userCode: string };

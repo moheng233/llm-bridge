@@ -4,4 +4,8 @@ import type { WsChatDone } from "./WsChatDone";
 import type { WsErrorBody } from "./WsErrorBody";
 import type { WsResult } from "./WsResult";
 
-export type WsServerMessage = { id: string, result: WsResult, } | { id: string, chunk: LMResponsePart, } | { id: string, done: WsChatDone, } | { id: string | null, error: WsErrorBody, };
+export type WsServerMessage =
+  | { id: string; result: WsResult }
+  | { id: string; chunk: LMResponsePart }
+  | { id: string; done: WsChatDone }
+  | { id: string | null; error: WsErrorBody };

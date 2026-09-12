@@ -6,40 +6,47 @@
  * 与 `/providers/{id}/models` 端点的 AddModelRequest 对称，但 model_id 由 URL 提供，
  * 故请求体不含 model_name。
  */
-export type AddModelProviderRequest = { 
-/**
- * 提供者 row id（FK → providers）
- */
-providerId: number, 
-/**
- * 提供者侧的模型 ID
- */
-providerModelId: string, 
-/**
- * 关联的协议 ID（FK → provider_protocols）
- */
-protocolId: number, displayName: string, 
-/**
- * 提供者侧覆盖值；None = 使用模型标称值
- */
-maxInputTokens: number | null, 
-/**
- * 提供者侧覆盖值；None = 使用模型标称值
- */
-maxOutputTokens: number | null, 
-/**
- * 提供者侧覆盖值；None = 使用模型标称值
- */
-toolCalling: boolean | null, 
-/**
- * 提供者侧覆盖值；None = 使用模型标称值
- */
-vision: boolean | null, 
-/**
- * 提供者侧覆盖值；None = 使用模型标称值
- */
-thinking: boolean | null, 
-/**
- * 提供者侧覆盖值；None = 使用模型标称值
- */
-adaptiveThinking: boolean | null, inputPricePer1m: number | null, outputPricePer1m: number | null, cacheReadPricePer1m: number | null, enabled: boolean, priority: number, };
+export type AddModelProviderRequest = {
+  /**
+   * 提供者 row id（FK → providers）
+   */
+  providerId: number;
+  /**
+   * 提供者侧的模型 ID
+   */
+  providerModelId: string;
+  /**
+   * 关联的协议 ID（FK → provider_protocols）
+   */
+  protocolId: number;
+  displayName: string;
+  /**
+   * 提供者侧覆盖值；None = 使用模型标称值
+   */
+  maxInputTokens: number | null;
+  /**
+   * 提供者侧覆盖值；None = 使用模型标称值
+   */
+  maxOutputTokens: number | null;
+  /**
+   * 提供者侧覆盖值；None = 使用模型标称值
+   */
+  toolCalling: boolean | null;
+  /**
+   * 提供者侧覆盖值；None = 使用模型标称值
+   */
+  vision: boolean | null;
+  /**
+   * 提供者侧覆盖值；None = 使用模型标称值
+   */
+  thinking: boolean | null;
+  /**
+   * 提供者侧覆盖值；None = 使用模型标称值
+   */
+  adaptiveThinking: boolean | null;
+  inputPricePer1m: number | null;
+  outputPricePer1m: number | null;
+  cacheReadPricePer1m: number | null;
+  enabled: boolean;
+  priority: number;
+};

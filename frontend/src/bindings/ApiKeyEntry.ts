@@ -3,4 +3,4 @@
 /**
  * A single API key entry with scheduling metadata.
  */
-export type ApiKeyEntry = { label: string, key: string, weight: number, };
+export type ApiKeyEntry = { label: string; key: string; weight: number };

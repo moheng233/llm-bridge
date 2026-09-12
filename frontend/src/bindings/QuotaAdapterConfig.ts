@@ -5,12 +5,13 @@
  *
  * 字段全部可选，未提供时使用适配器的内置默认值。
  */
-export type QuotaAdapterConfig = { 
-/**
- * 覆盖适配器默认 endpoint URL（如自部署的 umans 兼容服务）。
- */
-baseUrl?: string | null, 
-/**
- * 仅查询 label 匹配此值的 API Key（None = 查询全部 Key）。
- */
-keyLabelFilter?: string | null, };
+export type QuotaAdapterConfig = {
+  /**
+   * 覆盖适配器默认 endpoint URL（如自部署的 umans 兼容服务）。
+   */
+  baseUrl?: string | null;
+  /**
+   * 仅查询 label 匹配此值的 API Key（None = 查询全部 Key）。
+   */
+  keyLabelFilter?: string | null;
+};
