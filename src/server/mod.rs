@@ -28,8 +28,6 @@ use axfetchum::ApiRouter;
 use tower_sessions::MemoryStore;
 use tower_sessions::SessionManagerLayer;
 use tracing::{info, instrument};
-#[cfg(not(feature = "embed-frontend"))]
-use vite_rs_axum_0_8::ViteServe;
 
 use crate::actors::gateway_manager::GatewayManagerMessage;
 use crate::db;
@@ -37,11 +35,6 @@ use crate::store::Store;
 
 use crate::server::admin::{admin_crud_routes, model_browse_routes};
 use crate::server::auth::AuthState;
-
-#[cfg(not(feature = "embed-frontend"))]
-#[derive(vite_rs::Embed)]
-#[root = "./frontend"]
-struct Frontend;
 
 /// Shared application state for HTTP handlers.
 #[derive(Clone)]
@@ -138,9 +131,6 @@ pub fn all_api_routes() -> ApiRouter<AppState> {
     )
 )]
 pub async fn start_server(state: AppState, host: &str, port: u16) -> Result<(), std::io::Error> {
-    #[cfg(all(debug_assertions, not(feature = "embed-frontend")))]
-    let _guard = Frontend::start_dev_server(true);
-
     let session_store = MemoryStore::default();
     let session_layer = SessionManagerLayer::new(session_store).with_secure(false);
 
@@ -152,10 +142,6 @@ pub async fn start_server(state: AppState, host: &str, port: u16) -> Result<(), 
     #[cfg(feature = "embed-frontend")]
     let app =
         app.fallback(|uri: axum::http::Uri| async move { crate::embed::serve(uri.path()).await });
-    #[cfg(not(feature = "embed-frontend"))]
-    let app = app
-        .route_service("/", ViteServe::new(Frontend::boxed()))
-        .route_service("/{*path}", ViteServe::new(Frontend::boxed()));
     let mut app: axum::Router = app;
 
     if oidc_configured {

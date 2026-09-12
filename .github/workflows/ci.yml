@@ -19,6 +19,16 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install repository toolchain
         run: rustup toolchain install nightly --profile minimal --component rustfmt --component clippy --component rustc-codegen-cranelift
+      - name: Check Rust formatting
+        run: cargo fmt --all -- --check
+      - name: Check bindings without overwriting committed files
+        run: cargo xtask bindings --check
+      - name: Check backend behavior contracts
+        run: cargo test -p llm-bridge --all-targets --locked -- --skip export_bindings
+      - name: Check default features
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Check development orchestration
+        run: cargo test -p xtask --locked
       - name: Install pnpm
         run: npm install --global pnpm@11.26.0
       - uses: oven-sh/setup-bun@v2
@@ -27,24 +37,15 @@ jobs:
       - name: Install frontend dependencies
         working-directory: frontend
         run: pnpm install --frozen-lockfile
-      - name: Check Rust formatting
-        run: cargo fmt --all -- --check
-      - name: Check bindings without overwriting committed files
-        run: python3 scripts/check-bindings.py
-      - name: Check backend behavior contracts
-        run: cargo test --all-targets --locked -- --skip export_bindings
-      - name: Check default features
-        run: cargo clippy --all-targets --locked -- -D warnings
-      - name: Build frontend from clean declarations
-        working-directory: frontend
-        run: pnpm run build
+      - name: Build application from clean frontend declarations
+        run: cargo xtask build --debug --features otel,postgresql
       - name: Check frontend lint
         working-directory: frontend
         run: pnpm run lint
       - name: Check production features
-        run: cargo clippy --all-targets --no-default-features --features embed-frontend,otel,postgresql --locked -- -D warnings
+        run: cargo clippy -p llm-bridge --all-targets --no-default-features --features embed-frontend,otel,postgresql --locked -- -D warnings
       - name: Check telemetry runtime export and shutdown
-        run: cargo test --no-default-features --features embed-frontend,otel,postgresql --test otel_contract --locked
+        run: cargo test -p llm-bridge --no-default-features --features embed-frontend,otel,postgresql --test otel_contract --locked
       - name: Install catalog dependencies
         working-directory: scripts/models-dev-catalog
         run: bun install --frozen-lockfile

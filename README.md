@@ -190,7 +190,7 @@ flowchart TB
 ### 前置要求
 
 - **Rust nightly**（项目附带 `rust-toolchain.toml`，首次进入目录会自动安装）
-- **pnpm**（用于前端开发）
+- **Node.js 与 pnpm**（仅前端开发或构建完整应用需要；纯后端检查、测试与运行不需要）
 - **OIDC IdP** 可选。未配置 OIDC，或 Discovery 失败时，按既定设计进入免登录管理员模式；必须通过可信网络或反向代理限制管理入口。
 
 ### 1. 克隆并构建后端
@@ -202,35 +202,39 @@ cd llm-bridge
 # 调试构建
 cargo build
 
-# 生产构建见下方「单二进制部署」；默认 dev-ui 用于开发。
+# 默认仅构建后端；完整生产构建使用 cargo xtask build。
 ```
 
-### 2. 启动前端开发服务器（可选，开发模式）
+### 2. 启动全栈开发环境
 
 ```bash
-cd frontend
-pnpm install
-pnpm run dev
-# → http://127.0.0.1:5173
+pnpm --dir frontend install --frozen-lockfile
+cargo xtask dev
+# → 浏览器访问 http://127.0.0.1:5173
 ```
+
+`xtask` 独立管理 Vite 和后端：Rust 输入变化后自动重建并重启后端，前端变化使用原生 HMR，不重启 Vite。编译失败时保留监控，修复后自动重试；服务意外退出时清理其他进程并报错。启动器不隐式安装前端依赖。
+
+开发端口可通过 `LLM_BRIDGE_PORT=3000`、`LLM_BRIDGE_UI_PORT=5173` 设置；后端监听地址沿用 `LLM_BRIDGE_HOST`，Vite 只监听 `127.0.0.1`。端口冲突会报错，不自动改用其他端口。Vite 代理 `/api`、`/auth`、`/v1`，包括业务 WebSocket 和 SSE。
+
+开发时未显式设置的 `LLM_BRIDGE_BASE_URL` 自动设为浏览器入口（默认 `http://127.0.0.1:5173`）；自定义反代地址会被保留。OIDC IdP 的回调地址应为该公开地址加 `/auth/callback`，不要混用 `localhost` 与 `127.0.0.1`。Unix 上 Ctrl-C/SIGTERM 会停止进程组，后端最多有 10 秒优雅退出时间，随后强制清理；Windows 使用 Job Object 清理进程树。
 
 ### 3. 启动网关
 
 ```bash
-# 最简启动：免登录管理员模式；客户端 /v1/* 仍要求 Bearer Token
+# 仅启动后端 API（不启动 Vite、不提供管理页面）
 cargo run --bin llm-bridge
 
 # 带 OIDC 与前端嵌入的单二进制启动
 pnpm --dir frontend install --frozen-lockfile
-pnpm --dir frontend run build
-cargo build --release --no-default-features --features embed-frontend
+cargo xtask build
 LLM_BRIDGE_OIDC_ISSUER_URL=https://idp.example.com \
 LLM_BRIDGE_OIDC_CLIENT_ID=llm-bridge \
 LLM_BRIDGE_OIDC_CLIENT_SECRET=... \
 ./target/release/llm-bridge
 ```
 
-默认监听 `http://127.0.0.1:3000`，`cargo run` 默认启动网关。默认 `dev-ui` 启用 Vite 开发接线；生产使用 `--no-default-features --features embed-frontend,otel`，需要 PostgreSQL 时再加 `postgresql`。`embed-frontend` 显式嵌入预先构建的 `frontend/dist/`，不在 Rust 宏内隐式构建前端。
+后端默认监听 `http://127.0.0.1:3000`。默认 Cargo features 为空；完整应用使用 `cargo xtask build --features otel`，需要 PostgreSQL 时使用 `--features otel,postgresql`。启动器先执行 `pnpm run build`，成功后才编译带 `embed-frontend` 的后端。`cargo build --features embed-frontend` 仍可消费预先构建的 `frontend/dist/`；构建脚本仅检查入口并追踪目录变化，不启动 Node 或下载依赖。
 
 ---
 
@@ -260,7 +264,7 @@ LLM_BRIDGE_OIDC_CLIENT_SECRET=... \
 | `LLM_BRIDGE_OIDC_CLIENT_ID` | 空 | OIDC Client ID |
 | `LLM_BRIDGE_OIDC_CLIENT_SECRET` | 空 | OIDC Client Secret |
 | `LLM_BRIDGE_OIDC_SCOPES` | `openid profile email` | 申请的 scopes |
-| `LLM_BRIDGE_BASE_URL` | `http://localhost:3000` | 网关自身对外可访问的 base URL（用于 OIDC 回调） |
+| `LLM_BRIDGE_BASE_URL` | 后端独立运行：`http://localhost:3000`；`xtask dev`：Vite 入口 | 对外可访问地址，用于 OIDC 回调；显式设置优先 |
 
 > 首个通过 OIDC 登录的用户会自动获得 `Admin` 角色，后续用户为 `Member`。
 
@@ -268,10 +272,11 @@ LLM_BRIDGE_OIDC_CLIENT_SECRET=... \
 
 | Feature | 说明 |
 |---------|------|
-| `dev-ui` | 默认启用，使用 Vite 开发接线；生产构建通过 `--no-default-features` 关闭 |
 | `embed-frontend` | 启用 `rust-embed`，把 `frontend/dist` 嵌入后端二进制，适合单文件部署 |
 | `otel` | 启用 OpenTelemetry traces、logs 和 GenAI metrics 的 OTLP HTTP 导出 |
 | `postgresql` | 编译 PostgreSQL 驱动；仍需配置 PostgreSQL 连接 URL，feature 本身不会选择数据库 |
+
+默认不启用任何 feature：普通 `cargo check/test/run` 与 Node、Vite 和 `frontend/dist` 解耦。
 
 ---
 
@@ -472,21 +477,38 @@ llm-bridge/
 cargo check
 
 # Lint（项目要求 clippy 零警告）
-cargo clippy --all-targets --locked -- -D warnings
+cargo clippy --workspace --all-targets --locked -- -D warnings
 
 # 行为测试不改写 TS 绑定
-cargo test --all-targets --locked -- --skip export_bindings
+cargo test -p llm-bridge --all-targets --locked -- --skip export_bindings
 
 # 运行示例（端到端连通性测试）
 cargo run --example openai_stream_cli -- <url> <api_key> <model>
 ```
 
+### 开发编排
+
+```bash
+cargo xtask --help                      # 全部命令与选项
+cargo xtask help build                  # 子命令帮助（也可用 build --help）
+cargo xtask dev                         # Vite + 自动重建后端
+cargo xtask dev --features otel         # 启用额外后端能力
+cargo xtask build                       # 前端 + release 嵌入式后端
+cargo xtask build --debug               # 前端 + dev profile 后端
+cargo xtask build --target <triple>     # 前端 + 指定目标后端（需预装工具链/链接器）
+cargo test -p xtask --locked            # 启动器的边界回归
+```
+
+参数解析采用 [clap derive](https://docs.rs/clap/latest/clap/_derive/_tutorial/index.html)，自动生成帮助与参数错误信息。`--features` 支持逗号或引号内的空格分隔，也可重复传入；例如 `--features "otel postgresql"` 或 `--features=otel --features=postgresql`。开发模式仍禁止启用 `embed-frontend`。
+
+监控范围是 `src/`、根 Cargo manifest/lock、`build.rs`、`.cargo/config.toml` 和 `rust-toolchain.toml`，不监控 `target/`、`frontend/` 或数据库目录。修改 `xtask` 本身后需重新运行开发命令。前后端类型生成是显式任务，不在文件监控中自动改写绑定。
+
 ### 前端
 
 ```bash
 cd frontend
-pnpm install
-pnpm run dev       # 开发服务器
+pnpm install --frozen-lockfile
+pnpm run dev       # 单独启动 Vite；另开终端运行后端
 pnpm run build     # 生产构建到 frontend/dist
 pnpm run lint      # 检查手写前端代码
 pnpm exec vue-tsc -b # 类型检查；干净环境请先执行完整 build 生成自动声明
@@ -497,14 +519,11 @@ pnpm exec vue-tsc -b # 类型检查；干净环境请先执行完整 build 生�
 后端类型变更后，需要重新生成前端的 TypeScript 绑定（位于 `frontend/src/bindings/`）：
 
 ```bash
-# 生成 ts-rs 类型文件（.ts）
-cargo test --lib export_bindings
+# 显式生成 ts-rs 类型与 axfetchum API client
+cargo xtask bindings
 
-# 显式生成 axfetchum API 客户端（client.ts）
-cargo test --test generate_ts_client generate_ts_client -- --ignored --exact
-
-# 检查类型和客户端漂移，不改写仓库绑定
-python3 scripts/check-bindings.py
+# 检查类型和客户端漂移，不改写仓库绑定（需 python3）
+cargo xtask bindings --check
 ```
 
 > `ts-rs` 负责数据类型文件，`axfetchum` 负责根据后端路由声明生成 API 客户端。两者双通道保持前后端类型一致。
@@ -514,11 +533,9 @@ python3 scripts/check-bindings.py
 ### 单二进制部署
 
 ```bash
-# 先构建前端
-cd frontend && pnpm run build && cd ..
-
-# 再构建带嵌入前端的二进制
-cargo build --release --no-default-features --features embed-frontend,otel
+# 显式安装依赖，然后统一构建前端与 release 二进制
+pnpm --dir frontend install --frozen-lockfile
+cargo xtask build --features otel
 
 # 部署只需一个可执行文件 + SQLite 数据目录
 ./target/release/llm-bridge
@@ -540,7 +557,7 @@ docker run --rm -p 127.0.0.1:3000:3000 \
 数据库需预先创建。原生构建启用 `postgresql`；上述 Docker 镜像已包含驱动：
 
 ```bash
-cargo build --release --no-default-features --features embed-frontend,otel,postgresql --locked
+cargo xtask build --features otel,postgresql
 LLM_BRIDGE_DATABASE_URL='postgresql://llm_bridge:PASSWORD@127.0.0.1/llm_bridge' \
   ./target/release/llm-bridge
 ```

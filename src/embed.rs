@@ -13,7 +13,7 @@ use rust_embed::RustEmbed;
 /// 嵌入 `frontend/dist/` 下的所有构建产物。
 ///
 /// 启用 `embed-frontend` feature 后，`cargo build` 时必须确保 `frontend/dist/` 存在。
-/// 建议在 build 脚本或 Makefile 中先执行 `pnpm build --filter llm-bridge-frontend`。
+/// 使用 `cargo xtask build` 显式构建前端后再编译嵌入式后端。
 #[derive(RustEmbed)]
 #[folder = "frontend/dist/"]
 struct FrontendAssets;

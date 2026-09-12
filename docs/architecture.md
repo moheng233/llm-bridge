@@ -32,7 +32,13 @@ TraceWriter 消费 Begin/Route/Streaming/Finalize，Finalize 与 usage_daily rol
 
 ## 构建与部署
 
-默认 dev-ui 使用 Vite 开发接线。生产先 `pnpm --dir frontend install --frozen-lockfile` 与 `pnpm --dir frontend run build`，再 `cargo build --release --no-default-features --features embed-frontend,otel,postgresql --locked`。可按部署需求不启用 otel/postgresql；生产无需 Node/Vite 运行时。
+默认 Cargo features 为空：`cargo run` 仅启动后端 API，后端检查和测试不依赖 Node 或前端产物。先显式执行 `pnpm --dir frontend install --frozen-lockfile`，再用 `cargo xtask dev` 启动独立 Vite 与后端。浏览器默认访问 `http://127.0.0.1:5173`，Vite 将 `/api`、`/auth`、`/v1` 的 HTTP/SSE/WebSocket 转发到后端；`LLM_BRIDGE_PORT` 和 `LLM_BRIDGE_UI_PORT` 分别控制后端与浏览器入口端口。
+
+启动器监控 Rust 输入并重建后端，不重启 Vite，也不自动生成 TS 绑定。编译失败后等待源码修复；服务意外退出则报错并清理其他进程。公开地址默认使用 Vite 入口，显式 `LLM_BRIDGE_BASE_URL` 保留，OIDC callback 必须与公开地址一致。Unix 退出时向子进程组发送 SIGTERM，等待最多 10 秒后强制清理；Windows 使用 Job Object 管理进程树。
+
+生产使用 `cargo xtask build --features otel,postgresql`：前端 `pnpm run build` 成功后，再构建启用 `embed-frontend` 的 release 后端。可按部署需求不启用 otel/postgresql；生产无需 Node/Vite 运行时。`build.rs` 仅检查 `frontend/dist/index.html` 并追踪产物目录（含新增、删除文件），不执行前端构建。Docker 保留等价的 pnpm/Cargo 分层流程，workspace 的 `xtask` 不进入生产二进制。
+
+集成依据：[Cargo build scripts](https://doc.rust-lang.org/cargo/reference/build-scripts.html)、[cargo-xtask 社区模式](https://github.com/matklad/cargo-xtask)、[Vite server proxy](https://vite.dev/config/server-options#server-proxy)。启动器复用 [duct](https://docs.rs/duct/) 执行有限任务；进程树管理采用 [process-wrap API](https://docs.rs/process-wrap/10.0.0/process_wrap/std/) / [上游实践](https://github.com/watchexec/process-wrap)，信号接收采用 [ctrlc API](https://docs.rs/ctrlc/3.5.2/ctrlc/) / [上游实践](https://github.com/Detegr/rust-ctrlc)。
 
 Unix 下监听 SIGTERM/SIGINT（Ctrl+C），收到信号后停止接受新 HTTP 连接，等待已有 HTTP/SSE 请求结束，再进入 main 的导出器 shutdown。容器停止宽限期需要覆盖仍在进行的请求；本次停止验收使用有限时长的 SSE 请求，不承诺无限流会在任意固定宽限期内结束。
 

@@ -7,8 +7,14 @@ import AutoImport from "unplugin-auto-import/vite";
 import Components from "unplugin-vue-components/vite";
 import { defineConfig } from "vite";
 
+const uiPort = process.env.LLM_BRIDGE_UI_PORT ?? "5173";
+if (!/^\d+$/.test(uiPort) || Number(uiPort) < 1 || Number(uiPort) > 65535) {
+  throw new Error("LLM_BRIDGE_UI_PORT must be an integer between 1 and 65535");
+}
+
 // https://vite.dev/config/
 export default defineConfig({
+  clearScreen: false,
   plugins: [
     tailwindcss(),
     VueRouter({
@@ -34,10 +40,16 @@ export default defineConfig({
     }),
   ],
   server: {
+    host: "127.0.0.1",
+    port: Number(uiPort),
+    strictPort: true,
     proxy: {
       "^/(api|auth|v1)(/.*)?$": {
-        target: "http://127.0.0.1:3000",
+        target:
+          process.env.LLM_BRIDGE_DEV_BACKEND_URL ??
+          `http://127.0.0.1:${process.env.LLM_BRIDGE_PORT ?? "3000"}`,
         changeOrigin: true,
+        ws: true,
       },
     },
   },

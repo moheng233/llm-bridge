@@ -1,10 +1,12 @@
 # syntax=docker/dockerfile:1
-# 先构建 Dockerfile.base；生产前端由 rust-embed 嵌入，不使用开发期 vite-rs。
+# 先构建 Dockerfile.base；前端显式构建后由 rust-embed 嵌入。
 ARG BASE_IMAGE=localhost/llm-bridge-base:latest
 ARG RUNTIME_IMAGE=docker.io/library/debian:trixie-slim
 FROM ${BASE_IMAGE} AS planner
 WORKDIR /app
-COPY Cargo.toml Cargo.lock ./
+COPY Cargo.toml Cargo.lock build.rs ./
+COPY xtask/ xtask/
+COPY .cargo/ .cargo/
 COPY src/ src/
 COPY tests/ tests/
 COPY examples/ examples/
@@ -13,14 +15,16 @@ RUN cargo chef prepare --recipe-path recipe.json
 FROM ${BASE_IMAGE} AS builder
 WORKDIR /app
 COPY --from=planner /app/recipe.json recipe.json
-RUN cargo chef cook --release --no-default-features --features embed-frontend,otel,postgresql --recipe-path recipe.json --locked
-COPY Cargo.toml Cargo.lock ./
+RUN cargo chef cook --release --package llm-bridge --no-default-features --features embed-frontend,otel,postgresql --recipe-path recipe.json --locked
+COPY Cargo.toml Cargo.lock build.rs ./
+COPY xtask/ xtask/
+COPY .cargo/ .cargo/
 COPY src/ src/
 COPY tests/ tests/
 COPY examples/ examples/
 COPY frontend/ frontend/
 RUN pnpm --dir frontend install --frozen-lockfile && pnpm --dir frontend run build
-RUN cargo build --release --bin llm-bridge --no-default-features --features embed-frontend,otel,postgresql --locked \
+RUN cargo build --release --package llm-bridge --bin llm-bridge --no-default-features --features embed-frontend,otel,postgresql --locked \
     && strip target/release/llm-bridge
 
 FROM ${RUNTIME_IMAGE} AS runtime
