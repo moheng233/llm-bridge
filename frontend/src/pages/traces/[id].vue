@@ -152,42 +152,37 @@ function toggleThinking(i: number) {
   </PageShell>
 
   <PageShell v-else-if="trace">
-    <div class="flex shrink-0 flex-wrap items-center gap-3">
-      <Button
-        variant="ghost"
-        size="icon"
-        class="cursor-pointer"
-        aria-label="返回请求记录"
-        title="返回请求记录"
-        @click="router.push('/traces')"
+    <template #header>
+      <SectionHeader
+        :title="trace.model"
+        :subtitle="trace.requestId"
+        :icon="ScrollText"
+        back-to="/traces"
+        back-label="返回请求记录"
       >
-        <ArrowLeft class="h-4 w-4" />
-      </Button>
-      <div class="flex min-w-0 flex-1 flex-wrap items-center gap-2">
-        <h1 class="break-all">{{ trace.model }}</h1>
-        <Badge variant="outline" :class="['shrink-0 text-xs', statusBadge(trace.status).cls]">
-          {{ statusBadge(trace.status).label }}
-        </Badge>
-        <Badge v-if="trace.interface === 'ws_rpc'" variant="secondary" class="shrink-0 text-xs">
-          WS RPC
-        </Badge>
-      </div>
-      <div class="flex min-w-0 items-center gap-1 text-xs text-muted-foreground">
-        <code class="break-all">{{ trace.requestId }}</code>
-        <Button
-          variant="ghost"
-          size="icon"
-          class="cursor-pointer"
-          aria-label="复制 Request ID"
-          title="复制 Request ID"
-          @click="copyText('rid', trace.requestId)"
-        >
-          <Check v-if="copiedField === 'rid'" class="h-3 w-3 text-primary" />
-          <Copy v-else class="h-3 w-3" />
-        </Button>
-      </div>
-    </div>
-
+        <template #status>
+          <Badge variant="outline" :class="['shrink-0 text-xs', statusBadge(trace.status).cls]">
+            {{ statusBadge(trace.status).label }}
+          </Badge>
+          <Badge v-if="trace.interface === 'ws_rpc'" variant="secondary" class="shrink-0 text-xs">
+            WS RPC
+          </Badge>
+        </template>
+        <template #actions>
+          <Button
+            variant="outline"
+            size="icon"
+            class="cursor-pointer"
+            aria-label="复制 Request ID"
+            title="复制 Request ID"
+            @click="copyText('rid', trace.requestId)"
+          >
+            <Check v-if="copiedField === 'rid'" class="h-3 w-3 text-primary" />
+            <Copy v-else class="h-3 w-3" />
+          </Button>
+        </template>
+      </SectionHeader>
+    </template>
     <p class="text-sm text-muted-foreground">
       {{ fmtTime(trace.createdAt) }} · 估算成本不是上游账单；缺价格或 usage 不代表免费。
     </p>

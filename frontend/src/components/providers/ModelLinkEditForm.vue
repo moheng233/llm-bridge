@@ -2,6 +2,7 @@
 import { type AdminModelResponse } from "@bindings/AdminModelResponse";
 import { type ModelLinkView } from "@bindings/ModelLinkView";
 import { type ProviderResponse } from "@bindings/ProviderResponse";
+import { Save } from "@lucide/vue";
 
 import ModelLinkFields from "./ModelLinkFields.vue";
 import { getApi } from "~/lib/api";
@@ -10,6 +11,7 @@ import {
   connectionDraftToInput,
   validateConnectionDraft,
 } from "~/lib/connection-draft";
+import { focusInScrollArea } from "~/lib/utils";
 import { useConnectionTestsStore } from "~/stores/connection-tests";
 const props = defineProps<{
   modelId: number;
@@ -48,7 +50,11 @@ async function close() {
   try {
     if (
       JSON.stringify(draft.value) !== baseline.value &&
-      !(await confirm({ title: "放弃未保存的连接修改？" }))
+      !(await confirm({
+        title: "放弃未保存的修改？",
+        description: "尚未保存的连接修改将丢失。",
+        confirmText: "放弃修改",
+      }))
     )
       return;
     open.value = false;
@@ -61,9 +67,9 @@ async function submit() {
   fieldErrors.value = validateConnectionDraft(draft.value, provider.value);
   if (Object.keys(fieldErrors.value).length) {
     await nextTick();
-    document
-      .querySelector<HTMLElement>('[data-slot="sheet-content"] [aria-invalid="true"]')
-      ?.focus();
+    focusInScrollArea(
+      document.querySelector<HTMLElement>('[data-slot="sheet-content"] [aria-invalid="true"]'),
+    );
     return;
   }
   if (await save.execute()) {
@@ -88,19 +94,19 @@ onBeforeRouteLeave(async () => {
       }
     "
     ><SheetContent
-      class="w-full max-w-full sm:max-w-2xl"
+      class="w-full max-w-full gap-0 sm:max-w-2xl"
       @escape-key-down="
         (event) => {
           event.preventDefault();
           close();
         }
       "
-      ><SheetHeader class="p-4 pb-0"
+      ><SheetHeader class="shrink-0 border-b p-4 pr-12"
         ><SheetTitle>编辑连接 · {{ modelName }}</SheetTitle
         ><SheetDescription>只修改此连接，不覆盖共享模型定义。</SheetDescription></SheetHeader
       >
       <form class="flex min-h-0 flex-1 flex-col" @submit.prevent="submit">
-        <div class="min-h-0 flex-1 overflow-y-auto p-4">
+        <div data-scroll-area class="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4">
           <ModelLinkFields
             v-if="draft && provider"
             v-model="draft"
@@ -109,16 +115,14 @@ onBeforeRouteLeave(async () => {
             :saving="save.loading.value"
           />
           <p v-else role="alert">连接或提供者不存在，请重新加载本地记录。</p>
-          <p v-if="save.error.value" role="alert" class="mt-4 text-destructive">
-            {{ save.error.value }}
-          </p>
+          <ErrorState v-if="save.error.value" :error="save.error.value" class="mt-4" inline />
         </div>
-        <div class="flex justify-end gap-3 border-t p-4">
+        <div class="flex shrink-0 justify-end gap-2 border-t p-4">
           <Button type="button" variant="outline" :disabled="save.loading.value" @click="close"
             >取消</Button
-          ><Button type="submit" :disabled="save.loading.value || !draft || !provider">{{
-            save.loading.value ? "保存中…" : "保存连接"
-          }}</Button>
+          ><Button type="submit" :disabled="save.loading.value || !draft || !provider"
+            ><Save aria-hidden="true" />{{ save.loading.value ? "保存中…" : "保存修改" }}</Button
+          >
         </div>
       </form></SheetContent
     ></Sheet

@@ -1,13 +1,24 @@
 <script setup lang="ts">
 import { Toaster } from "vue-sonner";
 
-import { LogOut, Sun, Moon, PanelLeftClose, PanelLeftOpen, Search, Menu } from "@lucide/vue";
+import {
+  ChevronRight,
+  LogOut,
+  Sun,
+  Moon,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Search,
+  Menu,
+} from "@lucide/vue";
 
 import ConfirmDialog from "~/components/common/ConfirmDialog.vue";
+import { providePageHeader } from "~/composables/usePageHeader";
 import { NAV_ITEMS } from "~/lib/navigation";
 import { useAuthStore } from "~/stores/auth";
 import { useThemeStore } from "~/stores/theme";
 const route = useRoute();
+const pageHeader = providePageHeader();
 const auth = useAuthStore();
 const theme = useThemeStore();
 const confirm = useConfirm();
@@ -26,6 +37,20 @@ const current = computed(() =>
   items.value.find(
     (item) => activePath.value === item.path || activePath.value.startsWith(`${item.path}/`),
   ),
+);
+const pageTitle = computed(() => {
+  if (route.meta.requiresAdmin && !auth.isAdmin) return "无访问权限";
+  if (pageHeader.value?.path === route.path) return pageHeader.value.title;
+  if (route.path === "/admin/setup") return "接入模型";
+  if (route.path === "/admin/models/new") return "添加模型定义";
+  if (route.path.startsWith("/providers/")) return "提供者详情";
+  if (route.path.startsWith("/admin/models/")) return "模型详情";
+  if (route.path.startsWith("/traces/")) return "请求详情";
+  if (route.path === "/auth/cli-verify") return "客户端授权";
+  return current.value?.label ?? "LLM Bridge";
+});
+const parentPage = computed(() =>
+  current.value && route.path !== current.value.path ? current.value : null,
 );
 function toggleSidebar() {
   collapsed.value = !collapsed.value;
@@ -57,13 +82,13 @@ onMounted(() => window.addEventListener("keydown", onKey));
 onBeforeUnmount(() => window.removeEventListener("keydown", onKey));
 </script>
 <template>
-  <div v-if="auth.loading" class="flex h-svh items-center justify-center" role="status">
+  <div v-if="auth.loading" class="app-viewport flex items-center justify-center" role="status">
     正在加载…
   </div>
-  <div v-else-if="!auth.isAuthenticated" class="flex min-h-svh items-center justify-center p-3">
+  <div v-else-if="!auth.isAuthenticated" class="app-viewport min-h-0 p-3">
     <RouterView />
   </div>
-  <div v-else class="flex h-svh overflow-hidden">
+  <div v-else class="app-viewport flex">
     <aside
       :class="['hidden shrink-0 flex-col border-r bg-sidebar md:flex', collapsed ? 'w-14' : 'w-56']"
     >
@@ -74,7 +99,10 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKey));
           >LLM Bridge</span
         >
       </div>
-      <nav aria-label="主导航" class="flex-1 space-y-1 overflow-y-auto p-2">
+      <nav
+        aria-label="主导航"
+        class="min-h-0 flex-1 space-y-1 overflow-y-auto overscroll-contain p-2"
+      >
         <template v-for="group in ['use', 'admin'] as const" :key="group">
           <p
             v-if="!collapsed && (group === 'use' || auth.isAdmin)"
@@ -128,8 +156,11 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKey));
         >
       </div>
     </aside>
-    <div class="flex min-w-0 flex-1 flex-col">
-      <header class="flex h-14 shrink-0 items-center gap-3 border-b px-3 md:px-4 lg:px-6">
+    <div class="flex min-h-0 min-w-0 flex-1 flex-col">
+      <header
+        data-slot="app-header"
+        class="flex h-14 shrink-0 items-center gap-2 border-b px-3 sm:gap-3 md:px-4 lg:px-6"
+      >
         <Button
           variant="ghost"
           size="icon"
@@ -145,17 +176,48 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKey));
           aria-label="折叠或展开导航"
           title="折叠或展开导航"
           @click="toggleSidebar"
-          ><PanelLeftOpen v-if="collapsed" /><PanelLeftClose v-else /></Button
-        ><span class="min-w-0 truncate text-sm"
-          >{{ current?.label || (route.path === "/auth/cli-verify" ? "客户端授权" : "LLM Bridge")
-          }}<span v-if="route.path === '/admin/setup'"> / 接入模型</span></span
-        ><Button variant="outline" class="ml-auto" @click="searchOpen = true"
-          ><Search /><span>搜索</span><kbd class="hidden text-xs sm:inline">Ctrl K</kbd></Button
+          ><PanelLeftOpen v-if="collapsed" /><PanelLeftClose v-else
+        /></Button>
+        <nav aria-label="面包屑" class="min-w-0 flex-1">
+          <ol class="flex min-w-0 items-center gap-2 text-sm">
+            <li v-if="parentPage" class="shrink-0">
+              <RouterLink
+                :to="parentPage.path"
+                :aria-label="`返回${parentPage.label}列表`"
+                class="text-muted-foreground hover:text-foreground hover:underline"
+                >{{ parentPage.label }}</RouterLink
+              >
+            </li>
+            <li v-if="parentPage" aria-hidden="true" class="shrink-0 text-muted-foreground">
+              <ChevronRight class="size-4" />
+            </li>
+            <li aria-current="page" class="min-w-0">
+              <h1 class="truncate text-sm leading-5 font-medium" :title="pageTitle">
+                {{ pageTitle }}
+              </h1>
+            </li>
+          </ol>
+        </nav>
+        <div
+          id="page-header-actions"
+          data-slot="app-header-actions"
+          class="flex shrink-0 items-center gap-2 empty:hidden"
+        />
+        <Button
+          variant="outline"
+          class="ml-auto shrink-0"
+          aria-label="全局搜索"
+          title="全局搜索 (Ctrl K)"
+          @click="searchOpen = true"
+          ><Search /><span class="hidden sm:inline">搜索</span
+          ><kbd class="hidden text-xs lg:inline">Ctrl K</kbd></Button
         >
       </header>
-      <main id="main-content" class="min-h-0 flex-1 overflow-y-auto p-3 md:p-4 lg:p-6">
-        <div class="mx-auto w-full max-w-[1280px] min-w-0">
-          <UnauthorizedPage v-if="route.meta.requiresAdmin && !auth.isAdmin" /><RouterView v-else />
+      <main id="main-content" class="min-h-0 flex-1 overflow-hidden p-3 md:p-4 lg:p-6">
+        <div class="mx-auto h-full min-h-0 w-full max-w-[1280px] min-w-0">
+          <PageShell v-if="route.meta.requiresAdmin && !auth.isAdmin"
+            ><UnauthorizedPage /></PageShell
+          ><RouterView v-else />
         </div>
       </main>
     </div>
@@ -165,7 +227,10 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKey));
           ><SheetTitle>LLM Bridge</SheetTitle
           ><SheetDescription>使用与管理导航</SheetDescription></SheetHeader
         >
-        <nav class="flex-1 space-y-1 overflow-y-auto" aria-label="移动导航">
+        <nav
+          class="min-h-0 flex-1 space-y-1 overflow-y-auto overscroll-contain"
+          aria-label="移动导航"
+        >
           <RouterLink
             v-for="item in items"
             :key="item.key"

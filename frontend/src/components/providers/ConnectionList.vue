@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { type ModelLinkView } from "@bindings/ModelLinkView";
 import { type ProviderResponse } from "@bindings/ProviderResponse";
+import { Cable, Check, Pause, Pencil, Play, Trash2, FlaskConical } from "@lucide/vue";
 
 import ModelLinkEditForm from "./ModelLinkEditForm.vue";
 import { getApi, formatPrice } from "~/lib/api";
@@ -12,6 +13,8 @@ const props = defineProps<{
   entries: { modelId: number; modelName: string; link: ModelLinkView; linkCreated?: boolean }[];
   providers: ProviderResponse[];
   readOnly?: boolean;
+  fill?: boolean;
+  loading?: boolean;
 }>();
 const emit = defineEmits<{ changed: [] }>();
 const tests = useConnectionTestsStore();
@@ -26,17 +29,18 @@ useUnsavedChanges(
   computed(() => busy.value !== null),
 );
 const error = ref("");
-const page = ref(1);
+const list = ref<HTMLElement>();
 const filtered = computed(() =>
   props.entries.filter((entry) =>
     `${entry.modelName} ${entry.link.providerModelId} ${entry.link.providerDisplayName}`
       .toLowerCase()
-      .includes(query.value.toLowerCase()),
+      .includes(query.value.trim().toLowerCase()),
   ),
 );
-const visible = computed(() => filtered.value.slice((page.value - 1) * 50, page.value * 50));
-watch(query, () => {
-  page.value = 1;
+const { page, visible } = useListPagination(filtered, query);
+watch([query, page], async () => {
+  await nextTick();
+  if (list.value) list.value.scrollTop = 0;
 });
 const mutation = useApiCall(async (entry: (typeof props.entries)[number], remove: boolean) =>
   remove
@@ -47,13 +51,14 @@ const mutation = useApiCall(async (entry: (typeof props.entries)[number], remove
       }),
 );
 async function mutate(entry: (typeof props.entries)[number], remove: boolean) {
-  if (busy.value !== null) return;
+  if (busy.value !== null || props.loading) return;
   if (
     remove &&
     !(await confirm({
       title: "移除此连接？",
       description: `${entry.modelName} → ${entry.link.providerModelId} 将解除关联；共享模型定义和其他连接不会删除。`,
       destructive: true,
+      confirmText: "确认移除",
     }))
   )
     return;
@@ -69,6 +74,7 @@ async function mutate(entry: (typeof props.entries)[number], remove: boolean) {
 async function test(entry: (typeof props.entries)[number]) {
   if (
     busy.value !== null ||
+    props.loading ||
     !(await confirm({
       title: "测试上游？",
       description:
@@ -101,130 +107,170 @@ function saved() {
 }
 </script>
 <template>
-  <section class="min-w-0 space-y-4">
-    <Input v-model="query" placeholder="搜索网关 / 上游模型 ID" aria-label="搜索模型连接" />
-    <p class="text-xs text-muted-foreground">
-      最近手动检测是本浏览会话的结果，非实时健康状态；刷新后回到未检测。价格单位：USD / 百万 Token。
-    </p>
-    <p v-if="error" role="alert" class="text-destructive">{{ error }}</p>
-    <div v-if="!filtered.length" class="rounded border p-6">
-      <p>{{ query ? "筛选无结果" : "尚未关联模型连接" }}</p>
-      <Button v-if="query" variant="outline" @click="query = ''">清除筛选</Button>
-    </div>
-    <article
-      v-for="entry in visible"
-      :key="entry.link.id"
-      class="min-w-0 space-y-3 rounded-lg border bg-card p-4"
+  <section
+    :class="
+      fill ? 'flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-hidden' : 'min-w-0 space-y-4'
+    "
+  >
+    <ListToolbar
+      v-model="query"
+      class="shrink-0"
+      label="搜索模型连接"
+      placeholder="搜索网关 ID / 上游 ID / 提供者"
+      :refreshable="!readOnly"
+      :loading="loading"
+      :disabled="busy !== null"
+      @refresh="emit('changed')"
+      @clear="query = ''"
+    />
+    <div
+      ref="list"
+      :data-scroll-area="fill ? '' : undefined"
+      :tabindex="fill ? 0 : undefined"
+      :class="
+        fill ? 'min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain p-1' : 'space-y-4'
+      "
     >
-      <div class="flex flex-wrap items-start justify-between gap-3">
-        <div class="min-w-0 space-y-1">
-          <RouterLink
-            :to="`/admin/models/${entry.modelId}`"
-            class="font-mono break-all text-primary underline"
-            >{{ entry.modelName }}</RouterLink
-          >
-          <p class="break-all">
-            →
-            <RouterLink
-              :to="`/providers/${entry.link.providerId}`"
-              class="text-primary underline"
-              >{{ entry.link.providerDisplayName }}</RouterLink
-            >
-            / <code>{{ entry.link.providerModelId }}</code>
-          </p>
-          <p class="text-xs break-all text-muted-foreground">
-            {{ protocolLabel(entry.link.protocol) }} · {{ entry.link.baseUrl }}
-          </p>
-        </div>
-        <span class="text-sm"
-          >{{ entry.linkCreated === undefined ? "" : entry.linkCreated ? "已创建 · " : "已存在 · "
-          }}{{ entry.link.enabled ? "✓ 连接已启用" : "− 连接已停用" }}</span
-        >
-      </div>
-      <p
-        v-if="providers.find((p) => p.id === entry.link.providerId)?.enabled === false"
-        class="text-warning"
-      >
-        提供者已停用，此连接不会参与路由。
-      </p>
-      <p
-        v-if="
-          providers
-            .find((p) => p.id === entry.link.providerId)
-            ?.protocols.find((p) => p.id === entry.link.protocolId)?.enabled === false
-        "
-        class="text-warning"
-      >
-        协议已停用，此连接不会参与路由。
-      </p>
-      <div class="grid gap-2 text-sm sm:grid-cols-3">
-        <p>
-          输入 / 输出价格：{{ formatPrice(entry.link.inputPricePer1m) }} /
-          {{ formatPrice(entry.link.outputPricePer1m) }}
-        </p>
-        <p>
-          输入 / 输出 Token 覆盖：{{ entry.link.maxInputTokens ?? "继承" }} /
-          {{ entry.link.maxOutputTokens ?? "继承" }}
-        </p>
-        <p>连接优先级：{{ entry.link.priority }}（越小越优先）</p>
-      </div>
       <p class="text-xs text-muted-foreground">
-        工具
-        {{ entry.link.toolCalling === null ? "继承" : entry.link.toolCalling ? "支持" : "不支持" }}
-        · 视觉 {{ entry.link.vision === null ? "继承" : entry.link.vision ? "支持" : "不支持" }} ·
-        推理 {{ entry.link.thinking === null ? "继承" : entry.link.thinking ? "支持" : "不支持" }} ·
-        自适应推理
-        {{
-          entry.link.adaptiveThinking === null
-            ? "继承"
-            : entry.link.adaptiveThinking
-              ? "支持"
-              : "不支持"
-        }}
+        最近手动检测是本浏览会话的结果，非实时健康状态；刷新后回到未检测。价格单位：USD / 百万
+        Token。
       </p>
-      <p
-        v-if="tests.get(entry.link.id)"
-        :class="tests.get(entry.link.id)?.status === 'success' ? 'text-success' : 'text-failure'"
+      <ErrorState v-if="error" :error="error" inline />
+      <EmptyState
+        v-if="!filtered.length"
+        :icon="Cable"
+        :title="query ? '筛选无结果' : '尚未关联模型连接'"
+        ><template v-if="query" #actions
+          ><Button variant="outline" @click="query = ''">清除筛选</Button></template
+        ></EmptyState
       >
-        {{
-          tests.get(entry.link.id)?.status === "success"
-            ? "✓ 最近手动检测成功"
-            : "× 最近手动检测失败"
-        }}
-        · {{ new Date(tests.get(entry.link.id)!.testedAt).toLocaleString() }} ·
-        {{ tests.get(entry.link.id)?.latencyMs ?? "—" }} ms
-        <span class="break-all">{{ tests.get(entry.link.id)?.message }}</span>
-      </p>
-      <p v-else class="text-muted-foreground">最近手动检测：未检测</p>
-      <div class="flex flex-wrap gap-2">
-        <Button variant="outline" :disabled="busy !== null" @click="test(entry)">{{
-          busy === entry.link.id ? "处理中…" : "测试上游"
-        }}</Button
-        ><template v-if="!readOnly"
-          ><Button
-            variant="outline"
-            :disabled="busy !== null"
-            @click="
-              editing = entry;
-              editOpen = true;
-            "
-            >编辑连接</Button
-          ><Button variant="outline" :disabled="busy !== null" @click="mutate(entry, false)">{{
-            entry.link.enabled ? "停用" : "启用"
-          }}</Button
-          ><Button variant="ghost" :disabled="busy !== null" @click="mutate(entry, true)"
-            >移除连接</Button
-          ></template
+      <ListItem v-for="entry in visible" :key="entry.link.id">
+        <template #title>
+          <RouterLink :to="`/admin/models/${entry.modelId}`">{{ entry.modelName }}</RouterLink>
+        </template>
+        <template #status
+          ><Badge :variant="entry.link.enabled ? 'secondary' : 'outline'"
+            ><Check v-if="entry.link.enabled" aria-hidden="true" /><Pause
+              v-else
+              aria-hidden="true"
+            />{{ entry.link.enabled ? "已启用" : "已停用" }}</Badge
+          ><Badge v-if="entry.linkCreated !== undefined" variant="outline">{{
+            entry.linkCreated ? "已创建" : "已存在"
+          }}</Badge></template
         >
-      </div>
-    </article>
-    <div v-if="filtered.length > 50" class="flex justify-between">
-      <Button variant="outline" :disabled="page === 1" @click="page--">上一页</Button
-      ><span>{{ page }} / {{ Math.ceil(filtered.length / 50) }}</span
-      ><Button variant="outline" :disabled="page * 50 >= filtered.length" @click="page++"
-        >下一页</Button
-      >
+        <template #subtitle>{{ entry.link.providerModelId }}</template>
+        <p class="break-all">
+          →
+          <RouterLink :to="`/providers/${entry.link.providerId}`" class="text-primary underline">{{
+            entry.link.providerDisplayName
+          }}</RouterLink>
+          / <code>{{ entry.link.providerModelId }}</code>
+        </p>
+        <p class="text-xs break-all text-muted-foreground">
+          {{ protocolLabel(entry.link.protocol) }} · {{ entry.link.baseUrl }}
+        </p>
+        <p
+          v-if="providers.find((p) => p.id === entry.link.providerId)?.enabled === false"
+          class="text-warning"
+        >
+          提供者已停用，此连接不会参与路由。
+        </p>
+        <p
+          v-if="
+            providers
+              .find((p) => p.id === entry.link.providerId)
+              ?.protocols.find((p) => p.id === entry.link.protocolId)?.enabled === false
+          "
+          class="text-warning"
+        >
+          协议已停用，此连接不会参与路由。
+        </p>
+        <div class="grid gap-2 text-sm sm:grid-cols-3">
+          <p>
+            输入 / 输出价格：{{ formatPrice(entry.link.inputPricePer1m) }} /
+            {{ formatPrice(entry.link.outputPricePer1m) }}
+          </p>
+          <p>
+            输入 / 输出 Token 覆盖：{{ entry.link.maxInputTokens ?? "继承" }} /
+            {{ entry.link.maxOutputTokens ?? "继承" }}
+          </p>
+          <p>连接优先级：{{ entry.link.priority }}（越小越优先）</p>
+        </div>
+        <p class="text-xs text-muted-foreground">
+          工具
+          {{
+            entry.link.toolCalling === null ? "继承" : entry.link.toolCalling ? "支持" : "不支持"
+          }}
+          · 视觉 {{ entry.link.vision === null ? "继承" : entry.link.vision ? "支持" : "不支持" }} ·
+          推理
+          {{ entry.link.thinking === null ? "继承" : entry.link.thinking ? "支持" : "不支持" }} ·
+          自适应推理
+          {{
+            entry.link.adaptiveThinking === null
+              ? "继承"
+              : entry.link.adaptiveThinking
+                ? "支持"
+                : "不支持"
+          }}
+        </p>
+        <p
+          v-if="tests.get(entry.link.id)"
+          :class="tests.get(entry.link.id)?.status === 'success' ? 'text-success' : 'text-failure'"
+        >
+          {{
+            tests.get(entry.link.id)?.status === "success"
+              ? "✓ 最近手动检测成功"
+              : "× 最近手动检测失败"
+          }}
+          · {{ new Date(tests.get(entry.link.id)!.testedAt).toLocaleString() }} ·
+          {{ tests.get(entry.link.id)?.latencyMs ?? "—" }} ms
+          <span class="break-all">{{ tests.get(entry.link.id)?.message }}</span>
+        </p>
+        <p v-else class="text-muted-foreground">最近手动检测：未检测</p>
+        <template #actions
+          ><div class="flex flex-wrap gap-2 md:max-w-64 md:justify-end">
+            <template v-if="!readOnly"
+              ><Button
+                variant="outline"
+                :disabled="busy !== null || loading"
+                @click="
+                  editing = entry;
+                  editOpen = true;
+                "
+                ><Pencil aria-hidden="true" />编辑连接</Button
+              ><Button
+                variant="outline"
+                :disabled="busy !== null || loading"
+                @click="mutate(entry, false)"
+                ><Pause v-if="entry.link.enabled" aria-hidden="true" /><Play
+                  v-else
+                  aria-hidden="true"
+                />{{ entry.link.enabled ? "停用" : "启用" }}</Button
+              ></template
+            >
+            <Button variant="outline" :disabled="busy !== null || loading" @click="test(entry)"
+              ><FlaskConical aria-hidden="true" />{{
+                busy === entry.link.id ? "处理中…" : "测试上游"
+              }}</Button
+            >
+            <Button
+              v-if="!readOnly"
+              variant="ghost"
+              class="text-destructive hover:text-destructive"
+              :disabled="busy !== null || loading"
+              @click="mutate(entry, true)"
+              ><Trash2 aria-hidden="true" />移除连接</Button
+            >
+          </div></template
+        >
+      </ListItem>
     </div>
+    <ListPagination
+      v-model="page"
+      class="shrink-0 border-t pt-3"
+      :total="filtered.length"
+      :disabled="busy !== null || loading"
+    />
     <ModelLinkEditForm
       v-if="editing"
       v-model:open="editOpen"

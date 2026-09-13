@@ -1,21 +1,25 @@
 <script setup lang="ts">
 import { type TokenListItem } from "@bindings/TokenListItem";
 import { type TraceSummary } from "@bindings/TraceSummary";
-import {
-  ChevronLeft,
-  ChevronRight,
-  ChevronsLeft,
-  ChevronsRight,
-  ScrollText,
-  Search,
-} from "@lucide/vue";
+import { type UsageScope } from "@bindings/UsageScope";
+import { Eye, ScrollText } from "@lucide/vue";
 
 import { Button } from "~/components/ui/button";
 import { useApiCall } from "~/composables/useApiCall";
 import { getApi, formatTokens } from "~/lib/api";
 import { statusBadgeFor } from "~/lib/trace-status";
+import { formatApiError } from "~/lib/utils/error";
 import { useAuthStore } from "~/stores/auth";
 const auth = useAuthStore();
+const route = useRoute();
+const router = useRouter();
+const scope = computed<UsageScope>(() =>
+  auth.isAdmin && route.query.scope !== "mine" ? "all" : "mine",
+);
+async function changeScope(value: unknown) {
+  if (!auth.isAdmin || (value !== "all" && value !== "mine")) return;
+  await router.replace({ path: route.path, query: { ...route.query, scope: value } });
+}
 const localModels = useApiCall(() => getApi().models.listAllModels());
 
 const api = getApi();
@@ -52,37 +56,51 @@ function dayRange(dateStr: string, endOfDay: boolean): number | null {
   return Math.floor((endOfDay ? d.getTime() + 24 * 3600_000 - 1 : d.getTime()) / 1000);
 }
 
-const {
-  loading,
-  error,
-  execute: fetchTraces,
-} = useApiCall(() => {
-  const from = dayRange(dateFrom.value, false);
-  const to = dayRange(dateTo.value, true);
-  return api.usage.listTraces({
-    status: statusFilter.value === "all" ? null : statusFilter.value,
-    model: modelFilter.value.trim() || null,
-    tokenId: tokenFilter.value === "all" ? null : Number(tokenFilter.value),
-    interface: null,
-    search: search.value.trim() || null,
-    dateFrom: from,
-    dateTo: to,
-    page: page.value,
-    pageSize: PAGE_SIZE,
-  });
-});
+const loading = ref(false);
+const error = ref("");
+let loadSequence = 0;
 
 async function load() {
-  const r = await fetchTraces();
-  if (r) {
-    // 翻页越界回退到最后一页
-    const pages = Math.max(1, Math.ceil(r.total / PAGE_SIZE));
+  clearTimeout(searchTimer);
+  const sequence = ++loadSequence;
+  const selectedScope = scope.value;
+  const userId = auth.user?.userId;
+  const from = dayRange(dateFrom.value, false);
+  const to = dayRange(dateTo.value, true);
+  loading.value = auth.isAuthenticated;
+  error.value = "";
+  traces.value = [];
+  if (!auth.isAuthenticated) {
+    total.value = 0;
+    return;
+  }
+  try {
+    const response = await api.usage.listTraces({
+      scope: selectedScope,
+      status: statusFilter.value === "all" ? null : statusFilter.value,
+      model: modelFilter.value.trim() || null,
+      tokenId: tokenFilter.value === "all" ? null : Number(tokenFilter.value),
+      interface: null,
+      search: search.value.trim() || null,
+      dateFrom: from,
+      dateTo: to,
+      page: page.value,
+      pageSize: PAGE_SIZE,
+    });
+    if (sequence !== loadSequence || selectedScope !== scope.value || userId !== auth.user?.userId)
+      return;
+    const pages = Math.max(1, Math.ceil(response.total / PAGE_SIZE));
+    total.value = response.total;
     if (page.value >= pages) {
       page.value = pages - 1;
       return;
     }
-    traces.value = r.items;
-    total.value = r.total;
+    traces.value = response.items;
+  } catch (failure) {
+    if (sequence === loadSequence && selectedScope === scope.value && userId === auth.user?.userId)
+      error.value = formatApiError(failure).title;
+  } finally {
+    if (sequence === loadSequence) loading.value = false;
   }
 }
 
@@ -100,15 +118,24 @@ watch(search, () => {
   }, 300);
 });
 watch(page, load);
+watch([scope, () => auth.user?.userId], () => {
+  total.value = 0;
+  traces.value = [];
+  clearTimeout(searchTimer);
+  if (page.value !== 0) page.value = 0;
+  else load();
+});
 onMounted(() => {
   load();
   localModels.execute();
 });
-onBeforeUnmount(() => clearTimeout(searchTimer));
+onBeforeUnmount(() => {
+  clearTimeout(searchTimer);
+  loadSequence++;
+});
 
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / PAGE_SIZE)));
-const pageFrom = computed(() => (total.value === 0 ? 0 : page.value * PAGE_SIZE + 1));
-const pageTo = computed(() => Math.min(total.value, (page.value + 1) * PAGE_SIZE));
+const displayPage = computed({ get: () => page.value + 1, set: (value) => goPage(value - 1) });
 
 function goPage(p: number) {
   if (p < 0 || p >= totalPages.value || p === page.value) return;
@@ -168,83 +195,101 @@ function formatCost(usd: number | null): string {
 </script>
 
 <template>
-  <PageShell>
-    <SectionHeader
-      title="请求记录"
-      :description="auth.isAdmin ? '全站请求与用量 · 管理员视角' : '我的请求与用量 · 仅当前用户'"
-      :icon="ScrollText"
-      :count="total"
-      count-label="条"
-    />
-
+  <PageShell
+    :scrollable="false"
+    :reset-key="`${scope}:${page}:${search}:${statusFilter}:${modelFilter}:${tokenFilter}:${dateFrom}:${dateTo}`"
+  >
+    <template #header>
+      <SectionHeader title="请求记录" :icon="ScrollText" :count="total" count-label="条" />
+    </template>
     <!-- 筛选栏 -->
-    <div class="flex flex-wrap items-center gap-2">
-      <div class="relative min-w-52 flex-1">
-        <Search class="absolute top-1/2 left-2.5 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+    <template #toolbar
+      ><ListToolbar
+        v-model="search"
+        label="搜索请求"
+        placeholder="搜索 Request ID / 模型 / 错误信息"
+        :loading="loading"
+        :filtered="filtered"
+        @refresh="load"
+        @clear="clearFilters"
+        ><template #primary>
+          <Select v-model="statusFilter">
+            <SelectTrigger class="w-28" aria-label="筛选请求状态">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem v-for="opt in STATUS_OPTIONS" :key="opt.value" :value="opt.value">
+                {{ opt.label }}
+              </SelectItem>
+            </SelectContent>
+          </Select>
+        </template>
+        <Select v-if="auth.isAdmin" :model-value="scope" @update:model-value="changeScope">
+          <SelectTrigger class="w-32" aria-label="请求范围"><SelectValue /></SelectTrigger>
+          <SelectContent
+            ><SelectItem value="all">全站请求</SelectItem
+            ><SelectItem value="mine">我的请求</SelectItem></SelectContent
+          >
+        </Select>
         <Input
-          v-model="search"
-          aria-label="搜索请求"
-          placeholder="搜索 Request ID / 模型 / 错误信息…"
-          class="pl-8"
+          v-model="modelFilter"
+          list="trace-model-options"
+          class="w-full sm:w-60"
+          placeholder="精确模型 ID（含已删除模型）"
+          aria-label="筛选精确模型 ID"
         />
+        <datalist id="trace-model-options">
+          <option v-for="model in modelOptions" :key="model" :value="model" />
+        </datalist>
+        <Select v-model="tokenFilter">
+          <SelectTrigger class="w-48" aria-label="筛选我的令牌">
+            <SelectValue placeholder="不限令牌（候选为我的令牌）" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">不限令牌</SelectItem>
+            <SelectItem v-for="t in tokens" :key="t.id" :value="String(t.id)">
+              {{ t.name }}（{{ t.tokenPrefix }}）
+            </SelectItem>
+          </SelectContent>
+        </Select>
+        <Input v-model="dateFrom" type="date" class="w-36" aria-label="起始日期" />
+        <span class="text-xs text-muted-foreground">至</span>
+        <Input v-model="dateTo" type="date" class="w-36" aria-label="结束日期" />
+        <p class="text-sm text-muted-foreground">
+          {{ scope === "all" ? "全站请求与用量。" : "我的请求与用量。" }}
+          模型可直接输入历史 ID；下拉令牌候选仅包含我的令牌。成本为基于记录的估算，不是上游账单。
+        </p>
+      </ListToolbar></template
+    >
+
+    <div
+      v-if="error || loading || traces.length === 0"
+      data-scroll-area
+      class="min-h-0 flex-1 overflow-auto overscroll-contain p-1"
+    >
+      <ErrorState v-if="error" :error="error" @retry="load" />
+
+      <!-- Loading -->
+      <div v-else-if="loading" role="status" aria-label="加载列表" class="space-y-3">
+        <Skeleton v-for="index in 4" :key="index" class="h-24 rounded-md" />
       </div>
-      <Select v-model="statusFilter">
-        <SelectTrigger class="w-28" aria-label="筛选请求状态">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem v-for="opt in STATUS_OPTIONS" :key="opt.value" :value="opt.value">
-            {{ opt.label }}
-          </SelectItem>
-        </SelectContent>
-      </Select>
-      <Input
-        v-model="modelFilter"
-        list="trace-model-options"
-        class="w-full sm:w-60"
-        placeholder="精确模型 ID（含已删除模型）"
-        aria-label="筛选精确模型 ID"
-      />
-      <datalist id="trace-model-options">
-        <option v-for="model in modelOptions" :key="model" :value="model" />
-      </datalist>
-      <Select v-model="tokenFilter">
-        <SelectTrigger class="w-48" aria-label="筛选我的令牌">
-          <SelectValue placeholder="不限令牌（候选为我的令牌）" />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="all">不限令牌</SelectItem>
-          <SelectItem v-for="t in tokens" :key="t.id" :value="String(t.id)">
-            {{ t.name }}（{{ t.tokenPrefix }}）
-          </SelectItem>
-        </SelectContent>
-      </Select>
-      <Input v-model="dateFrom" type="date" class="w-36" aria-label="起始日期" />
-      <span class="text-xs text-muted-foreground">至</span>
-      <Input v-model="dateTo" type="date" class="w-36" aria-label="结束日期" />
-    </div>
-    <p class="text-sm text-muted-foreground">
-      模型可直接输入历史 ID；下拉令牌候选仅包含我的令牌。成本为基于记录的估算，不是上游账单。
-    </p>
 
-    <ErrorState v-if="error" :error="error" inline @retry="load" />
-
-    <!-- Loading -->
-    <div v-if="loading" class="flex flex-col gap-3">
-      <Skeleton v-for="i in 6" :key="i" class="h-12 w-full rounded-lg" />
-    </div>
-
-    <!-- 空态 -->
-    <div v-else-if="!error && traces.length === 0" class="space-y-3 rounded border bg-card p-6">
-      <p>{{ filtered ? "筛选无结果" : "尚无请求记录" }}</p>
-      <Button v-if="filtered" variant="outline" @click="clearFilters">清除筛选</Button
-      ><Button v-else as-child variant="outline"
-        ><RouterLink to="/models">查看模型接入方式</RouterLink></Button
+      <!-- 空态 -->
+      <EmptyState
+        v-else-if="!error && traces.length === 0"
+        :icon="ScrollText"
+        :title="filtered ? '筛选无结果' : '尚无请求记录'"
       >
+        <template #actions>
+          <Button v-if="filtered" variant="outline" @click="clearFilters">清除筛选</Button
+          ><Button v-else as-child variant="outline"
+            ><RouterLink to="/models">查看模型接入方式</RouterLink></Button
+          >
+        </template>
+      </EmptyState>
     </div>
-
-    <Card v-else-if="!error" class="gap-0 overflow-hidden py-0">
-      <Table>
+    <Card v-else class="min-h-0 flex-1 gap-0 overflow-hidden py-0">
+      <Table container-class="flex-1" class="min-w-[900px]">
         <TableHeader>
           <TableRow class="hover:bg-transparent">
             <TableHead class="sticky top-0 z-10 w-20 bg-card">状态</TableHead>
@@ -255,16 +300,11 @@ function formatCost(usd: number | null): string {
             <TableHead class="sticky top-0 z-10 w-20 bg-card text-right">TTFT</TableHead>
             <TableHead class="sticky top-0 z-10 w-20 bg-card text-right">延迟</TableHead>
             <TableHead class="sticky top-0 z-10 w-20 bg-card text-right">估算成本</TableHead>
-            <TableHead class="sticky top-0 z-10 w-8 bg-card" />
+            <TableHead class="sticky top-0 z-10 bg-card text-right">操作</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
-          <TableRow
-            v-for="t in traces"
-            :key="t.requestId"
-            class="cursor-pointer transition-colors"
-            @click="$router.push(`/traces/${t.requestId}`)"
-          >
+          <TableRow v-for="t in traces" :key="t.requestId" class="transition-colors">
             <TableCell>
               <Badge variant="outline" :class="['text-xs', statusBadge(t).cls]">
                 {{ statusBadge(t).label }}
@@ -277,7 +317,7 @@ function formatCost(usd: number | null): string {
               <div class="flex items-center gap-1.5">
                 <RouterLink
                   :to="`/traces/${t.requestId}`"
-                  class="font-mono text-sm break-all text-primary underline"
+                  class="text-sm font-semibold break-all text-foreground hover:text-primary hover:underline"
                   >{{ t.model }}</RouterLink
                 >
                 <Badge
@@ -314,66 +354,25 @@ function formatCost(usd: number | null): string {
             <TableCell class="text-right font-mono text-xs">
               {{ formatCost(t.costUsd) }}
             </TableCell>
-            <TableCell>
-              <ChevronRight class="h-4 w-4 text-muted-foreground" />
-            </TableCell>
+            <TableCell class="text-right"
+              ><Button as-child variant="outline"
+                ><RouterLink :to="`/traces/${t.requestId}`"
+                  ><Eye aria-hidden="true" />查看</RouterLink
+                ></Button
+              ></TableCell
+            >
           </TableRow>
         </TableBody>
       </Table>
     </Card>
     <!-- 分页 -->
-    <div
-      v-if="!loading && !error && total > 0"
-      class="flex shrink-0 flex-wrap items-center justify-between gap-2 text-sm text-muted-foreground"
-    >
-      <span>第 {{ pageFrom }}–{{ pageTo }} 条，共 {{ total }} 条</span>
-      <div class="flex items-center gap-1">
-        <Button
-          variant="outline"
-          size="icon"
-          class="cursor-pointer"
-          title="第一页"
-          :disabled="page === 0"
-          aria-label="第一页"
-          @click="goPage(0)"
-        >
-          <ChevronsLeft class="h-3.5 w-3.5" />
-        </Button>
-        <Button
-          variant="outline"
-          size="icon"
-          class="cursor-pointer"
-          title="上一页"
-          :disabled="page === 0"
-          aria-label="上一页"
-          @click="goPage(page - 1)"
-        >
-          <ChevronLeft class="h-3.5 w-3.5" />
-        </Button>
-        <span class="px-2 font-mono">{{ page + 1 }} / {{ totalPages }}</span>
-        <Button
-          variant="outline"
-          size="icon"
-          class="cursor-pointer"
-          title="下一页"
-          :disabled="page >= totalPages - 1"
-          aria-label="下一页"
-          @click="goPage(page + 1)"
-        >
-          <ChevronRight class="h-3.5 w-3.5" />
-        </Button>
-        <Button
-          variant="outline"
-          size="icon"
-          class="cursor-pointer"
-          title="最后一页"
-          :disabled="page >= totalPages - 1"
-          aria-label="最后一页"
-          @click="goPage(totalPages - 1)"
-        >
-          <ChevronsRight class="h-3.5 w-3.5" />
-        </Button>
-      </div>
-    </div>
+    <template v-if="!error" #footer>
+      <ListPagination
+        v-model="displayPage"
+        :total="total"
+        :page-size="PAGE_SIZE"
+        :disabled="loading"
+      />
+    </template>
   </PageShell>
 </template>

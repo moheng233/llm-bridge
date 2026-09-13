@@ -1,5 +1,5 @@
 import { type AdminModelResponse } from "@bindings/AdminModelResponse";
-import { type CatalogLinkPreview } from "@bindings/CatalogLinkPreview";
+import { type CatalogModelPreview } from "@bindings/CatalogModelPreview";
 import { type CatalogPreview } from "@bindings/CatalogPreview";
 import { ApiError } from "@bindings/client";
 import { type CreateModelConnectionsRequest } from "@bindings/CreateModelConnectionsRequest";
@@ -27,8 +27,6 @@ export interface SetupConnection {
   modelKey: string;
   existingModelId: number | null;
   link: ConnectionDraft;
-  protocolConfirmed: boolean;
-  templateProtocol: string | null;
 }
 export function useConnectionSetup(context: SetupContext) {
   const api = getApi();
@@ -49,12 +47,15 @@ export function useConnectionSetup(context: SetupContext) {
   const error = ref("");
   const contextError = ref("");
   const uncertain = ref(false);
+  const providerRecovery = ref<ProviderResponse | null>(null);
+  const providerRecoveryChecked = ref(false);
+  let pendingProviderId = "";
   const activeKey = ref("");
   const referenceProvider = ref(context.templateProviderId ?? "");
   const conflictingModel = ref<AdminModelResponse | null>(null);
   const conflictKey = ref("");
   let sequence = 0;
-  let linkIndex = new Map<string, CatalogLinkPreview>();
+  let modelIndex = new Map<string, CatalogModelPreview>();
   const catalogCall = useApiCall(() => api.modelsImport.preview());
   const loadCall = useApiCall(() =>
     Promise.all([api.admin.listProviders(), api.admin.listAdminModels()]),
@@ -105,7 +106,7 @@ export function useConnectionSetup(context: SetupContext) {
     const preview = await catalogCall.execute();
     if (preview) {
       catalog.value = preview;
-      linkIndex = new Map(preview.links.map((row) => [row.key, row]));
+      modelIndex = new Map(preview.models.map((row) => [row.model.modelName, row]));
     }
   }
   function reset() {
@@ -120,6 +121,9 @@ export function useConnectionSetup(context: SetupContext) {
     result.value = null;
     error.value = "";
     uncertain.value = false;
+    providerRecovery.value = null;
+    providerRecoveryChecked.value = false;
+    pendingProviderId = "";
     conflictingModel.value = null;
     activeKey.value = "";
     step.value = "provider";
@@ -170,6 +174,9 @@ export function useConnectionSetup(context: SetupContext) {
     result.value = null;
     error.value = "";
     uncertain.value = false;
+    providerRecovery.value = null;
+    providerRecoveryChecked.value = false;
+    pendingProviderId = "";
     fieldErrors.value = {};
     localLinks.value = [];
     for (const key of Object.keys(modelDrafts)) delete modelDrafts[key];
@@ -219,11 +226,50 @@ export function useConnectionSetup(context: SetupContext) {
       step.value = "configuration";
     }
   }
+  async function acceptProvider(provider: ProviderResponse) {
+    savedProvider.value = provider;
+    providerDraft.value = providerToDraft(provider);
+    providerBaseline.value = JSON.stringify(providerDraft.value);
+    useConnectionTestsStore().invalidateProvider(provider.id);
+    providers.value = [...providers.value.filter((row) => row.id !== provider.id), provider];
+    await router.replace({
+      path: "/admin/setup",
+      query: {
+        providerId: String(provider.id),
+        ...(lockedModel.value ? { modelId: String(lockedModel.value.id) } : {}),
+        ...(referenceProvider.value ? { templateProviderId: referenceProvider.value } : {}),
+      },
+    });
+  }
+  async function useRecoveredProvider() {
+    if (saving.value || loading.value || !uncertain.value || !providerRecovery.value) return;
+    await acceptProvider(providerRecovery.value);
+    uncertain.value = false;
+    providerRecovery.value = null;
+    providerRecoveryChecked.value = false;
+    pendingProviderId = "";
+    fieldErrors.value = {};
+    error.value = "";
+  }
+  function allowProviderRetry() {
+    if (
+      saving.value ||
+      loading.value ||
+      !providerRecoveryChecked.value ||
+      providerRecovery.value ||
+      savedProvider.value
+    )
+      return;
+    uncertain.value = false;
+    providerRecoveryChecked.value = false;
+    pendingProviderId = "";
+    error.value = "";
+  }
   async function saveProvider(advance = true) {
-    if (saving.value) return;
+    if (saving.value || loading.value || uncertain.value) return;
     fieldErrors.value = validateProviderDraft(providerDraft.value, savedProvider.value);
     if (advance && !providerDraft.value.protocols.some((protocol) => protocol.enabled))
-      fieldErrors.value["protocols.0.baseUrl"] = "添加模型前至少保留一个已启用的有效协议";
+      fieldErrors.value.protocols = "添加模型前至少保留一个已启用的有效协议";
     if (
       !savedProvider.value &&
       providers.value.some(
@@ -237,29 +283,20 @@ export function useConnectionSetup(context: SetupContext) {
       failure = undefined;
       const provider = await saveCall.execute();
       if (!provider) {
-        if (failure instanceof ApiError) {
+        if (failure instanceof ApiError && failure.status < 500) {
           error.value = failure.message;
           if (failure.status === 409)
             fieldErrors.value.providerId = "实例 ID 已存在，请使用已有提供者或修改 ID";
         } else {
           uncertain.value = true;
+          pendingProviderId = providerDraft.value.providerId;
+          providerRecovery.value = null;
+          providerRecoveryChecked.value = false;
           error.value = "保存结果待确认；请重新加载本地记录，不要自动重发创建。";
         }
         return;
       }
-      savedProvider.value = provider;
-      providerDraft.value = providerToDraft(provider);
-      providerBaseline.value = JSON.stringify(providerDraft.value);
-      useConnectionTestsStore().invalidateProvider(provider.id);
-      providers.value = [...providers.value.filter((row) => row.id !== provider.id), provider];
-      await router.replace({
-        path: "/admin/setup",
-        query: {
-          providerId: String(provider.id),
-          ...(lockedModel.value ? { modelId: String(lockedModel.value.id) } : {}),
-          ...(referenceProvider.value ? { templateProviderId: referenceProvider.value } : {}),
-        },
-      });
+      await acceptProvider(provider);
     }
     uncertain.value = false;
     if (!advance) {
@@ -269,69 +306,53 @@ export function useConnectionSetup(context: SetupContext) {
     step.value = "models";
     if (lockedModel.value && !selectedConnections.value.length) addLocal(lockedModel.value.id);
   }
-  function addConnection(
-    key: string,
-    modelKey: string,
-    existingModelId: number | null,
-    row?: CatalogLinkPreview,
-  ) {
+  function addConnection(key: string, modelKey: string, existingModelId: number | null) {
     const provider = savedProvider.value;
     if (!provider || saving.value || selectedConnections.value.some((item) => item.key === key))
       return;
     const protocols = provider.protocols.filter((protocol) => protocol.enabled);
     const chosen = protocols.length === 1 ? protocols[0]! : null;
-    const source = row?.link;
-    const templateProtocol = source
-      ? (catalog.value?.providers.find((entry) => entry.provider.providerId === source.providerId)
-          ?.provider.compat ?? null)
-      : null;
     const link: ConnectionDraft = {
       providerId: provider.id,
       protocolId: chosen?.id ?? null,
-      providerModelId: source?.providerModelId ?? modelKey,
+      providerModelId: modelKey,
       displayName: "",
-      maxInput: source?.maxInputTokens == null ? "" : String(source.maxInputTokens),
-      maxOutput: source?.maxOutputTokens == null ? "" : String(source.maxOutputTokens),
-      inputPrice: source?.inputPricePer1m == null ? "" : String(source.inputPricePer1m),
-      outputPrice: source?.outputPricePer1m == null ? "" : String(source.outputPricePer1m),
-      cachePrice: source?.cacheReadPricePer1m == null ? "" : String(source.cacheReadPricePer1m),
+      maxInput: "",
+      maxOutput: "",
+      inputPrice: "",
+      outputPrice: "",
+      cachePrice: "",
       priority: "100",
-      toolCalling: source?.toolCalling ?? null,
-      vision: source?.vision ?? null,
-      thinking: source?.thinking ?? null,
-      adaptiveThinking: source?.adaptiveThinking ?? null,
-      enabled: source?.enabled ?? true,
+      toolCalling: null,
+      vision: null,
+      thinking: null,
+      adaptiveThinking: null,
+      enabled: true,
     };
     selectedConnections.value.push({
       key,
       modelKey,
       existingModelId,
       link,
-      templateProtocol,
-      protocolConfirmed: !templateProtocol || chosen?.protocol === templateProtocol,
     });
     activeKey.value = key;
   }
   function selectCatalogKeys(keys: string[]) {
     if (saving.value) return;
+    const selectedKeys = new Set(keys.map((key) => `catalog:${key}`));
     selectedConnections.value = selectedConnections.value.filter(
-      (item) => !linkIndex.has(item.key) || keys.includes(item.key),
+      (item) => !item.key.startsWith("catalog:") || selectedKeys.has(item.key),
     );
     for (const key of keys) {
-      const row = linkIndex.get(key);
-      if (!row || row.link.providerId !== referenceProvider.value) continue;
-      const local =
-        lockedModel.value ?? models.value.find((model) => model.modelName === row.link.modelName);
-      const modelKey = local?.modelName ?? row.link.modelName;
-      if (!local && !modelDrafts[modelKey]) {
-        const template = catalog.value?.models.find(
-          (entry) => entry.model.modelName === modelKey,
-        )?.model;
-        if (!template) continue;
-        modelDrafts[modelKey] = modelToDraft(template);
-      }
-      addConnection(key, modelKey, local?.id ?? null, row);
+      const row = modelIndex.get(key);
+      if (!row || (lockedModel.value && lockedModel.value.modelName !== key)) continue;
+      const local = models.value.find((model) => model.modelName === key);
+      if (!local && !modelDrafts[key]) modelDrafts[key] = modelToDraft(row.model);
+      addConnection(`catalog:${key}`, key, local?.id ?? null);
     }
+    if (!selectedConnections.value.some((item) => item.key === activeKey.value))
+      activeKey.value = selectedConnections.value[0]?.key ?? "";
+    fieldErrors.value = {};
   }
   function addLocal(id: number) {
     const model = models.value.find((model) => model.id === id);
@@ -377,15 +398,6 @@ export function useConnectionSetup(context: SetupContext) {
     const items: CreateModelConnectionsRequest["items"] = [];
     for (const [index, item] of selectedConnections.value.entries()) {
       const errors = validateConnectionDraft(item.link, savedProvider.value);
-      const protocol = savedProvider.value.protocols.find(
-        (protocol) => protocol.id === item.link.protocolId,
-      );
-      if (
-        item.templateProtocol &&
-        protocol?.protocol !== item.templateProtocol &&
-        !item.protocolConfirmed
-      )
-        errors.protocolId = "目录协议与目标协议不同，请显式确认兼容性或手动调整";
       for (const [field, message] of Object.entries(errors))
         fieldErrors.value[`${index}.${field}`] = message;
       if (item.existingModelId === null) {
@@ -438,18 +450,33 @@ export function useConnectionSetup(context: SetupContext) {
     }
   }
   async function reloadLocalRecords() {
+    if (saving.value || loading.value) return false;
+    providerRecovery.value = null;
+    providerRecoveryChecked.value = false;
     const data = await loadCall.execute();
     if (!data) {
       error.value = loadCall.error.value;
       return false;
     }
     [providers.value, models.value] = data;
-    const links = savedProvider.value ? await linksCall.execute(savedProvider.value.id) : [];
+    const recoveringProvider = step.value === "configuration" && uncertain.value;
+    const currentProvider = providers.value.find((provider) =>
+      savedProvider.value
+        ? provider.id === savedProvider.value.id
+        : recoveringProvider && provider.providerId === pendingProviderId,
+    );
+    const links = currentProvider ? await linksCall.execute(currentProvider.id) : [];
     if (!links) {
       error.value = linksCall.error.value;
       return false;
     }
     localLinks.value = links;
+    if (recoveringProvider) {
+      providerRecovery.value = currentProvider ?? null;
+      providerRecoveryChecked.value = true;
+      error.value = "";
+      return true;
+    }
     error.value = "已重新加载本地记录，请检查已配置连接后确认是否重试。";
     return true;
   }
@@ -479,6 +506,10 @@ export function useConnectionSetup(context: SetupContext) {
     contextError,
     error,
     uncertain,
+    providerRecovery,
+    providerRecoveryChecked,
+    useRecoveredProvider,
+    allowProviderRetry,
     activeKey,
     referenceProvider,
     catalogCall,

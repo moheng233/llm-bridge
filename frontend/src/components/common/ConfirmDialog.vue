@@ -12,8 +12,11 @@ const state = getConfirmState();
       }
     "
   >
-    <DialogContent class="sm:max-w-sm">
-      <DialogHeader>
+    <DialogContent
+      class="flex flex-col overflow-hidden sm:max-w-sm"
+      v-bind="state?.description ? {} : { 'aria-describedby': undefined }"
+    >
+      <DialogHeader data-scroll-area class="min-h-0 overflow-auto overscroll-contain pr-6">
         <DialogTitle class="text-lg">
           {{ state?.title ?? "" }}
         </DialogTitle>
@@ -21,7 +24,7 @@ const state = getConfirmState();
           {{ state.description }}
         </DialogDescription>
       </DialogHeader>
-      <div class="flex gap-2 pt-2">
+      <div class="flex shrink-0 gap-2 pt-2">
         <Button variant="outline" class="flex-1 cursor-pointer" @click="state?.resolve(false)">
           {{ state?.cancelText ?? "取消" }}
         </Button>

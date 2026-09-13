@@ -2,6 +2,7 @@
 import { type AdminModelResponse } from "@bindings/AdminModelResponse";
 import { type ModelLinkView } from "@bindings/ModelLinkView";
 import { type ProviderResponse } from "@bindings/ProviderResponse";
+import { Cable, Layers, Save, Trash2 } from "@lucide/vue";
 
 import { getApi } from "~/lib/api";
 import {
@@ -10,6 +11,7 @@ import {
   validateModelDraft,
   type ModelDraft,
 } from "~/lib/model-form";
+import { focusInScrollArea } from "~/lib/utils";
 import { useConnectionTestsStore } from "~/stores/connection-tests";
 const route = useRoute();
 const router = useRouter();
@@ -35,7 +37,9 @@ const saveCall = useApiCall(() =>
   getApi().admin.updateAdminModel(String(model.value!.id), modelDraftToInput(draft.value!)),
 );
 const deleteCall = useApiCall(() => getApi().admin.deleteAdminModel(String(model.value!.id)));
-const busy = computed(() => saveCall.loading.value || deleteCall.loading.value);
+const busy = computed(
+  () => loadCall.loading.value || saveCall.loading.value || deleteCall.loading.value,
+);
 const dirty = computed(() => !!draft.value && JSON.stringify(draft.value) !== baseline.value);
 const { confirmDiscard } = useUnsavedChanges(dirty, busy);
 const tab = computed(() => (route.query.tab === "definition" ? "definition" : "connections"));
@@ -59,7 +63,7 @@ async function save() {
   fieldErrors.value = validateModelDraft(draft.value);
   if (Object.keys(fieldErrors.value).length) {
     await nextTick();
-    document.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
+    focusInScrollArea(document.querySelector<HTMLElement>('[aria-invalid="true"]'));
     return;
   }
   const input = modelDraftToInput(draft.value);
@@ -104,6 +108,7 @@ async function remove() {
       title: "删除模型定义？",
       description: `将移除 ${links.value.length} 条连接，客户端将不能再使用 ${model.value.modelName}。此操作不可撤销。`,
       destructive: true,
+      confirmText: "确认删除",
     }))
   )
     return;
@@ -121,57 +126,91 @@ onBeforeRouteUpdate(async (to, from) =>
 );
 </script>
 <template>
-  <PageShell
-    ><ErrorState v-if="loadCall.error.value" :error="loadCall.error.value" @retry="load" /><Skeleton
-      v-else-if="loadCall.loading.value"
-      class="h-48"
-    /><template v-else-if="model && draft"
-      ><div class="flex flex-wrap justify-between gap-4">
-        <div>
-          <h1>{{ model.displayName || model.modelName }}</h1>
-          <p class="mt-2 font-mono break-all">{{ model.modelName }}</p>
-          <p class="mt-2">
+  <PageShell :scrollable="false">
+    <template v-if="model" #header>
+      <SectionHeader
+        :title="model.displayName || model.modelName"
+        :subtitle="model.modelName"
+        :icon="Layers"
+        back-to="/admin/models"
+        back-label="返回模型定义列表"
+      >
+        <template #actions
+          ><Button as-child
+            ><RouterLink :to="`/admin/setup?modelId=${model.id}`"
+              ><Cable aria-hidden="true" />关联提供者</RouterLink
+            ></Button
+          ></template
+        >
+      </SectionHeader>
+    </template>
+    <template v-if="model" #toolbar>
+      <nav class="flex gap-2" aria-label="模型定义详情">
+        <Button
+          :aria-pressed="tab === 'connections'"
+          :disabled="busy"
+          :variant="tab === 'connections' ? 'default' : 'outline'"
+          @click="selectTab('connections')"
+          >提供者连接</Button
+        >
+        <Button
+          :aria-pressed="tab === 'definition'"
+          :disabled="busy"
+          :variant="tab === 'definition' ? 'default' : 'outline'"
+          @click="selectTab('definition')"
+          >模型定义</Button
+        >
+      </nav>
+    </template>
+    <div v-if="loadCall.error.value && !model" data-scroll-area class="min-h-0 overflow-auto">
+      <ErrorState :error="loadCall.error.value" @retry="load" />
+    </div>
+    <Skeleton v-else-if="loadCall.loading.value && !model" class="h-48" /><template
+      v-else-if="model && draft"
+    >
+      <ErrorState v-if="loadCall.error.value" :error="loadCall.error.value" inline @retry="load" />
+      <ConnectionList
+        fill
+        v-if="tab === 'connections'"
+        :entries="entries"
+        :providers="providers"
+        :loading="loadCall.loading.value"
+        @changed="load"
+      />
+      <form v-else class="flex min-h-0 flex-1 flex-col overflow-hidden" @submit.prevent="save">
+        <div
+          data-scroll-area
+          tabindex="0"
+          class="min-h-0 flex-1 space-y-4 overflow-auto overscroll-contain p-1"
+        >
+          <p>
             {{
               links.length
                 ? `${links.length} 条连接（非实时健康状态）`
                 : "模型定义已保存，尚未关联提供者"
             }}
           </p>
+          <ModelForm v-model="draft" is-edit :saving="busy" :field-errors="fieldErrors" />
+          <ErrorState v-if="error" :error="error" inline />
+          <div class="rounded-md border border-destructive/30 p-4">
+            <h2 class="text-base">删除模型定义</h2>
+            <p class="my-3 text-muted-foreground">所有连接和客户端对该 ID 的使用都会受到影响。</p>
+            <Button
+              type="button"
+              variant="outline"
+              class="text-destructive hover:text-destructive"
+              :disabled="busy"
+              @click="remove"
+              ><Trash2 aria-hidden="true" />删除模型定义</Button
+            >
+          </div>
         </div>
-        <Button as-child
-          ><RouterLink :to="`/admin/setup?modelId=${model.id}`">关联提供者</RouterLink></Button
-        >
-      </div>
-      <nav class="flex gap-2" aria-label="模型定义详情">
-        <Button
-          :variant="tab === 'connections' ? 'default' : 'outline'"
-          @click="selectTab('connections')"
-          >提供者连接</Button
-        ><Button
-          :variant="tab === 'definition' ? 'default' : 'outline'"
-          @click="selectTab('definition')"
-          >模型定义</Button
-        >
-      </nav>
-      <ConnectionList
-        v-if="tab === 'connections'"
-        :entries="entries"
-        :providers="providers"
-        @changed="load"
-      />
-      <form v-else class="space-y-6" @submit.prevent="save">
-        <ModelForm v-model="draft" is-edit :saving="busy" :field-errors="fieldErrors" />
-        <p v-if="error" role="alert" class="text-destructive">{{ error }}</p>
-        <div class="flex justify-end gap-3">
+        <div class="flex shrink-0 justify-end gap-2 border-t pt-3">
           <Button type="button" variant="outline" :disabled="busy" @click="selectTab('connections')"
             >取消</Button
-          ><Button type="submit" :disabled="busy">{{ busy ? "保存中…" : "保存模型定义" }}</Button>
-        </div>
-        <div class="rounded border p-4">
-          <h2>删除模型定义</h2>
-          <p class="my-3 text-muted-foreground">所有连接和客户端对该 ID 的使用都会受到影响。</p>
-          <Button type="button" variant="destructive" :disabled="busy" @click="remove"
-            >删除模型定义</Button
+          >
+          <Button type="submit" :disabled="busy"
+            ><Save aria-hidden="true" />{{ busy ? "保存中…" : "保存修改" }}</Button
           >
         </div>
       </form></template

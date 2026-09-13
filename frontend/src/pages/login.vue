@@ -5,8 +5,11 @@ onMounted(() => {
 });
 </script>
 <template>
-  <PageShell class="items-center justify-center py-12">
-    <div class="w-full max-w-md space-y-4 rounded-xl border bg-card p-6 text-center" role="status">
+  <PageShell body-class="flex flex-col">
+    <div
+      class="m-auto w-full max-w-md shrink-0 space-y-4 rounded-lg border bg-card p-6 text-center"
+      role="status"
+    >
       <div
         class="mx-auto mb-3 h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent"
       />

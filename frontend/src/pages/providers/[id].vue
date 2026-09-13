@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { type ModelLinkView } from "@bindings/ModelLinkView";
 import { type ProviderResponse } from "@bindings/ProviderResponse";
+import { Cable, Server, Trash2 } from "@lucide/vue";
 
 import { getApi } from "~/lib/api";
 import { providerToDraft, validateProviderDraft } from "~/lib/utils/provider";
@@ -47,7 +48,9 @@ const saveCall = useApiCall(() =>
   getApi().admin.updateProvider(String(provider.value!.id), draft.value),
 );
 const deleteCall = useApiCall(() => getApi().admin.deleteProvider(String(provider.value!.id)));
-const busy = computed(() => saveCall.loading.value || deleteCall.loading.value);
+const busy = computed(
+  () => loadCall.loading.value || saveCall.loading.value || deleteCall.loading.value,
+);
 const dirty = computed(() => !!provider.value && JSON.stringify(draft.value) !== baseline.value);
 const { confirmDiscard } = useUnsavedChanges(dirty, busy);
 const tab = computed(() => (route.query.tab === "connection" ? "connection" : "models"));
@@ -92,6 +95,7 @@ async function remove() {
       title: "删除提供者？",
       description: `将删除它的协议与 ${entries.value.length} 个连接，但不会删除共享模型定义。此操作不可撤销。`,
       destructive: true,
+      confirmText: "确认删除",
     }))
   )
     return;
@@ -110,19 +114,73 @@ onBeforeRouteUpdate(async (to, from) =>
 );
 </script>
 <template>
-  <PageShell
-    ><ErrorState v-if="loadCall.error.value" :error="loadCall.error.value" @retry="load" /><Skeleton
-      v-else-if="loadCall.loading.value"
-      class="h-48"
-    /><template v-else-if="provider"
-      ><div class="flex flex-wrap justify-between gap-4">
-        <div>
-          <h1>{{ provider.displayName || provider.providerId }}</h1>
-          <p class="mt-2 font-mono break-all">{{ provider.providerId }}</p>
-          <p class="mt-2">
-            {{ provider.enabled ? "✓ 已启用" : "− 已停用" }} ·
+  <PageShell :scrollable="false">
+    <template v-if="provider" #header>
+      <SectionHeader
+        :title="provider.displayName || provider.providerId"
+        :subtitle="provider.providerId"
+        :icon="Server"
+        back-to="/providers"
+        back-label="返回提供者列表"
+      >
+        <template #actions
+          ><Button as-child
+            ><RouterLink :to="`/admin/setup?providerId=${provider.id}`"
+              ><Cable aria-hidden="true" />添加模型</RouterLink
+            ></Button
+          ></template
+        >
+      </SectionHeader>
+    </template>
+    <template v-if="provider" #toolbar>
+      <nav class="flex gap-2" aria-label="提供者详情">
+        <Button
+          :aria-pressed="tab === 'models'"
+          :disabled="busy"
+          :variant="tab === 'models' ? 'default' : 'outline'"
+          @click="selectTab('models')"
+          >模型连接</Button
+        >
+        <Button
+          :aria-pressed="tab === 'connection'"
+          :disabled="busy"
+          :variant="tab === 'connection' ? 'default' : 'outline'"
+          @click="selectTab('connection')"
+          >连接设置</Button
+        >
+      </nav>
+    </template>
+    <div v-if="loadCall.error.value && !provider" data-scroll-area class="min-h-0 overflow-auto">
+      <ErrorState :error="loadCall.error.value" @retry="load" />
+    </div>
+    <Skeleton v-else-if="loadCall.loading.value && !provider" class="h-48" /><template
+      v-else-if="provider"
+    >
+      <ErrorState v-if="loadCall.error.value" :error="loadCall.error.value" inline @retry="load" />
+      <ConnectionList
+        fill
+        v-if="tab === 'models'"
+        :entries="entries"
+        :providers="providers"
+        :loading="loadCall.loading.value"
+        @changed="load"
+      />
+      <ProviderForm
+        v-else
+        fill
+        v-model="draft"
+        is-edit
+        :saving="busy"
+        submit-label="保存修改"
+        :field-errors="fieldErrors"
+        :error="error"
+        @submit="save"
+        @cancel="selectTab('models')"
+        ><template #before-fields>
+          <p>
+            {{ provider.enabled ? "已启用" : "已停用" }} ·
             {{
-              !provider.protocols.some((p) => p.enabled)
+              !provider.protocols.some((protocol) => protocol.enabled)
                 ? "缺已启用协议"
                 : !provider.apiKeys.length
                   ? "缺 API Key"
@@ -130,50 +188,24 @@ onBeforeRouteUpdate(async (to, from) =>
                     ? "未关联模型"
                     : "配置项齐备（非实时健康状态）"
             }}
-          </p>
-        </div>
-        <div class="flex flex-wrap gap-2">
-          <Button as-child
-            ><RouterLink :to="`/admin/setup?providerId=${provider.id}`"
-              >添加模型</RouterLink
-            ></Button
-          ><Button variant="outline" @click="selectTab('connection')">编辑配置</Button>
-        </div>
-      </div>
-      <nav class="flex gap-2" aria-label="提供者详情">
-        <Button :variant="tab === 'models' ? 'default' : 'outline'" @click="selectTab('models')"
-          >模型连接</Button
-        ><Button
-          :variant="tab === 'connection' ? 'default' : 'outline'"
-          @click="selectTab('connection')"
-          >连接设置</Button
-        >
-      </nav>
-      <ConnectionList
-        v-if="tab === 'models'"
-        :entries="entries"
-        :providers="providers"
-        @changed="load"
-      />
-      <div v-else class="space-y-6">
-        <ProviderForm
-          v-model="draft"
-          is-edit
-          :saving="busy"
-          submit-label="保存提供者配置"
-          :field-errors="fieldErrors"
-          :error="error"
-          @submit="save"
-          @cancel="selectTab('models')"
-        />
-        <div class="rounded border p-4">
-          <h2>删除提供者</h2>
-          <p class="my-3 text-muted-foreground">
-            删除协议和 {{ entries.length }} 个连接，不删除共享模型定义。
-          </p>
-          <Button variant="destructive" :disabled="busy" @click="remove">删除提供者</Button>
-        </div>
-      </div></template
+          </p> </template
+        ><template #after-fields>
+          <div class="rounded-md border border-destructive/30 p-4">
+            <h2 class="text-base">删除提供者</h2>
+            <p class="my-3 text-muted-foreground">
+              删除协议和 {{ entries.length }} 个连接，不删除共享模型定义。
+            </p>
+            <Button
+              type="button"
+              variant="outline"
+              class="text-destructive hover:text-destructive"
+              :disabled="busy"
+              @click="remove"
+              ><Trash2 aria-hidden="true" />删除提供者</Button
+            >
+          </div>
+        </template></ProviderForm
+      ></template
     ></PageShell
   >
 </template>

@@ -17,15 +17,21 @@ const Icon = props.icon;
 <template>
   <div
     data-slot="empty-state"
-    :class="cn('flex flex-1 items-center justify-center text-muted-foreground', props.class)"
+    role="status"
+    :class="
+      cn(
+        'flex min-h-40 items-center justify-center rounded-md border border-dashed p-6 text-muted-foreground',
+        props.class,
+      )
+    "
   >
-    <div class="flex flex-col items-center gap-3">
+    <div class="flex min-w-0 flex-col items-center gap-3 text-center">
       <component v-if="Icon" :is="Icon" class="h-12 w-12 opacity-30" />
       <p class="text-sm font-medium">{{ title }}</p>
       <p v-if="description" class="max-w-xs text-center text-xs text-muted-foreground">
         {{ description }}
       </p>
-      <div v-if="$slots.actions" class="mt-1 flex items-center gap-2">
+      <div v-if="$slots.actions" class="mt-1 flex flex-wrap items-center justify-center gap-2">
         <slot name="actions" />
       </div>
     </div>

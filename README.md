@@ -410,7 +410,7 @@ Vue 3 单页应用位于 `frontend/`，使用 Vue Router、Pinia、Tailwind CSS 
 | 页面 | 路由 | 权限 | 功能 |
 |------|------|------|------|
 | 登录 | `/login` | 无 | 触发 OIDC 跳转 |
-| 概览 | `/` `/dashboard` | Session | 按角色显示全站/个人用量、接入引导、趋势与最近请求 |
+| 概览 | `/` `/dashboard` | Session | 管理员切换全站/个人指标，成员仅本人；零数据图表、趋势与同范围最近请求 |
 | 使用模型 | `/models` | Session | 本地模型搜索、能力/可路由筛选、未知价格与客户端接入说明 |
 | 访问令牌 | `/tokens` | Session | 个人 Token、模型范围与配额自限；一次性明文展示 |
 | 请求记录 | `/traces` `/traces/:id` | Session | 按角色隔离的筛选、分页、生命周期与 Opt-In 内容快照 |

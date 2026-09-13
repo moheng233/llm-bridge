@@ -27,49 +27,44 @@ const formatted = computed(() => formatApiError(props.error));
 <template>
   <div
     data-slot="error-state"
+    role="alert"
     :class="
       cn(
         inline
-          ? 'flex items-center gap-2 rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3'
-          : 'flex flex-1 items-center justify-center',
+          ? 'flex min-w-0 flex-wrap items-start gap-3 rounded-md border border-destructive/30 bg-destructive/5 p-4'
+          : 'flex min-h-40 items-center justify-center rounded-md border border-destructive/30 p-6',
         props.class,
       )
     "
   >
     <template v-if="inline">
       <AlertCircle class="h-4 w-4 shrink-0 text-destructive" />
-      <div class="flex min-w-0 flex-col gap-0.5">
+      <div class="flex min-w-0 flex-1 flex-col gap-1">
         <span class="text-sm font-medium text-destructive">{{ formatted.title }}</span>
         <span
           v-if="formatted.detail && formatted.detail !== formatted.title"
-          class="truncate text-xs text-muted-foreground"
+          class="text-xs break-all whitespace-pre-wrap text-muted-foreground"
           :title="formatted.detail"
         >
           {{ formatted.detail }}
         </span>
       </div>
-      <Button
-        v-if="onRetry"
-        variant="outline"
-        size="sm"
-        class="ml-auto h-7 shrink-0 cursor-pointer gap-1 text-xs"
-        @click="onRetry"
-      >
+      <Button v-if="onRetry" variant="outline" class="ml-auto shrink-0" @click="onRetry">
         <RefreshCw class="h-3 w-3" />
         重试
       </Button>
     </template>
     <template v-else>
-      <div class="flex flex-col items-center gap-3">
+      <div class="flex min-w-0 flex-col items-center gap-3 text-center">
         <AlertCircle class="h-12 w-12 text-destructive opacity-50" />
         <p class="text-sm font-medium">{{ formatted.title }}</p>
         <p
           v-if="formatted.detail && formatted.detail !== formatted.title"
-          class="max-w-xs text-center text-xs text-muted-foreground"
+          class="max-w-lg text-xs break-all whitespace-pre-wrap text-muted-foreground"
         >
           {{ formatted.detail }}
         </p>
-        <Button v-if="onRetry" variant="outline" size="sm" class="cursor-pointer" @click="onRetry">
+        <Button v-if="onRetry" variant="outline" @click="onRetry">
           <RefreshCw class="h-4 w-4" />
           重试
         </Button>

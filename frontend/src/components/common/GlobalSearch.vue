@@ -38,6 +38,16 @@ watchEffect(async () => {
 const query = ref("");
 const activeIndex = ref(0);
 const searchInput = ref<HTMLInputElement | null>(null);
+const results = ref<HTMLElement | null>(null);
+watch(activeIndex, async () => {
+  await nextTick();
+  const selected = results.value?.querySelector<HTMLElement>('[data-active="true"]');
+  if (!selected || !results.value) return;
+  const bounds = results.value.getBoundingClientRect();
+  const item = selected.getBoundingClientRect();
+  if (item.bottom > bounds.bottom) results.value.scrollTop += item.bottom - bounds.bottom;
+  else if (item.top < bounds.top) results.value.scrollTop += item.top - bounds.top;
+});
 
 const items = computed<SearchItem[]>(() => {
   const q = query.value.trim().toLowerCase();
@@ -98,14 +108,19 @@ function onKeydown(e: KeyboardEvent) {
 
 <template>
   <Dialog :open="open" @update:open="(v: boolean) => (open = v)">
-    <DialogContent class="top-1/4 max-w-lg translate-y-0 p-0 sm:max-w-lg" @keydown="onKeydown">
+    <DialogContent
+      class="flex max-w-lg flex-col overflow-hidden p-0 sm:max-w-lg"
+      :aria-describedby="undefined"
+      @keydown="onKeydown"
+    >
       <DialogHeader class="sr-only">
         <DialogTitle>全局搜索</DialogTitle>
       </DialogHeader>
-      <div class="flex items-center gap-2 border-b border-border px-3">
+      <div class="flex shrink-0 items-center gap-2 border-b border-border px-3 pr-12">
         <Search class="h-4 w-4 shrink-0 text-muted-foreground" />
         <input
           ref="searchInput"
+          aria-label="搜索页面与模型"
           v-model="query"
           class="h-11 w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground"
           placeholder="搜索页面与模型…"
@@ -116,13 +131,18 @@ function onKeydown(e: KeyboardEvent) {
           Esc
         </kbd>
       </div>
-      <div class="max-h-72 overflow-y-auto p-1.5">
+      <div
+        ref="results"
+        data-scroll-area
+        class="max-h-72 min-h-0 flex-1 overflow-y-auto overscroll-contain p-1.5"
+      >
         <div v-if="items.length === 0" class="px-3 py-8 text-center text-sm text-muted-foreground">
           没有匹配的结果
         </div>
         <button
           v-for="(item, i) in items"
           :key="item.key"
+          :data-active="i === activeIndex"
           class="flex w-full cursor-pointer items-center gap-2.5 rounded-md px-3 py-2 text-left text-sm transition-colors"
           :class="
             i === activeIndex

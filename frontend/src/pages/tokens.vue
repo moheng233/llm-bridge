@@ -2,9 +2,11 @@
 import { type CreateTokenRequest } from "@bindings/CreateTokenRequest";
 import { type CreateTokenResponse } from "@bindings/CreateTokenResponse";
 import { type TokenListItem } from "@bindings/TokenListItem";
+import { Check, KeyRound, Pause, Pencil, Play, Plus, Trash2 } from "@lucide/vue";
 
 import { getApi, formatTime } from "~/lib/api";
 import { QUOTA_PERIOD_OPTIONS, quotaPeriodLabel } from "~/lib/constants";
+import { focusInScrollArea } from "~/lib/utils";
 import { useAuthStore } from "~/stores/auth";
 const api = getApi();
 const route = useRoute();
@@ -12,6 +14,16 @@ const confirm = useConfirm();
 const auth = useAuthStore();
 const list = useApiCall(() => api.tokens.listTokens());
 const models = useApiCall(() => api.models.listAllModels());
+const listQuery = ref("");
+const filteredTokens = computed(() => {
+  const query = listQuery.value.trim().toLowerCase();
+  return (list.data.value ?? []).filter((token) =>
+    `${token.name} ${token.tokenPrefix} ${token.allowedModels.join(" ")}`
+      .toLowerCase()
+      .includes(query),
+  );
+});
+const { page, visible } = useListPagination(filteredTokens, listQuery);
 const showCreate = ref(false);
 const editing = ref<TokenListItem | null>(null);
 const empty = (): CreateTokenRequest => ({
@@ -91,7 +103,11 @@ async function closeCreate(): Promise<boolean> {
     } else if (
       !createdToken.value &&
       dirty.value &&
-      !(await confirm({ title: "放弃未保存的令牌设置？" }))
+      !(await confirm({
+        title: "放弃未保存的修改？",
+        description: "尚未保存的令牌名称、范围和配额修改将丢失。",
+        confirmText: "放弃修改",
+      }))
     )
       return false;
     clearSensitive();
@@ -150,9 +166,9 @@ async function submit() {
     fieldErrors.value.scope = scopeError.value || "请选择至少一个模型，或明确选择全部模型";
   if (Object.keys(fieldErrors.value).length) {
     await nextTick();
-    document
-      .querySelector<HTMLElement>('[data-slot="dialog-content"] [aria-invalid="true"]')
-      ?.focus();
+    focusInScrollArea(
+      document.querySelector<HTMLElement>('[data-slot="sheet-content"] [aria-invalid="true"]'),
+    );
     return;
   }
   const result = await save.execute();
@@ -185,6 +201,7 @@ async function mutate(token: TokenListItem, remove: boolean) {
         description:
           "使用此 Token 的客户端将无法继续调用。此操作不可撤销；暂时停用请使用停用操作。",
         destructive: true,
+        confirmText: "确认删除",
       }))
     )
       return;
@@ -232,60 +249,102 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <PageShell>
-    <div class="flex flex-wrap justify-between gap-4">
-      <div>
-        <h1>访问令牌</h1>
-        <p class="mt-2 text-muted-foreground">
-          客户端访问 LLM Bridge 的个人凭据；不是提供者的上游 API Key。
-        </p>
-      </div>
-      <Button :disabled="busy" @click="openCreate()">创建访问令牌</Button>
-    </div>
+  <PageShell :reset-key="`${page}:${listQuery}`">
+    <template #header>
+      <SectionHeader
+        title="访问令牌"
+        :icon="KeyRound"
+        :count="list.data.value?.length ?? null"
+        count-label="个"
+      />
+    </template>
+    <template #toolbar
+      ><ListToolbar
+        v-model="listQuery"
+        label="搜索访问令牌"
+        placeholder="搜索名称 / 令牌前缀 / 模型范围"
+        :loading="list.loading.value"
+        :disabled="busy"
+        @refresh="list.execute"
+        @clear="listQuery = ''"
+        ><template #actions
+          ><Button
+            class="min-h-11 transition-colors md:min-h-9"
+            :disabled="busy"
+            @click="openCreate()"
+            ><Plus aria-hidden="true" />创建访问令牌</Button
+          >
+        </template></ListToolbar
+      ></template
+    >
+    <p class="text-muted-foreground">
+      客户端访问 LLM Bridge 的个人凭据；不是提供者的上游 API Key。
+    </p>
+    <ErrorState v-if="actionError" :error="actionError" inline />
     <ErrorState v-if="list.error.value" :error="list.error.value" @retry="list.execute" />
-    <p v-if="actionError" role="alert" class="text-destructive">{{ actionError }}</p>
-    <div v-if="list.loading.value" class="space-y-3">
-      <Skeleton v-for="i in 3" :key="i" class="h-24" />
+    <div v-else-if="list.loading.value" role="status" aria-label="加载列表" class="space-y-3">
+      <Skeleton v-for="index in 4" :key="index" class="h-24 rounded-md" />
     </div>
-    <div
-      v-else-if="!list.error.value && !list.data.value?.length"
-      class="space-y-3 rounded border bg-card p-6"
+    <EmptyState
+      v-else-if="!filteredTokens.length"
+      :icon="KeyRound"
+      :title="listQuery ? '筛选无结果' : '尚未创建个人访问令牌'"
     >
-      <p>尚未创建个人访问令牌。</p>
-      <Button @click="openCreate()">创建第一个访问令牌</Button>
-    </div>
-    <article
-      v-for="token in list.data.value ?? []"
-      v-else
-      :key="token.id"
-      class="flex flex-col justify-between gap-4 rounded border bg-card p-4 md:flex-row"
-    >
-      <div class="min-w-0 space-y-2">
-        <h2 class="break-words">{{ token.name }}</h2>
-        <p>
-          <code>{{ token.tokenPrefix }}…</code> · {{ token.active ? "✓ 已启用" : "− 已停用" }}
-        </p>
-        <p class="text-sm break-words">
-          个人范围：{{ token.allowedModels.length ? token.allowedModels.join("、") : "全部模型" }}
-        </p>
-        <p class="text-sm text-muted-foreground">
-          个人自限：{{ token.requestQuota ? `${token.requestQuota} 次请求` : "请求不限" }} ·
-          {{ token.tokenQuota ? `${token.tokenQuota} Token` : "Token 不限" }} ·
-          {{ quotaPeriodLabel(token.quotaPeriod) }}
-        </p>
-        <p class="text-sm text-muted-foreground">
-          最近使用：{{ token.lastUsedAt === null ? "尚未使用" : formatTime(token.lastUsedAt) }}
-        </p>
-      </div>
-      <div class="flex shrink-0 flex-wrap items-center gap-2">
-        <Button variant="outline" :disabled="busy" @click="openCreate(token)">编辑</Button
-        ><Button variant="outline" :disabled="busy" @click="mutate(token, false)">{{
-          token.active ? "停用" : "启用"
-        }}</Button
-        ><Button variant="destructive" :disabled="busy" @click="mutate(token, true)">删除</Button>
-      </div>
-    </article>
-    <Dialog
+      <template #actions
+        ><Button v-if="listQuery" variant="outline" @click="listQuery = ''">清除筛选</Button
+        ><Button v-else :disabled="busy" @click="openCreate()"
+          ><Plus aria-hidden="true" />创建访问令牌</Button
+        ></template
+      >
+    </EmptyState>
+    <ListItem v-for="token in visible" v-else :key="token.id">
+      <template #title
+        ><button type="button" :disabled="busy" @click="openCreate(token)">
+          {{ token.name }}
+        </button></template
+      >
+      <template #status
+        ><Badge :variant="token.active ? 'secondary' : 'outline'"
+          ><Check v-if="token.active" aria-hidden="true" /><Pause v-else aria-hidden="true" />{{
+            token.active ? "已启用" : "已停用"
+          }}</Badge
+        ></template
+      >
+      <template #subtitle>{{ token.tokenPrefix }}…</template>
+      <p class="text-sm break-words">
+        个人范围：{{ token.allowedModels.length ? token.allowedModels.join("、") : "全部模型" }}
+      </p>
+      <p class="text-sm text-muted-foreground">
+        个人自限：{{ token.requestQuota ? `${token.requestQuota} 次请求` : "请求不限" }} ·
+        {{ token.tokenQuota ? `${token.tokenQuota} Token` : "Token 不限" }} ·
+        {{ quotaPeriodLabel(token.quotaPeriod) }}
+      </p>
+      <p class="text-sm text-muted-foreground">
+        最近使用：{{ token.lastUsedAt === null ? "尚未使用" : formatTime(token.lastUsedAt) }}
+      </p>
+      <template #actions>
+        <Button variant="outline" :disabled="busy" @click="openCreate(token)"
+          ><Pencil aria-hidden="true" />编辑</Button
+        ><Button variant="outline" :disabled="busy" @click="mutate(token, false)"
+          ><Pause v-if="token.active" aria-hidden="true" /><Play v-else aria-hidden="true" />{{
+            token.active ? "停用" : "启用"
+          }}</Button
+        ><Button
+          variant="ghost"
+          class="text-destructive hover:text-destructive"
+          :disabled="busy"
+          @click="mutate(token, true)"
+          ><Trash2 aria-hidden="true" />删除</Button
+        >
+      </template>
+    </ListItem>
+    <template v-if="list.data.value && !list.error.value" #footer
+      ><ListPagination
+        v-model="page"
+        :total="filteredTokens.length"
+        :disabled="list.loading.value || busy"
+    /></template>
+    <Sheet
       :open="showCreate"
       @update:open="
         (value) => {
@@ -293,8 +352,8 @@ onBeforeUnmount(() => {
         }
       "
     >
-      <DialogContent
-        class="flex max-h-[90svh] flex-col sm:max-w-2xl"
+      <SheetContent
+        class="w-full max-w-full gap-0 sm:max-w-2xl"
         @escape-key-down="
           (event) => {
             event.preventDefault();
@@ -302,17 +361,21 @@ onBeforeUnmount(() => {
           }
         "
       >
-        <DialogHeader
-          ><DialogTitle>{{
+        <SheetHeader class="shrink-0 border-b p-4 pr-12"
+          ><SheetTitle>{{
             createdToken ? "访问令牌已创建" : editing ? "编辑访问令牌" : "创建访问令牌"
-          }}</DialogTitle
-          ><DialogDescription>{{
+          }}</SheetTitle
+          ><SheetDescription>{{
             createdToken
               ? "明文仅显示这一次；请妥善保存，不要将令牌发给他人。"
               : "模型范围与配额是你可修改的个人自限，不是管理员强制预算。"
-          }}</DialogDescription></DialogHeader
+          }}</SheetDescription></SheetHeader
         >
-        <div v-if="createdToken" class="min-h-0 space-y-4 overflow-y-auto">
+        <div
+          v-if="createdToken"
+          data-scroll-area
+          class="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain p-4"
+        >
           <Label for="issued-token">一次性访问令牌</Label
           ><Input
             id="issued-token"
@@ -335,7 +398,8 @@ onBeforeUnmount(() => {
         <form
           v-else
           id="token-form"
-          class="min-h-0 space-y-4 overflow-y-auto"
+          data-scroll-area
+          class="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain p-4"
           @submit.prevent="submit"
         >
           <fieldset :disabled="busy" class="space-y-4">
@@ -377,7 +441,10 @@ onBeforeUnmount(() => {
                     :error="models.error.value"
                     @retry="models.execute"
                   />
-                  <div class="max-h-52 overflow-y-auto rounded border p-2">
+                  <div
+                    data-scroll-area
+                    class="max-h-52 overflow-y-auto overscroll-contain rounded border p-2"
+                  >
                     <label
                       v-for="[name, label] in choices"
                       :key="name"
@@ -444,19 +511,21 @@ onBeforeUnmount(() => {
               </div>
             </details>
           </fieldset>
-          <p v-if="save.error.value" role="alert" class="text-destructive">
-            {{ save.error.value }} {{ save.errorDetail.value }}
-          </p>
+          <ErrorState
+            v-if="save.error.value"
+            :error="save.errorDetail.value || save.error.value"
+            inline
+          />
         </form>
-        <div class="flex shrink-0 justify-end gap-2 border-t pt-4">
+        <div class="flex shrink-0 justify-end gap-2 border-t p-4">
           <Button variant="outline" :disabled="busy || closing" @click="closeCreate">{{
             createdToken ? "关闭" : "取消"
           }}</Button
           ><Button v-if="!createdToken" form="token-form" type="submit" :disabled="busy">{{
-            busy ? "保存中…" : editing ? "保存修改" : "确认创建"
+            busy ? "保存中…" : editing ? "保存修改" : "创建访问令牌"
           }}</Button>
         </div>
-      </DialogContent>
-    </Dialog>
+      </SheetContent>
+    </Sheet>
   </PageShell>
 </template>

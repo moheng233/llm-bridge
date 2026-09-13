@@ -1,17 +1,33 @@
 <script setup lang="ts">
 import { type ModelProviderSummary } from "@bindings/ModelProviderSummary";
 import { type ModelResponse } from "@bindings/ModelResponse";
+import {
+  ArrowDownWideNarrow,
+  ArrowUpWideNarrow,
+  Cable,
+  Check,
+  Cpu,
+  Eye,
+  Minus,
+  Server,
+} from "@lucide/vue";
 
+import ModelCapabilities from "~/components/common/ModelCapabilities.vue";
 import { getApi, formatTokens, formatPrice } from "~/lib/api";
 import { protocolLabel } from "~/lib/constants";
 const route = useRoute();
-const onlyAvailable = ref(true);
+const onlyAvailable = ref(typeof route.query.model !== "string");
 const search = ref("");
 const capabilities = reactive({ toolCalling: false, vision: false, thinking: false });
 const capabilityOptions = [
   { key: "toolCalling", label: "工具调用" },
   { key: "vision", label: "视觉" },
   { key: "thinking", label: "推理" },
+] as const;
+const connectionPriceFields = [
+  { key: "inputPricePer1m", label: "输入" },
+  { key: "outputPricePer1m", label: "输出" },
+  { key: "cacheReadPricePer1m", label: "缓存读取" },
 ] as const;
 const sortField = ref<"name" | "maxInputTokens" | "maxOutputTokens" | "inputPrice">("name");
 const sortDir = ref<"asc" | "desc">("asc");
@@ -26,8 +42,12 @@ const call = useApiCall(() =>
 );
 const sheetOpen = ref(false);
 const selectedModel = ref<ModelResponse | null>(null);
-const copyError = ref("");
-const copied = ref(false);
+function connectionNotice(model: ModelResponse) {
+  if (!model.providers.length) return "尚未关联提供者，暂不可路由。";
+  if (!model.providers.some((provider) => provider.enabled))
+    return "暂无启用连接；请检查提供者、协议和连接的启用状态。";
+  return "";
+}
 type PriceField = "inputPricePer1m" | "outputPricePer1m" | "cacheReadPricePer1m";
 function priceRange(
   providers: ModelProviderSummary[],
@@ -89,6 +109,10 @@ const sortedConnections = computed(() =>
       a.providerDisplayName.localeCompare(b.providerDisplayName),
   ),
 );
+const paginationKey = computed(() =>
+  JSON.stringify([search.value, capabilities, sortField.value, sortDir.value, onlyAvailable.value]),
+);
+const { page, visible } = useListPagination(filtered, paginationKey);
 function sort(field: typeof sortField.value) {
   if (sortField.value === field) sortDir.value = sortDir.value === "asc" ? "desc" : "asc";
   else {
@@ -104,19 +128,7 @@ function clearFilters() {
 }
 function open(model: ModelResponse) {
   selectedModel.value = model;
-  copied.value = false;
-  copyError.value = "";
   sheetOpen.value = true;
-}
-async function copyModel() {
-  if (!selectedModel.value) return;
-  try {
-    if (!navigator.clipboard) throw Error();
-    await navigator.clipboard.writeText(selectedModel.value.modelName);
-    copied.value = true;
-  } catch {
-    copyError.value = "复制失败，请手动选择下方模型 ID 复制。";
-  }
 }
 function declarations(model: ModelResponse) {
   return (
@@ -130,18 +142,17 @@ function declarations(model: ModelResponse) {
       .join(" · ") || "未声明支持特殊能力"
   );
 }
-function override(value: boolean | null, nominal: boolean | null) {
-  return value === null
-    ? `继承（${nominal ? "支持" : "不声明支持"}）`
-    : value
-      ? "支持（覆盖）"
-      : "不支持（覆盖）";
-}
 watch(onlyAvailable, () => call.execute());
 watch(
   () => route.query.model,
   (value) => {
-    if (typeof value === "string") search.value = value;
+    if (typeof value === "string") {
+      search.value = value;
+      onlyAvailable.value = false;
+      capabilities.toolCalling = false;
+      capabilities.vision = false;
+      capabilities.thinking = false;
+    }
   },
   { immediate: true },
 );
@@ -149,121 +160,105 @@ onMounted(() => call.execute());
 </script>
 
 <template>
-  <PageShell>
-    <div>
-      <h1>使用模型</h1>
-      <p class="mt-2 text-muted-foreground">
-        本地网关模型的标称能力与连接参考价格；不是外部目录或实时健康监控。
-      </p>
-    </div>
-    <div class="flex flex-wrap items-center gap-3">
-      <Input
+  <PageShell :reset-key="`${page}:${paginationKey}`">
+    <template #header
+      ><SectionHeader
+        title="使用模型"
+        :icon="Cpu"
+        :count="call.data.value?.length ?? null"
+        count-label="个"
+    /></template>
+    <template #toolbar>
+      <ListToolbar
         v-model="search"
-        class="min-w-0 md:max-w-md"
+        collapse-filters
+        label="搜索模型"
         placeholder="搜索模型 ID / 名称 / 描述"
-        aria-label="搜索模型"
-      /><Button
-        v-for="option in capabilityOptions"
-        :key="option.key"
-        :variant="capabilities[option.key] ? 'default' : 'outline'"
-        :aria-pressed="capabilities[option.key]"
-        @click="capabilities[option.key] = !capabilities[option.key]"
-        >{{ option.label }}</Button
-      ><label class="flex min-h-11 items-center gap-2"
-        ><Checkbox v-model="onlyAvailable" />仅可路由</label
+        :loading="call.loading.value"
+        :filtered="Object.values(capabilities).some(Boolean)"
+        @refresh="call.execute"
+        @clear="clearFilters"
       >
-    </div>
-    <p class="text-sm text-muted-foreground">
-      仅可路由基于本地配置，不代表上游实时健康，也不替代个人 Token
-      范围与额度校验。参考价格只比较已启用连接，单位 USD / 百万 Token；未知不等于免费。
-    </p>
-    <div class="flex flex-wrap items-center gap-2">
-      <span>排序：</span
-      ><Button
-        v-for="column in columns"
-        :key="column.key"
-        variant="outline"
-        :aria-pressed="sortField === column.key"
-        @click="sort(column.key)"
-        >{{ column.label
-        }}{{ sortField === column.key ? (sortDir === "asc" ? " ↑" : " ↓") : "" }}</Button
-      >
-    </div>
-    <ErrorState v-if="call.error.value" :error="call.error.value" @retry="call.execute" />
-    <div v-else-if="call.loading.value" class="space-y-3">
-      <Skeleton v-for="i in 6" :key="i" class="h-14" />
-    </div>
-    <div v-else-if="!filtered.length" class="space-y-3 rounded border bg-card p-6">
-      <p>
-        {{
-          search || Object.values(capabilities).some(Boolean)
-            ? "筛选无结果"
-            : onlyAvailable
-              ? "暂无可路由模型，请联系管理员配置或查看全部本地定义。"
-              : "尚无本地模型定义，请联系管理员。"
-        }}
-      </p>
-      <Button
-        v-if="search || Object.values(capabilities).some(Boolean)"
-        variant="outline"
-        @click="clearFilters"
-        >清除筛选</Button
-      ><Button v-else-if="onlyAvailable" variant="outline" @click="onlyAvailable = false"
-        >查看全部本地定义</Button
-      >
-    </div>
-    <template v-else>
-      <div class="hidden overflow-x-auto rounded border bg-card md:block">
-        <table class="w-full text-left text-sm">
-          <thead>
-            <tr class="border-b">
-              <th class="p-3">模型 / 网关 ID</th>
-              <th class="p-3">最大输入</th>
-              <th class="p-3">最大输出</th>
-              <th class="p-3">声明能力</th>
-              <th class="p-3">参考输入 / 输出价格</th>
-              <th class="p-3">配置连接</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr
-              v-for="model in filtered"
-              :key="model.modelName"
-              class="min-h-14 border-b last:border-0"
-            >
-              <td class="p-3">
-                <Button
-                  variant="link"
-                  class="h-auto justify-start px-0 text-left whitespace-normal"
-                  @click="open(model)"
-                  >{{ model.displayName || model.modelName }}</Button
-                >
-                <p class="font-mono text-xs break-all">{{ model.modelName }}</p>
-              </td>
-              <td class="p-3 tabular-nums">{{ formatTokens(model.maxInputTokens) }}</td>
-              <td class="p-3 tabular-nums">{{ formatTokens(model.maxOutputTokens) }}</td>
-              <td class="p-3">{{ declarations(model) }}</td>
-              <td class="p-3 tabular-nums">
-                {{ referencePrice(model.providers, "inputPricePer1m") }} /
-                {{ referencePrice(model.providers, "outputPricePer1m") }}
-              </td>
-              <td class="p-3">{{ model.providers.length }} 条</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-      <article
-        v-for="model in filtered"
-        :key="model.modelName"
-        class="space-y-3 rounded border bg-card p-4 md:hidden"
-      >
-        <Button
-          variant="link"
-          class="h-auto justify-start p-0 text-left text-lg whitespace-normal"
-          @click="open(model)"
-          >{{ model.displayName || model.modelName }}</Button
+        <label
+          v-for="option in capabilityOptions"
+          :key="option.key"
+          class="flex min-h-11 items-center gap-2"
+          ><Checkbox v-model="capabilities[option.key]" />{{ option.label }}</label
         >
-        <p class="font-mono break-all">{{ model.modelName }}</p>
+        <label class="flex min-h-11 items-center gap-2"
+          ><Checkbox v-model="onlyAvailable" />仅可路由</label
+        >
+        <div class="flex items-center gap-2">
+          <Select
+            :model-value="sortField"
+            @update:model-value="(value) => sort(value as typeof sortField)"
+            ><SelectTrigger aria-label="模型排序字段" class="w-40"><SelectValue /></SelectTrigger
+            ><SelectContent
+              ><SelectItem v-for="column in columns" :key="column.key" :value="column.key">{{
+                column.label
+              }}</SelectItem></SelectContent
+            ></Select
+          >
+          <Button
+            variant="outline"
+            size="icon"
+            :aria-label="sortDir === 'asc' ? '升序，切换为降序' : '降序，切换为升序'"
+            :title="sortDir === 'asc' ? '升序，切换为降序' : '降序，切换为升序'"
+            @click="sortDir = sortDir === 'asc' ? 'desc' : 'asc'"
+            ><ArrowUpWideNarrow v-if="sortDir === 'asc'" aria-hidden="true" /><ArrowDownWideNarrow
+              v-else
+              aria-hidden="true"
+          /></Button>
+        </div>
+        <p class="text-xs text-muted-foreground">
+          仅可路由基于本地配置，不替代个人 Token 范围与额度校验。价格单位 USD / 百万
+          Token；未知不等于免费。
+        </p>
+      </ListToolbar>
+    </template>
+    <p class="text-muted-foreground">
+      本地网关模型的标称能力与连接参考价格；配置状态不代表上游实时可达。
+    </p>
+    <ErrorState v-if="call.error.value" :error="call.error.value" @retry="call.execute" />
+    <div v-else-if="call.loading.value" role="status" aria-label="加载列表" class="space-y-3">
+      <Skeleton v-for="index in 4" :key="index" class="h-24 rounded-md" />
+    </div>
+    <EmptyState
+      v-else-if="!filtered.length"
+      :icon="Cpu"
+      :title="
+        search || Object.values(capabilities).some(Boolean)
+          ? '筛选无结果'
+          : onlyAvailable
+            ? '暂无可路由模型'
+            : '尚无本地模型定义'
+      "
+    >
+      <template #actions>
+        <Button
+          v-if="search || Object.values(capabilities).some(Boolean)"
+          variant="outline"
+          @click="clearFilters"
+          >清除筛选</Button
+        ><Button v-if="onlyAvailable" variant="outline" @click="onlyAvailable = false"
+          >查看全部本地定义</Button
+        >
+      </template>
+    </EmptyState>
+    <template v-else>
+      <ListItem v-for="model in visible" :key="model.modelName">
+        <template #title
+          ><button type="button" @click="open(model)">
+            {{ model.displayName || model.modelName }}
+          </button></template
+        >
+        <template #subtitle>{{ model.modelName }}</template>
+        <template #status
+          ><Badge variant="outline">{{ model.providers.length }} 条连接</Badge></template
+        >
+        <p v-if="connectionNotice(model)" class="text-sm text-warning">
+          {{ connectionNotice(model) }}
+        </p>
         <p>
           最大输入 {{ formatTokens(model.maxInputTokens) }} / 最大输出
           {{ formatTokens(model.maxOutputTokens) }} Token
@@ -271,106 +266,143 @@ onMounted(() => call.execute());
         <p>{{ declarations(model) }}</p>
         <p>
           参考输入 / 输出：{{ referencePrice(model.providers, "inputPricePer1m") }} /
-          {{ referencePrice(model.providers, "outputPricePer1m") }}
+          {{ referencePrice(model.providers, "outputPricePer1m") }}（USD / 百万 Token）
         </p>
-        <p>{{ model.providers.length }} 条配置连接</p>
-      </article>
+        <template #actions
+          ><Button variant="outline" @click="open(model)"
+            ><Eye aria-hidden="true" />查看</Button
+          ></template
+        >
+      </ListItem>
     </template>
+    <template v-if="call.data.value && !call.error.value" #footer
+      ><ListPagination v-model="page" :total="filtered.length" :disabled="call.loading.value"
+    /></template>
     <Sheet v-model:open="sheetOpen"
-      ><SheetContent class="w-full max-w-full sm:max-w-2xl"
-        ><SheetHeader class="border-b p-4 pr-10"
-          ><SheetTitle class="break-words">{{
+      ><SheetContent class="w-full max-w-full gap-0 sm:max-w-2xl"
+        ><SheetHeader class="shrink-0 border-b p-4 pr-12"
+          ><SheetTitle class="text-lg font-semibold break-words">{{
             selectedModel?.displayName || selectedModel?.modelName
           }}</SheetTitle
-          ><SheetDescription
+          ><SheetDescription class="text-xs leading-5"
             >使用网关模型 ID 调用；以下配置与能力声明不代表实时连通性。</SheetDescription
           ></SheetHeader
         >
-        <div v-if="selectedModel" class="min-h-0 flex-1 space-y-6 overflow-y-auto p-4">
-          <div class="space-y-3">
-            <code class="block break-all select-all">{{ selectedModel.modelName }}</code
-            ><Button variant="outline" @click="copyModel">{{
-              copied ? "已复制" : "复制模型 ID"
-            }}</Button>
-            <p v-if="copyError" role="alert" class="text-destructive">{{ copyError }}</p>
-            <ClientConnectionInfo :model-name="selectedModel.modelName" />
-          </div>
-          <section class="space-y-3">
-            <h2>标称能力</h2>
-            <p class="break-words whitespace-pre-wrap">
-              {{ selectedModel.description || "暂无描述" }}
-            </p>
-            <p class="tabular-nums">
-              最大输入 {{ selectedModel.maxInputTokens }} / 最大输出
-              {{ selectedModel.maxOutputTokens }} Token
-            </p>
-            <p>{{ declarations(selectedModel) }}</p>
+        <div
+          v-if="selectedModel"
+          data-scroll-area
+          class="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain p-4"
+        >
+          <p v-if="connectionNotice(selectedModel)" role="status" class="text-sm text-warning">
+            {{ connectionNotice(selectedModel) }}
+          </p>
+          <ClientConnectionInfo :model-name="selectedModel.modelName" />
+          <section class="space-y-4 border-t pt-5">
+            <div class="space-y-2">
+              <h2 class="text-base font-semibold">标称能力</h2>
+              <p class="text-sm leading-6 break-words whitespace-pre-wrap text-muted-foreground">
+                {{ selectedModel.description || "暂无描述" }}
+              </p>
+            </div>
+            <ModelCapabilities :model="selectedModel" />
           </section>
-          <section class="space-y-3">
-            <h2>提供者连接 · {{ selectedModel.providers.length }} 条</h2>
-            <p class="text-sm text-muted-foreground">
-              价格 USD / 百万 Token；null
-              保留继承，显式覆盖只作用于本连接。连接优先级数字越小越优先。
+          <section class="space-y-4 border-t pt-5">
+            <div class="flex items-center justify-between gap-3">
+              <h2 class="text-base font-semibold">提供者连接</h2>
+              <span class="text-xs text-muted-foreground tabular-nums">
+                {{ selectedModel.providers.length }} 条
+              </span>
+            </div>
+            <p class="text-xs leading-5 text-muted-foreground">
+              未覆盖的能力与 Token 上限继承标称值；覆盖仅作用于本连接。优先级数字越小越优先。
             </p>
-            <p v-if="!sortedConnections.length">尚未关联提供者。</p>
+            <div
+              v-if="!sortedConnections.length"
+              class="flex items-center gap-2 py-6 text-sm text-muted-foreground"
+            >
+              <Cable class="size-5 shrink-0" aria-hidden="true" />
+              <p>尚未关联提供者。</p>
+            </div>
             <article
               v-for="(connection, index) in sortedConnections"
               :key="index"
-              class="space-y-2 rounded border p-4"
+              class="min-w-0 overflow-hidden rounded-lg border bg-card text-sm"
             >
-              <h3 class="font-semibold break-words">
-                {{ connection.providerDisplayName || connection.providerId }}
-              </h3>
-              <p class="font-mono break-all">{{ connection.providerModelId }}</p>
-              <p>
-                {{ protocolLabel(connection.compatibility) }} ·
-                {{ connection.enabled ? "✓ 配置启用" : "− 配置停用" }} · 优先级
-                {{ connection.priority }}
-              </p>
-              <p>
-                输入 / 输出 / 缓存价格：{{
-                  connection.inputPricePer1m === null
-                    ? "未知"
-                    : formatPrice(connection.inputPricePer1m)
-                }}
-                /
-                {{
-                  connection.outputPricePer1m === null
-                    ? "未知"
-                    : formatPrice(connection.outputPricePer1m)
-                }}
-                /
-                {{
-                  connection.cacheReadPricePer1m === null
-                    ? "未知"
-                    : formatPrice(connection.cacheReadPricePer1m)
-                }}
-              </p>
-              <p>
-                最大输入：{{
-                  connection.maxInputTokens === null
-                    ? `继承（${selectedModel.maxInputTokens}）`
-                    : `${connection.maxInputTokens}（覆盖）`
-                }}；最大输出：{{
-                  connection.maxOutputTokens === null
-                    ? `继承（${selectedModel.maxOutputTokens}）`
-                    : `${connection.maxOutputTokens}（覆盖）`
-                }}
-              </p>
-              <p>
-                工具调用：{{
-                  override(connection.toolCalling, selectedModel.toolCalling)
-                }}；视觉：{{ override(connection.vision, selectedModel.vision) }}
-              </p>
-              <p>
-                推理：{{ override(connection.thinking, selectedModel.thinking) }}；自适应推理：{{
-                  override(connection.adaptiveThinking, selectedModel.adaptiveThinking)
-                }}
-              </p>
+              <div class="space-y-3 p-4">
+                <div class="flex items-start justify-between gap-3">
+                  <div class="flex min-w-0 items-start gap-2">
+                    <Server
+                      class="mt-0.5 size-4 shrink-0 text-muted-foreground"
+                      aria-hidden="true"
+                    />
+                    <h3 class="min-w-0 font-semibold break-all">
+                      {{ connection.providerDisplayName || connection.providerId }}
+                    </h3>
+                  </div>
+                  <span
+                    class="inline-flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-xs font-medium"
+                    :class="
+                      connection.enabled
+                        ? 'bg-primary/10 text-primary'
+                        : 'bg-muted text-muted-foreground'
+                    "
+                  >
+                    <Check v-if="connection.enabled" class="size-3 shrink-0" aria-hidden="true" />
+                    <Minus v-else class="size-3 shrink-0" aria-hidden="true" />
+                    {{ connection.enabled ? "配置启用" : "配置停用" }}
+                  </span>
+                </div>
+                <code class="block font-mono text-xs break-all text-muted-foreground select-text">{{
+                  connection.providerModelId
+                }}</code>
+                <div
+                  class="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 text-xs text-muted-foreground"
+                >
+                  <span class="inline-flex min-w-0 items-center gap-1.5">
+                    <Cable class="size-3.5 shrink-0" aria-hidden="true" />
+                    <span class="min-w-0 break-words">{{
+                      protocolLabel(connection.compatibility)
+                    }}</span>
+                  </span>
+                  <span class="inline-flex items-center gap-1.5">
+                    <ArrowDownWideNarrow class="size-3.5 shrink-0" aria-hidden="true" />
+                    优先级
+                    <span class="font-medium text-foreground tabular-nums">{{
+                      connection.priority
+                    }}</span>
+                  </span>
+                </div>
+              </div>
+              <div class="space-y-3 border-y bg-muted/30 px-4 py-3">
+                <div
+                  class="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground"
+                >
+                  <h4 class="font-medium">参考价格</h4>
+                  <span>USD / 百万 Token</span>
+                </div>
+                <dl class="grid grid-cols-3 gap-3">
+                  <div
+                    v-for="field in connectionPriceFields"
+                    :key="field.key"
+                    class="min-w-0 space-y-1"
+                  >
+                    <dt class="text-xs text-muted-foreground">{{ field.label }}</dt>
+                    <dd
+                      class="text-base font-medium break-all tabular-nums"
+                      :class="
+                        connection[field.key] === null ? 'text-muted-foreground' : 'text-foreground'
+                      "
+                    >
+                      {{
+                        connection[field.key] === null ? "未知" : formatPrice(connection[field.key])
+                      }}
+                    </dd>
+                  </div>
+                </dl>
+              </div>
+              <ModelCapabilities :model="selectedModel" :overrides="connection" class="p-4" />
             </article>
-          </section>
-        </div></SheetContent
-      ></Sheet
-    >
+          </section></div></SheetContent
+    ></Sheet>
   </PageShell>
 </template>

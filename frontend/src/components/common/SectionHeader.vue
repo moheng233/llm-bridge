@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { type Component } from "vue";
+
+import { usePageHeader } from "~/composables/usePageHeader";
 import { cn } from "~/lib/utils";
 
 const props = withDefaults(
@@ -6,39 +9,43 @@ const props = withDefaults(
     class?: string;
     title: string;
     description?: string;
+    subtitle?: string;
+    backTo?: string;
+    backLabel?: string;
     count?: number | null;
     countLabel?: string;
-    icon?: any;
+    icon?: Component;
   }>(),
   {
     count: null,
     countLabel: "个",
   },
 );
-
-const Icon = props.icon;
+usePageHeader(() => props.title);
 </script>
 
 <template>
   <div
+    v-if="subtitle || description || $slots.status || $slots.actions"
     data-slot="section-header"
-    :class="cn('flex items-center justify-between gap-3', props.class)"
+    :class="cn('flex min-w-0 flex-wrap items-center justify-between gap-3', props.class)"
   >
-    <div class="flex min-w-0 flex-col gap-1">
-      <div class="flex items-center gap-2">
-        <component v-if="Icon" :is="Icon" class="h-5 w-5 shrink-0 text-muted-foreground" />
-        <h2 class="truncate font-mono text-xl font-bold text-foreground">{{ title }}</h2>
-        <Badge
-          v-if="count !== null && count !== undefined"
-          variant="secondary"
-          class="shrink-0 font-mono"
+    <div class="flex min-w-0 flex-1 items-center gap-2">
+      <div class="min-w-0 space-y-1">
+        <div v-if="$slots.status" class="flex min-w-0 flex-wrap items-center gap-2">
+          <slot name="status" />
+        </div>
+        <p
+          v-if="subtitle"
+          class="truncate font-mono text-xs text-muted-foreground"
+          :title="subtitle"
         >
-          {{ count }} {{ countLabel }}
-        </Badge>
+          {{ subtitle }}
+        </p>
+        <p v-if="description" class="text-sm text-muted-foreground">{{ description }}</p>
       </div>
-      <p v-if="description" class="text-sm text-muted-foreground">{{ description }}</p>
     </div>
-    <div v-if="$slots.actions" class="flex shrink-0 items-center gap-2">
+    <div v-if="$slots.actions" class="flex shrink-0 flex-wrap items-center gap-2">
       <slot name="actions" />
     </div>
   </div>

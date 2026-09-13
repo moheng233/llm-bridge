@@ -1,10 +1,9 @@
 <script setup lang="ts">
 import { type UserResponse } from "@bindings/UserResponse";
-import { Users, Shield } from "@lucide/vue";
+import { Check, Pause, Users, Shield } from "@lucide/vue";
 
 import { useApiCall } from "~/composables/useApiCall";
 import { getApi } from "~/lib/api";
-import { SKELETON_ROWS } from "~/lib/constants";
 import { useAuthStore } from "~/stores/auth";
 
 const api = getApi();
@@ -15,6 +14,15 @@ const confirm = useConfirm();
 const changing = ref(false);
 
 const users = ref<UserResponse[]>([]);
+const query = ref("");
+const filtered = computed(() =>
+  users.value.filter((user) =>
+    `${user.name} ${user.email ?? ""} ${user.oidcSub}`
+      .toLowerCase()
+      .includes(query.value.trim().toLowerCase()),
+  ),
+);
+const { page, visible } = useListPagination(filtered, query);
 
 const { loading, error, execute: fetchUsers } = useApiCall(() => api.admin.listUsers());
 
@@ -57,66 +65,67 @@ watchEffect(() => {
 </script>
 
 <template>
-  <PageShell>
-    <SectionHeader
-      title="用户"
-      description="管理员可管理配置并查看全站数据；成员只访问个人用量与令牌。"
-      :count="users.length"
-      count-label="个用户"
+  <PageShell :reset-key="`${page}:${query}`">
+    <template #header>
+      <SectionHeader title="用户" :count="users.length" count-label="个" :icon="Users" />
+    </template>
+    <template #toolbar
+      ><ListToolbar
+        v-model="query"
+        label="搜索用户"
+        placeholder="搜索名称 / 邮箱 / 身份 ID"
+        :loading="loading"
+        :disabled="changing"
+        @refresh="loadUsers"
+        @clear="query = ''"
+    /></template>
+    <p class="text-muted-foreground">管理员可管理配置并查看全站数据；成员只访问个人用量与令牌。</p>
+    <ErrorState v-if="error" :error="error" @retry="loadUsers" />
+
+    <div v-else-if="loading" role="status" aria-label="加载列表" class="space-y-3">
+      <Skeleton v-for="index in 4" :key="index" class="h-24 rounded-md" />
+    </div>
+
+    <EmptyState
+      v-else-if="!filtered.length"
       :icon="Users"
-    />
+      :title="query ? '筛选无结果' : '暂无用户'"
+      ><template v-if="query" #actions
+        ><Button variant="outline" @click="query = ''">清除筛选</Button></template
+      ></EmptyState
+    >
 
-    <ErrorState v-if="error" :error="error" inline @retry="loadUsers" />
-
-    <div v-if="loading" class="flex flex-col gap-2">
-      <Skeleton v-for="i in SKELETON_ROWS.users" :key="i" class="h-16 w-full rounded-lg" />
-    </div>
-
-    <EmptyState v-else-if="!error && users.length === 0" :icon="Users" title="暂无用户" />
-
-    <div v-else-if="!error" class="flex flex-col gap-2">
-      <div
-        v-for="u in users"
-        :key="u.id"
-        class="flex flex-col justify-between gap-4 rounded-lg border border-border bg-card px-4 py-3 sm:flex-row sm:items-center"
+    <ListItem v-else v-for="user in visible" :key="user.id">
+      <template #title>{{ user.name }}</template>
+      <template #status
+        ><Badge :variant="user.active ? 'secondary' : 'outline'"
+          ><Check v-if="user.active" aria-hidden="true" /><Pause v-else aria-hidden="true" />{{
+            user.active ? "已启用" : "已禁用"
+          }}</Badge
+        ></template
       >
-        <div class="flex min-w-0 items-center gap-3">
-          <div class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-muted">
-            <span class="font-mono text-sm font-medium text-foreground">{{
-              u.name.charAt(0).toUpperCase()
-            }}</span>
-          </div>
-          <div class="flex min-w-0 flex-col">
-            <div class="flex items-center gap-2">
-              <span class="font-medium text-foreground">{{ u.name }}</span>
-              <Badge
-                :variant="u.role === 'admin' ? 'default' : 'secondary'"
-                class="font-mono text-xs"
-                >{{ u.role === "admin" ? "管理员" : "成员" }}</Badge
-              >
-              <Badge v-if="!u.active" variant="destructive" class="text-xs">已禁用</Badge>
-            </div>
-            <span class="truncate text-xs text-muted-foreground">{{ u.email || u.oidcSub }}</span>
-          </div>
-        </div>
-        <div class="flex shrink-0 items-center gap-2">
-          <Shield class="h-4 w-4 text-muted-foreground" />
-          <Select
-            :model-value="u.role"
-            :disabled="changing"
-            @update:model-value="(v: unknown) => v && changeRole(u.id, v as string)"
-          >
-            <SelectTrigger class="w-32" :aria-label="`修改 ${u.name} 的角色`">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="admin">管理员</SelectItem>
-              <SelectItem value="member">成员</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-      </div>
-    </div>
+      <template #subtitle>{{ user.email || user.oidcSub }}</template>
+      <p>{{ user.role === "admin" ? "管理员" : "成员" }}</p>
+      <template #actions>
+        <Shield class="h-4 w-4 text-muted-foreground" />
+        <Select
+          :model-value="user.role"
+          :disabled="changing"
+          @update:model-value="(value: unknown) => value && changeRole(user.id, value as string)"
+        >
+          <SelectTrigger class="w-32" :aria-label="`修改 ${user.name} 的角色`">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="admin">管理员</SelectItem>
+            <SelectItem value="member">成员</SelectItem>
+          </SelectContent>
+        </Select>
+      </template>
+    </ListItem>
+    <template v-if="!error" #footer
+      ><ListPagination v-model="page" :total="filtered.length" :disabled="loading || changing"
+    /></template>
   </PageShell>
 </template>
 <route lang="json">
