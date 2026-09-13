@@ -1,6 +1,6 @@
 {
-  "generatedAt": "2026-09-12T04:58:52.570Z",
-  "sourceRev": "801652200106eb4612829f93d6ab220ec19a2166",
+  "generatedAt": "2026-09-13T03:32:16.646Z",
+  "sourceRev": "5ab29fce19855551cc7d10430f3a364454086ef2",
   "schemaVersion": 1,
   "models": [
     {
@@ -10188,7 +10188,7 @@
       "cacheReadPricePer1m": 0.2,
       "enabled": true,
       "maxInputTokens": 1048576,
-      "maxOutputTokens": 1048576
+      "maxOutputTokens": 128000
     },
     {
       "providerId": "digitalocean",
@@ -18168,7 +18168,8 @@
       "outputPricePer1m": 3.2,
       "cacheReadPricePer1m": 0.135,
       "enabled": true,
-      "maxInputTokens": 1024000
+      "maxInputTokens": 1048576,
+      "maxOutputTokens": 393216
     },
     {
       "providerId": "kilo",
@@ -18415,7 +18416,7 @@
       "inputPricePer1m": 0.042,
       "outputPricePer1m": 0.22,
       "enabled": true,
-      "maxInputTokens": 131072
+      "maxOutputTokens": 235929
     },
     {
       "providerId": "kilo",
@@ -18502,7 +18503,7 @@
       "outputPricePer1m": 0.4,
       "enabled": true,
       "maxInputTokens": 131072,
-      "maxOutputTokens": 8192
+      "maxOutputTokens": 16384
     },
     {
       "providerId": "kilo",
@@ -18556,7 +18557,9 @@
       "inputPricePer1m": 0.3,
       "outputPricePer1m": 1.2,
       "cacheReadPricePer1m": 0.03,
-      "enabled": true
+      "enabled": true,
+      "maxInputTokens": 200000,
+      "maxOutputTokens": 128000
     },
     {
       "providerId": "kilo",
@@ -19670,7 +19673,8 @@
       "outputPricePer1m": 4.05,
       "cacheReadPricePer1m": 0.16,
       "enabled": true,
-      "maxOutputTokens": 32768
+      "maxInputTokens": 524288,
+      "maxOutputTokens": 471859
     },
     {
       "providerId": "kilo",
@@ -19866,8 +19870,7 @@
       "outputPricePer1m": 4.4,
       "cacheReadPricePer1m": 0.26,
       "enabled": true,
-      "maxInputTokens": 1048576,
-      "maxOutputTokens": 943718
+      "maxInputTokens": 1048576
     },
     {
       "providerId": "kilo",
@@ -20379,6 +20382,16 @@
     {
       "providerId": "llmgateway",
       "protocolKey": "openAiChatCompletions|https://api.llmgateway.io/v1",
+      "modelName": "zhipuai/glm-5-turbo",
+      "providerModelId": "glm-5-turbo",
+      "inputPricePer1m": 1.2,
+      "outputPricePer1m": 4,
+      "cacheReadPricePer1m": 0.24,
+      "enabled": true
+    },
+    {
+      "providerId": "llmgateway",
+      "protocolKey": "openAiChatCompletions|https://api.llmgateway.io/v1",
       "modelName": "zhipuai/glm-5.1",
       "providerModelId": "glm-5.1",
       "inputPricePer1m": 0.931,
@@ -20440,6 +20453,16 @@
       "cacheReadPricePer1m": 0.144,
       "enabled": true,
       "maxInputTokens": 203000
+    },
+    {
+      "providerId": "llmgateway",
+      "protocolKey": "openAiChatCompletions|https://api.llmgateway.io/v1",
+      "modelName": "zhipuai/glm-5v-turbo",
+      "providerModelId": "glm-5v-turbo",
+      "inputPricePer1m": 1.2,
+      "outputPricePer1m": 4,
+      "cacheReadPricePer1m": 0.24,
+      "enabled": true
     },
     {
       "providerId": "llmgateway",
@@ -20797,10 +20820,21 @@
       "protocolKey": "openAiChatCompletions|https://api.llmgateway.io/v1",
       "modelName": "tencent/hy3",
       "providerModelId": "hy3",
-      "inputPricePer1m": 0.14,
-      "outputPricePer1m": 0.58,
-      "cacheReadPricePer1m": 0.035,
+      "inputPricePer1m": 0.132,
+      "outputPricePer1m": 0.528,
+      "cacheReadPricePer1m": 0.033,
       "enabled": true
+    },
+    {
+      "providerId": "llmgateway",
+      "protocolKey": "openAiChatCompletions|https://api.llmgateway.io/v1",
+      "modelName": "tencent/hy4-preview",
+      "providerModelId": "hy4-preview",
+      "inputPricePer1m": 0.834,
+      "outputPricePer1m": 2.501,
+      "cacheReadPricePer1m": 0.042,
+      "enabled": true,
+      "maxInputTokens": 1000000
     },
     {
       "providerId": "llmgateway",
@@ -21392,6 +21426,17 @@
     {
       "providerId": "llmgateway-providers",
       "protocolKey": "openAiChatCompletions|https://api.llmgateway.io/v1",
+      "modelName": "moonshotai/kimi-k3",
+      "providerModelId": "alibaba/kimi-k3",
+      "inputPricePer1m": 3,
+      "outputPricePer1m": 15,
+      "cacheReadPricePer1m": 0.3,
+      "enabled": true,
+      "maxOutputTokens": 1048576
+    },
+    {
+      "providerId": "llmgateway-providers",
+      "protocolKey": "openAiChatCompletions|https://api.llmgateway.io/v1",
       "modelName": "alibaba/qwen-flash",
       "providerModelId": "alibaba/qwen-flash",
       "inputPricePer1m": 0.05,
@@ -21911,6 +21956,16 @@
       "cacheReadPricePer1m": 0.22,
       "enabled": true,
       "maxInputTokens": 278528
+    },
+    {
+      "providerId": "llmgateway-providers",
+      "protocolKey": "openAiChatCompletions|https://api.llmgateway.io/v1",
+      "modelName": "openai/gpt-6-astra",
+      "providerModelId": "aws-mantle/gpt-6-astra",
+      "inputPricePer1m": 10,
+      "outputPricePer1m": 50,
+      "cacheReadPricePer1m": 1,
+      "enabled": true
     },
     {
       "providerId": "llmgateway-providers",
@@ -24098,6 +24153,17 @@
       "cacheReadPricePer1m": 0.028,
       "enabled": true,
       "maxOutputTokens": 393216
+    },
+    {
+      "providerId": "llmgateway-providers",
+      "protocolKey": "openAiChatCompletions|https://api.llmgateway.io/v1",
+      "modelName": "moonshotai/kimi-k3",
+      "providerModelId": "runpod/kimi-k3",
+      "inputPricePer1m": 3,
+      "outputPricePer1m": 15,
+      "cacheReadPricePer1m": 0.3,
+      "enabled": true,
+      "maxOutputTokens": 1048576
     },
     {
       "providerId": "llmgateway-providers",
@@ -33981,9 +34047,9 @@
       "protocolKey": "openAiChatCompletions|https://openrouter.ai/api/v1",
       "modelName": "deepseek/deepseek-v4-flash-0731",
       "providerModelId": "deepseek/deepseek-v4-flash-0731",
-      "inputPricePer1m": 0.065,
-      "outputPricePer1m": 0.18,
-      "cacheReadPricePer1m": 0.016,
+      "inputPricePer1m": 0.04,
+      "outputPricePer1m": 0.08,
+      "cacheReadPricePer1m": 0.008,
       "enabled": true,
       "maxInputTokens": 1310720,
       "maxOutputTokens": 943718
@@ -34005,9 +34071,9 @@
       "protocolKey": "openAiChatCompletions|https://openrouter.ai/api/v1",
       "modelName": "deepseek/deepseek-v4-flash",
       "providerModelId": "deepseek/deepseek-v4-flash",
-      "inputPricePer1m": 0.06678,
-      "outputPricePer1m": 0.13356,
-      "cacheReadPricePer1m": 0.013356,
+      "inputPricePer1m": 0.06538,
+      "outputPricePer1m": 0.13076,
+      "cacheReadPricePer1m": 0.013076,
       "enabled": true,
       "maxInputTokens": 1048576
     },
@@ -34028,11 +34094,12 @@
       "protocolKey": "openAiChatCompletions|https://openrouter.ai/api/v1",
       "modelName": "deepseek/deepseek-v4-pro",
       "providerModelId": "deepseek/deepseek-v4-pro",
-      "inputPricePer1m": 0.829458,
-      "outputPricePer1m": 1.658916,
-      "cacheReadPricePer1m": 0.069122,
+      "inputPricePer1m": 1.6,
+      "outputPricePer1m": 3.2,
+      "cacheReadPricePer1m": 0.135,
       "enabled": true,
-      "maxInputTokens": 1048576
+      "maxInputTokens": 1048576,
+      "maxOutputTokens": 393216
     },
     {
       "providerId": "openrouter",
@@ -34278,9 +34345,11 @@
       "protocolKey": "openAiChatCompletions|https://openrouter.ai/api/v1",
       "modelName": "google/gemma-4-26b-a4b-it",
       "providerModelId": "google/gemma-4-26b-a4b-it",
-      "inputPricePer1m": 0.042,
-      "outputPricePer1m": 0.22,
-      "enabled": true
+      "inputPricePer1m": 0.09,
+      "outputPricePer1m": 0.3,
+      "cacheReadPricePer1m": 0.05,
+      "enabled": true,
+      "maxOutputTokens": 235929
     },
     {
       "providerId": "openrouter",
@@ -34337,8 +34406,8 @@
       "protocolKey": "openAiChatCompletions|https://openrouter.ai/api/v1",
       "modelName": "meta/muse-glimmer-30b",
       "providerModelId": "meta/muse-glimmer-30b",
-      "inputPricePer1m": 0.3,
-      "outputPricePer1m": 1.1,
+      "inputPricePer1m": 0.35,
+      "outputPricePer1m": 1.5,
       "cacheReadPricePer1m": 0.04,
       "enabled": true,
       "maxOutputTokens": 117964
@@ -34381,11 +34450,11 @@
       "protocolKey": "openAiChatCompletions|https://openrouter.ai/api/v1",
       "modelName": "meta/llama-3.1-70b-instruct",
       "providerModelId": "meta-llama/llama-3.1-70b-instruct",
-      "inputPricePer1m": 0.72,
-      "outputPricePer1m": 0.72,
+      "inputPricePer1m": 0.4,
+      "outputPricePer1m": 0.4,
       "enabled": true,
       "maxInputTokens": 131072,
-      "maxOutputTokens": 8192
+      "maxOutputTokens": 16384
     },
     {
       "providerId": "openrouter",
@@ -34437,10 +34506,11 @@
       "protocolKey": "openAiChatCompletions|https://openrouter.ai/api/v1",
       "modelName": "minimax/MiniMax-M2.5",
       "providerModelId": "minimax/minimax-m2.5",
-      "inputPricePer1m": 0.3,
-      "outputPricePer1m": 1.2,
-      "cacheReadPricePer1m": 0.03,
-      "enabled": true
+      "inputPricePer1m": 0.27,
+      "outputPricePer1m": 1.08,
+      "cacheReadPricePer1m": 0.027,
+      "enabled": true,
+      "maxOutputTokens": 128000
     },
     {
       "providerId": "openrouter",
@@ -34576,9 +34646,9 @@
       "protocolKey": "openAiChatCompletions|https://openrouter.ai/api/v1",
       "modelName": "moonshotai/kimi-k3",
       "providerModelId": "moonshotai/kimi-k3",
-      "inputPricePer1m": 2.302729,
-      "outputPricePer1m": 11.550195,
-      "cacheReadPricePer1m": 0.263169,
+      "inputPricePer1m": 2.648138,
+      "outputPricePer1m": 13.282724,
+      "cacheReadPricePer1m": 0.302644,
       "enabled": true,
       "maxOutputTokens": 943718
     },
@@ -35564,7 +35634,7 @@
       "outputPricePer1m": 4.05,
       "cacheReadPricePer1m": 0.17,
       "enabled": true,
-      "maxOutputTokens": 32768
+      "maxOutputTokens": 471859
     },
     {
       "providerId": "openrouter",
@@ -35766,12 +35836,11 @@
       "protocolKey": "openAiChatCompletions|https://openrouter.ai/api/v1",
       "modelName": "zhipuai/glm-5.3",
       "providerModelId": "z-ai/glm-5.3",
-      "inputPricePer1m": 1.4,
-      "outputPricePer1m": 4.4,
-      "cacheReadPricePer1m": 0.26,
+      "inputPricePer1m": 1.092,
+      "outputPricePer1m": 3.432,
+      "cacheReadPricePer1m": 0.2028,
       "enabled": true,
-      "maxInputTokens": 1310720,
-      "maxOutputTokens": 943718
+      "maxInputTokens": 1310720
     },
     {
       "providerId": "openrouter",
