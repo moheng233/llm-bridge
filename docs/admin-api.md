@@ -115,7 +115,11 @@ Token 准入预留计入当期额度，真实上游 usage 到达后对原预留�
 | GET | `/api/v1/usage/traces` | 时间、模型、Token 筛选及分页；字段见 `TracesQuery` / `TraceListResponse` |
 | GET | `/api/v1/usage/traces/{id}` | 单次请求详情；字段见 `TraceDetail` |
 
-成员只能查看自己的统计、列表和详情；管理员可查看全局。快照仅在 `LLM_BRIDGE_OBS_CAPTURE_CONTENT=true` 时采集，可能包含请求中的敏感内容。trace 按保留策略删除，日聚合不保存消息内容并长期保留。
+汇总与请求列表均接受可选 `scope=all|mine`。不传时保持原有默认：管理员查看全站，成员查看本人；`mine` 始终限定当前会话用户，`all` 仅允许当前数据库角色为管理员的用户。成员请求 `all` 返回 403 `usage_scope_forbidden`，无效范围值返回 400。前端隐藏全站选项不替代后端权限检查，管理员被降权后已有 Session 也不能继续查看全站。
+
+`GET /api/v1/usage/summary?days=14&scope=mine` 的请求数、Token、成本、按日趋势、模型排行、上一周期、错误率和平均首 Token 延迟均使用本人范围；模型 Token 总量相同时按模型名排序，确保返回顺序稳定。`GET /api/v1/usage/traces?scope=mine&pageSize=5` 返回本人最近请求，其他模型、Token、时间、搜索及分页条件继续叠加，不能通过传他人 tokenId 扩大本人范围。
+
+成员只能查看自己的请求详情；管理员保留查看全站详情的权限。快照仅在 `LLM_BRIDGE_OBS_CAPTURE_CONTENT=true` 时采集，可能包含请求中的敏感内容。trace 按保留策略删除，日聚合不保存消息内容并长期保留。
 
 ## 只读目录与批量连接
 

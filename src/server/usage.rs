@@ -64,12 +64,36 @@ fn db_err(e: impl std::fmt::Display) -> Response {
 
 // ── Summary ──
 
+#[derive(Clone, Copy, Deserialize, TS)]
+#[ts(export)]
+#[serde(rename_all = "camelCase")]
+pub enum UsageScope {
+    All,
+    Mine,
+}
+
+fn view_all_usage(scope: Option<UsageScope>, role: &str) -> Result<bool, Response> {
+    let is_admin = is_admin_role(role);
+    match scope {
+        Some(UsageScope::All) if !is_admin => Err((
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({"error": "usage_scope_forbidden"})),
+        )
+            .into_response()),
+        Some(UsageScope::All) => Ok(true),
+        Some(UsageScope::Mine) => Ok(false),
+        None => Ok(is_admin),
+    }
+}
+
 #[derive(Deserialize, TS)]
 #[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub struct SummaryQuery {
     /// 聚合最近 N 天（含今天），默认 14，上限 90。
     pub days: Option<u32>,
+    #[ts(optional)]
+    pub scope: Option<UsageScope>,
 }
 
 #[derive(Serialize, TS)]
@@ -120,11 +144,11 @@ async fn get_usage_summary(
 ) -> Result<Json<UsageSummaryResponse>, Response> {
     let days = q.days.unwrap_or(14).clamp(1, 90);
     let mut db = state.db.clone();
-    let is_admin = is_admin_role(&user.role);
+    let view_all = view_all_usage(q.scope, &user.role)?;
     let user_id = user.user_id;
 
     // member 仅统计本人 token 的 rollup（usage_daily 无 user_id 列，需先取本人 token id 集）。
-    let own_token_ids: Option<Vec<u64>> = if is_admin {
+    let own_token_ids: Option<Vec<u64>> = if view_all {
         None
     } else {
         Some(
@@ -165,7 +189,12 @@ async fn get_usage_summary(
         e.cost_usd += r.cost_usd;
     }
     let mut model_ranking: Vec<ModelRanking> = by_model.into_values().collect();
-    model_ranking.sort_by_key(|m| std::cmp::Reverse(m.total_tokens));
+    model_ranking.sort_by(|left, right| {
+        right
+            .total_tokens
+            .cmp(&left.total_tokens)
+            .then_with(|| left.model.cmp(&right.model))
+    });
 
     // ── 上一周期真实汇总（复用 rollup；无数据 → null，前端不再伪造环比）──
     let prev_summary = if prev_rows.is_empty() {
@@ -189,7 +218,7 @@ async fn get_usage_summary(
         .map_err(db_err)?;
     let mut trace_query =
         LlmRequestTrace::filter(LlmRequestTrace::fields().created_at().ge(window_start));
-    if !is_admin {
+    if !view_all {
         trace_query = trace_query.filter(LlmRequestTrace::fields().user_id().eq(user_id));
     }
     let mut traces: Vec<LlmRequestTrace> = trace_query.exec(&mut db).await.map_err(db_err)?;
@@ -301,6 +330,8 @@ fn aggregate_daily(rows: &[UsageDaily]) -> Vec<DailyPoint> {
 #[ts(export)]
 #[serde(rename_all = "camelCase")]
 pub struct TracesQuery {
+    #[ts(optional)]
+    pub scope: Option<UsageScope>,
     pub status: Option<String>,
     pub model: Option<String>,
     pub token_id: Option<u64>,
@@ -399,7 +430,7 @@ async fn list_traces(
     let page = q.page.unwrap_or(0);
     let page_size = q.page_size.unwrap_or(50).clamp(1, 200);
     let mut db = state.db.clone();
-    let is_admin = is_admin_role(&user.role);
+    let view_all = view_all_usage(q.scope, &user.role)?;
 
     // 动态条件叠加（toasty Query builder，多次 filter 以 AND 合并）
     let mut query = toasty::stmt::Query::<toasty::stmt::List<LlmRequestTrace>>::all();
@@ -427,7 +458,7 @@ async fn list_traces(
 
     apply_trace_filters(
         &mut rows,
-        is_admin,
+        view_all,
         user.user_id,
         q.token_id,
         q.date_from,
