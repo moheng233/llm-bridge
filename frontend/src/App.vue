@@ -86,7 +86,18 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKey));
     正在加载…
   </div>
   <div v-else-if="!auth.isAuthenticated" class="app-viewport min-h-0 p-3">
-    <RouterView />
+    <RouterView v-slot="{ Component, route: viewRoute }">
+      <Transition
+        name="route-page"
+        mode="out-in"
+        @before-leave="(element) => element.setAttribute('inert', '')"
+        @leave-cancelled="(element) => element.removeAttribute('inert')"
+      >
+        <div :key="viewRoute.path" class="route-page h-full min-h-0 min-w-0">
+          <component :is="Component" />
+        </div>
+      </Transition>
+    </RouterView>
   </div>
   <div v-else class="app-viewport flex">
     <aside
@@ -215,9 +226,20 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKey));
       </header>
       <main id="main-content" class="min-h-0 flex-1 overflow-hidden p-3 md:p-4 lg:p-6">
         <div class="mx-auto h-full min-h-0 w-full max-w-[1280px] min-w-0">
-          <PageShell v-if="route.meta.requiresAdmin && !auth.isAdmin"
-            ><UnauthorizedPage /></PageShell
-          ><RouterView v-else />
+          <RouterView v-slot="{ Component, route: viewRoute }">
+            <Transition
+              name="route-page"
+              mode="out-in"
+              @before-leave="(element) => element.setAttribute('inert', '')"
+              @leave-cancelled="(element) => element.removeAttribute('inert')"
+            >
+              <div :key="viewRoute.path" class="route-page h-full min-h-0 min-w-0">
+                <PageShell v-if="viewRoute.meta.requiresAdmin && !auth.isAdmin"
+                  ><UnauthorizedPage /></PageShell
+                ><component :is="Component" v-else />
+              </div>
+            </Transition>
+          </RouterView>
         </div>
       </main>
     </div>
@@ -248,3 +270,38 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKey));
   </div>
   <GlobalSearch v-if="auth.isAuthenticated" v-model:open="searchOpen" /><ConfirmDialog /><Toaster />
 </template>
+
+<style scoped>
+.route-page-enter-active {
+  transition:
+    opacity 180ms ease-out,
+    transform 180ms cubic-bezier(0.2, 0.65, 0.3, 1);
+}
+
+.route-page-leave-active {
+  pointer-events: none;
+  transition: opacity 80ms ease-in;
+}
+
+.route-page-enter-from {
+  opacity: 0;
+  transform: translateY(6px);
+}
+
+.route-page-leave-to {
+  opacity: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .route-page-enter-active,
+  .route-page-leave-active {
+    transition: none;
+  }
+
+  .route-page-enter-from,
+  .route-page-leave-to {
+    opacity: 1;
+    transform: none;
+  }
+}
+</style>
