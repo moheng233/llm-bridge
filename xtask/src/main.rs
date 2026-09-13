@@ -132,9 +132,11 @@ fn run() -> Result<()> {
             run_command(root, cargo(), &args)?;
         }
         Task::Bindings { check: true } => {
+            require_frontend(root)?;
             run_command(root, "python3", &["scripts/check-bindings.py"])?;
         }
         Task::Bindings { check: false } => {
+            require_frontend(root)?;
             run_command(
                 root,
                 cargo(),
@@ -161,6 +163,18 @@ fn run() -> Result<()> {
                     "--",
                     "--ignored",
                     "--exact",
+                ],
+            )?;
+            run_command(
+                &root.join("frontend"),
+                pnpm(),
+                &[
+                    "exec",
+                    "oxfmt",
+                    "--config",
+                    ".oxfmtrc.json",
+                    "--write",
+                    "src/bindings",
                 ],
             )?;
         }

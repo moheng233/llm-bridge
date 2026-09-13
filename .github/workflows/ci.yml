@@ -21,14 +21,6 @@ jobs:
         run: rustup toolchain install nightly --profile minimal --component rustfmt --component clippy --component rustc-codegen-cranelift
       - name: Check Rust formatting
         run: cargo fmt --all -- --check
-      - name: Check bindings without overwriting committed files
-        run: cargo xtask bindings --check
-      - name: Check backend behavior contracts
-        run: cargo test -p llm-bridge --all-targets --locked -- --skip export_bindings
-      - name: Check default features
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings
-      - name: Check development orchestration
-        run: cargo test -p xtask --locked
       - name: Install pnpm
         run: npm install --global pnpm@11.26.0
       - uses: oven-sh/setup-bun@v2
@@ -37,6 +29,14 @@ jobs:
       - name: Install frontend dependencies
         working-directory: frontend
         run: pnpm install --frozen-lockfile
+      - name: Check bindings without overwriting committed files
+        run: cargo xtask bindings --check
+      - name: Check backend behavior contracts
+        run: cargo test -p llm-bridge --all-targets --locked -- --skip export_bindings
+      - name: Check default features
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Check development orchestration
+        run: cargo test -p xtask --locked
       - name: Build application from clean frontend declarations
         run: cargo xtask build --debug --features otel,postgresql
       - name: Check frontend lint

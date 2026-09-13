@@ -7,6 +7,7 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parent.parent
 BINDINGS = ROOT / "frontend/src/bindings"
+FORMATTER = ROOT / "frontend/node_modules/.bin" / ("oxfmt.cmd" if os.name == "nt" else "oxfmt")
 
 
 def main():
@@ -16,6 +17,10 @@ def main():
         subprocess.run(
             ["cargo", "test", "--lib", "--locked", "export_bindings"],
             cwd=ROOT, env=environment, check=True,
+        )
+        subprocess.run(
+            [str(FORMATTER), "--config", str(ROOT / "frontend/.oxfmtrc.json"), "--write", directory],
+            cwd=ROOT, check=True,
         )
         expected = {path.relative_to(generated) for path in generated.rglob("*.ts")}
         committed = {

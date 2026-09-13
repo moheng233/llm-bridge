@@ -9,6 +9,11 @@ fn config() -> GeneratorConfig {
         error_class_name: "ApiError".into(),
         options_interface_name: "ApiClientOptions".into(),
         type_import_prefix: ".".into(),
+        format_command: Some(if cfg!(windows) {
+            "frontend/node_modules/.bin/oxfmt.cmd --config frontend/.oxfmtrc.json --write".into()
+        } else {
+            "frontend/node_modules/.bin/oxfmt --config frontend/.oxfmtrc.json --write".into()
+        }),
         ..Default::default()
     }
 }
