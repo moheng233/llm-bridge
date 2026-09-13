@@ -287,6 +287,50 @@ async fn provider_conflict_and_protocol_failure_preserve_atomic_configuration() 
 }
 
 #[tokio::test]
+async fn provider_keys_preserve_blank_updates_and_reject_blank_new_keys() {
+    let f = fixture().await;
+    let provider = create_provider(&f, "acme").await;
+    let path = format!("/api/v1/admin/providers/{}", provider["id"]);
+    let mut update = provider_input("acme");
+    update["protocols"][0]["id"] = provider["protocols"][0]["id"].clone();
+    for blank in ["", "   ", "\t\r\n"] {
+        update["apiKeys"][0]["key"] = json!(blank);
+        let (status, body) = request(&f.router, "PUT", &path, &f.admin, update.clone()).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let stored = Provider::all().exec(&mut f.db.clone()).await.unwrap();
+        assert_eq!(stored[0].api_keys[0].key, "fake-original-key");
+    }
+    update["apiKeys"][0]["key"] = json!("fake-replacement-key");
+    let (status, body) = request(&f.router, "PUT", &path, &f.admin, update.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let stored = Provider::all().exec(&mut f.db.clone()).await.unwrap();
+    assert_eq!(stored[0].api_keys[0].key, "fake-replacement-key");
+
+    update["apiKeys"][0]["key"] = json!("   ");
+    update["apiKeys"][0]["label"] = json!("new-label");
+    let (status, body) = request(&f.router, "PUT", &path, &f.admin, update).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["field"], "apiKeys.0.key");
+    let stored = Provider::all().exec(&mut f.db.clone()).await.unwrap();
+    assert_eq!(stored[0].api_keys[0].label, "key-1");
+    assert_eq!(stored[0].api_keys[0].key, "fake-replacement-key");
+
+    let mut input = provider_input("blank-key");
+    input["apiKeys"][0]["key"] = json!("   ");
+    let (status, body) = request(
+        &f.router,
+        "POST",
+        "/api/v1/admin/providers",
+        &f.admin,
+        input,
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["field"], "apiKeys.0.key");
+    assert_eq!(Provider::all().exec(&mut f.db.clone()).await.unwrap().len(), 1);
+}
+
+#[tokio::test]
 async fn aliases_share_nominal_definition_and_reuse_never_overwrites_local_fields() {
     let f = fixture().await;
     let provider = create_provider(&f, "acme").await;

@@ -1071,7 +1071,7 @@ async fn update_provider(
         Some(&provider),
     )?;
     for key in &mut req.api_keys {
-        if key.key.is_empty()
+        if key.key.trim().is_empty()
             && let Some(old) = provider.api_keys.iter().find(|old| old.label == key.label)
         {
             key.key = old.key.clone();
